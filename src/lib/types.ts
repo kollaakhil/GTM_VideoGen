@@ -70,15 +70,33 @@ export interface Creative {
   metrics: Metrics | null;
   costUsd: number;
   createdAt: string;
+  directionId?: string;
+  qaOverride?: { by: string; at: string } | null;
 }
 
 export type Stage = "research" | "brief" | "directions" | "generate" | "qa" | "publish";
+
+export interface RunEvent {
+  at: string;
+  role: "user" | "agent" | "error";
+  text: string;
+}
+
+export type CreativeProgress = "queued" | "rendering" | "qa" | "fixing" | "done" | "failed";
 
 export interface StudioRun {
   id: string;
   brandUrl: string;
   goal: string;
+  format: "static" | "video";
+  models: Record<"text" | "vision" | "image" | "video", string>;
   stage: Stage;
+  status: "idle" | "working" | "error";
+  activity: string | null;
+  events: RunEvent[];
+  progress: Record<string, CreativeProgress>;
+  createdBy: string;
+  updatedAt: string;
   research: Research | null;
   brief: Brief | null;
   directions: Direction[];

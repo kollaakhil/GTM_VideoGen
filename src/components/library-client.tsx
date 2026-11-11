@@ -13,7 +13,7 @@ export function LibraryClient({ initial }: { initial: Creative[] }) {
   const [error, setError] = useState<string | null>(null);
   const shown = useMemo(() => items.filter((c) => filter === "all" || c.status === filter), [items, filter]);
 
-  async function act(c: Creative, action: "approve" | "reject" | "request_publish", channel?: "meta" | "google") {
+  async function act(c: Creative, action: "approve" | "reject" | "request_publish" | "override_qa", channel?: "meta" | "google") {
     const res = await fetch("/api/creatives", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: c.id, action, channel }) });
     const json = await res.json();
     if (!res.ok) return setError(json.error);

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ShieldCheck, Shuffle, X } from "lucide-react";
+import { Check, RefreshCw, ShieldCheck, Shuffle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -18,9 +18,13 @@ const STATUS: Record<Creative["status"], string> = {
 export function CreativeCard({
   creative: c,
   onAction,
+  onRegenerate,
+  busy,
 }: {
   creative: Creative;
-  onAction?: (a: "approve" | "reject" | "request_publish", channel?: "meta" | "google") => void;
+  onAction?: (a: "approve" | "reject" | "request_publish" | "override_qa", channel?: "meta" | "google") => void;
+  onRegenerate?: () => void;
+  busy?: boolean;
 }) {
   const k = kpis(c.metrics);
   return (
@@ -74,16 +78,26 @@ export function CreativeCard({
           </ul>
         )}
         {onAction && (c.status === "draft" || c.status === "approved") && (
-          <div className="flex gap-1.5 pt-1">
+          <div className="flex flex-wrap gap-1.5 pt-1">
             {c.status === "draft" && (
-              <Button size="xs" variant="outline" onClick={() => onAction("reject")}>
+              <Button size="xs" variant="outline" disabled={busy} onClick={() => onAction("reject")}>
                 <X /> Reject
               </Button>
             )}
-            <Button size="xs" variant="outline" disabled={!c.qa?.pass} onClick={() => onAction("request_publish", "meta")}>
+            {onRegenerate && (
+              <Button size="xs" variant="outline" disabled={busy} onClick={onRegenerate}>
+                <RefreshCw /> Redo
+              </Button>
+            )}
+            {c.qa && !c.qa.pass && c.mediaType === "video" && (
+              <Button size="xs" variant="outline" disabled={busy} onClick={() => onAction("override_qa")}>
+                <ShieldCheck /> Approve QA
+              </Button>
+            )}
+            <Button size="xs" variant="outline" disabled={busy || !c.qa?.pass} title={c.qa?.pass ? "Send to Inbox for approval" : "Must pass QA first"} onClick={() => onAction("request_publish", "meta")}>
               <Check /> Meta
             </Button>
-            <Button size="xs" variant="outline" disabled={!c.qa?.pass} onClick={() => onAction("request_publish", "google")}>
+            <Button size="xs" variant="outline" disabled={busy || !c.qa?.pass} title={c.qa?.pass ? "Send to Inbox for approval" : "Must pass QA first"} onClick={() => onAction("request_publish", "google")}>
               <Check /> Google
             </Button>
           </div>

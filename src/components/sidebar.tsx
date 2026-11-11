@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Inbox, LayoutGrid, Megaphone, Plug, Sparkles, Zap } from "lucide-react";
+import { BarChart3, Inbox, LayoutGrid, LogOut, Megaphone, Plug, Sparkles, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -14,8 +14,9 @@ const NAV = [
   { href: "/connections", label: "Connections", icon: Plug },
 ];
 
-export function Sidebar({ pending, demo }: { pending: number; demo: boolean }) {
+export function Sidebar({ pending, demo, user }: { pending: number; demo: boolean; user: string | null }) {
   const path = usePathname();
+  if (path.startsWith("/login")) return null;
   return (
     <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r bg-sidebar px-3 py-4">
       <div className="mb-6 flex items-center gap-2 px-2">
@@ -45,10 +46,27 @@ export function Sidebar({ pending, demo }: { pending: number; demo: boolean }) {
           </Link>
         ))}
       </nav>
+      <div className="mt-auto" />
       {demo && (
-        <div className="mt-auto rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+        <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
           <div className="font-medium">Demo mode</div>
           Add keys on the Connections page to go live.
+        </div>
+      )}
+      {user && (
+        <div className="flex items-center gap-2 border-t border-white/[0.06] px-2 pt-3 text-xs text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate" title={user}>{user}</span>
+          <button
+            onClick={async () => {
+              await fetch("/api/auth/logout", { method: "POST" });
+              window.location.href = "/login";
+            }}
+            className="rounded-md p-1 hover:bg-sidebar-accent hover:text-foreground"
+            aria-label="Sign out"
+            title="Sign out"
+          >
+            <LogOut className="size-3.5" />
+          </button>
         </div>
       )}
     </aside>

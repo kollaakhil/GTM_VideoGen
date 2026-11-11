@@ -1,20 +1,23 @@
 import { chatJSON, generateImage, generateVideo, aiConfigured } from "./ai";
 import { placeholderImage } from "./placeholder";
+import { safeFetchText } from "./safe-fetch";
 import type { Brief, Direction, QAResult, Research } from "./types";
 
-async function fetchSiteText(url: string): Promise<string> {
+async function fetchSiteText(url: string): Promise<{ text: string; error: string | null }> {
   try {
-    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 GTM-Engine" }, signal: AbortSignal.timeout(10000) });
-    const html = await res.text();
-    return html
+    const html = await safeFetchText(url);
+    const text = html
       .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
       .slice(0, 12000);
-  } catch {
-    return "";
+    return { text, error: null };
+  } catch (e) {
+    return { text: "", error: (e as Error).message };
   }
 }
+
+export const QA_PASS_SCORE = Number(process.env.QA_PASS_SCORE) || 8;
 
 export async function research(model: string, brandUrl: string, goal: string): Promise<{ data: Research; cost: number }> {
   if (!aiConfigured()) {
@@ -31,10 +34,11 @@ export async function research(model: string, brandUrl: string, goal: string): P
     };
   }
   const site = await fetchSiteText(brandUrl);
+  if (site.error && /private|not allowed|Invalid URL/.test(site.error)) throw new Error(site.error);
   const { data, usage } = await chatJSON<Research>(
     model,
     "You are a senior performance-marketing strategist. Analyse the brand from its website copy.",
-    `Goal: ${goal}\nWebsite (${brandUrl}) text:\n${site || "(could not fetch site; infer from URL)"}\n\nReturn JSON: {"summary": string, "audience": string, "valueProps": string[], "tone": string, "angles": string[] (5-6 distinct ad angles), "sources": string[]}`,
+    `Goal: ${goal}\nWebsite (${brandUrl}) text:\n${site.text || `(could not fetch site: ${site.error}; infer from URL and say so in the summary)`}\n\nReturn JSON: {"summary": string (max 60 words), "audience": string, "valueProps": string[], "tone": string, "angles": string[] (5-6 distinct ad angles), "sources": string[]}`,
   );
   return { data: { ...data, sources: data.sources?.length ? data.sources : [brandUrl] }, cost: usage.costUsd };
 }
@@ -55,8 +59,8 @@ export async function brief(model: string, r: Research, goal: string): Promise<{
   }
   const { data, usage } = await chatJSON<Brief>(
     model,
-    "You write tight, one-page creative briefs for paid social and search ads.",
-    `Goal: ${goal}\nResearch: ${JSON.stringify(r)}\nReturn JSON: {"objective","audience","insight","offer","mandatories": string[],"kpi"}`,
+    "You write tight creative briefs for paid social and search ads. Be specific and brief; a busy founder must read it in 20 seconds.",
+    `Goal: ${goal}\nResearch: ${JSON.stringify(r)}\nReturn JSON: {"objective" (max 20 words),"audience" (max 15 words),"insight" (one sentence, max 25 words),"offer" (max 15 words, only facts found in research),"mandatories": string[] (3-5 items, max 10 words each),"kpi" (max 10 words)}`,
   );
   return { data, cost: usage.costUsd };
 }
@@ -106,9 +110,12 @@ export async function render(
 }
 
 export async function qa(model: string, mediaUrl: string, mediaType: "image" | "video", b: Brief, hook: string): Promise<{ data: QAResult; cost: number }> {
-  if (!aiConfigured() || mediaType === "video") {
+  if (!aiConfigured()) {
     const score = 8 + (hook.length % 2);
-    return { cost: 0, data: { score, pass: score >= 8, notes: aiConfigured() ? ["Video QA uses keyframes – coming in video milestone"] : ["Demo score – add OPENROUTER_API_KEY for live vision QA"] } };
+    return { cost: 0, data: { score, pass: score >= QA_PASS_SCORE, notes: ["Demo score – add OPENROUTER_API_KEY for live vision QA"] } };
+  }
+  if (mediaType === "video") {
+    return { cost: 0, data: { score: 0, pass: false, notes: ["Automated video QA isn't available yet. Watch the video and approve QA manually if it's good."] } };
   }
   const { data, usage } = await chatJSON<{ score: number; notes: string[] }>(
     model,
@@ -119,7 +126,7 @@ export async function qa(model: string, mediaUrl: string, mediaType: "image" | "
     ],
   );
   const score = Math.max(1, Math.min(10, Math.round(data.score)));
-  return { data: { score, pass: score >= 8, notes: data.notes ?? [] }, cost: usage.costUsd };
+  return { data: { score, pass: score >= QA_PASS_SCORE, notes: data.notes ?? [] }, cost: usage.costUsd };
 }
 
 function tokens(s: string) {

@@ -2,10 +2,13 @@ import { createHash, createHmac, timingSafeEqual } from "crypto";
 
 export const sha256 = (v: string) => createHash("sha256").update(v.trim().toLowerCase()).digest("hex");
 
-export function verifyStripe(payload: string, header: string | null, secret: string): boolean {
+const STRIPE_TOLERANCE_S = 300;
+
+export function verifyStripe(payload: string, header: string | null, secret: string, nowS = Math.floor(Date.now() / 1000)): boolean {
   if (!header) return false;
   const parts = Object.fromEntries(header.split(",").map((p) => p.split("=") as [string, string]));
   if (!parts.t || !parts.v1) return false;
+  if (!/^\d+$/.test(parts.t) || Math.abs(nowS - Number(parts.t)) > STRIPE_TOLERANCE_S) return false;
   const expected = createHmac("sha256", secret).update(`${parts.t}.${payload}`).digest("hex");
   const a = Buffer.from(expected);
   const b = Buffer.from(parts.v1);
@@ -31,9 +34,9 @@ export async function sendMetaCapi(e: { eventName: string; email?: string; phone
       },
     ],
   };
-  const res = await fetch(`https://graph.facebook.com/v21.0/${pixel}/events?access_token=${token}`, {
+  const res = await fetch(`https://graph.facebook.com/v21.0/${pixel}/events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
   return res.ok ? { status: "sent" as const, detail: "Meta CAPI accepted" } : { status: "failed" as const, detail: (await res.text()).slice(0, 200) };
