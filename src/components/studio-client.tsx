@@ -708,7 +708,7 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>) {
     edges.push(edge("brand", "research", false, { active: working && run.stage === "research" }));
     order = 1;
     if (run.referenceUrl) {
-      nodes.push({ id: "style", type: "style", position: { x: SPINE.research, y: -620 }, data: {} });
+      nodes.push({ id: "style", type: "style", position: { x: SPINE.research, y: -900 }, data: {} });
       edges.push(edge("brand", "style", false, { active: working && run.stage === "research" }));
     }
 
