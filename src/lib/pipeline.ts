@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import { safeFetchText } from "./safe-fetch";
 import { captionVariants } from "./video-post";
-import type { StyleDNA, Brief, Direction, QAResult, Research } from "./types";
+import type { OrganicPack, StyleDNA, Brief, Direction, QAResult, Research } from "./types";
 
 type Site = { text: string; error: string | null; styleRef: string | null; colors: string[] };
 
@@ -73,6 +73,28 @@ const styleBlock = (d?: StyleDNA | null) =>
   d
     ? `\nCreative style to borrow (from ${d.brand}, applied to OUR brand): tone: ${d.tone}; humor: ${d.humor}; visuals: ${d.visualLanguage}; pacing: ${d.pacing}; hook patterns: ${d.hookPatterns.join("; ")}; copy rules: ${d.copyRules.join("; ")}. Never use or reference: ${d.doNotCopy.join(", ")}, or ${d.brand}'s name, logo or claims.`
     : "";
+
+/** Organic (unpaid) content pack for the same brief: one post per channel plus a carousel. */
+export async function organic(model: string, b: Brief, r: Research, style?: StyleDNA | null): Promise<{ data: OrganicPack; cost: number }> {
+  if (!aiConfigured()) {
+    return {
+      cost: 0,
+      data: {
+        instagram: { caption: `${b.insight} ${b.offer}`, hashtags: ["#launch", "#newdrop"] },
+        tiktok: { hook: "POV: you finally found it", script: `${b.insight} ${b.offer}`, onScreenText: ["You finally found it", b.offer] },
+        linkedin: `${b.objective}\n\n${b.insight}`,
+        xThread: [b.insight, b.offer],
+        carousel: [{ title: "The problem", body: b.insight }, { title: "The fix", body: b.offer }],
+      },
+    };
+  }
+  const { data, usage } = await chatJSON<OrganicPack>(
+    model,
+    "You are a social media lead writing organic (unpaid) posts. Native to each platform, no ad-speak, only facts from the brief.",
+    `Brief: ${JSON.stringify(b)}\nBrand tone: ${r.tone}${styleBlock(style)}\nReturn JSON: {"instagram":{"caption" (max 300 chars),"hashtags" (5-8)},"tiktok":{"hook" (first 2 seconds, max 10 words),"script" (15-25s spoken),"onScreenText" (3-5 short lines)},"linkedin" (max 900 chars),"xThread" (3-5 posts, max 270 chars each),"carousel" (5-7 slides of {"title" max 6 words,"body" max 25 words})}`,
+  );
+  return { data, cost: usage.costUsd };
+}
 
 export const QA_PASS_SCORE = Number(process.env.QA_PASS_SCORE) || 8;
 

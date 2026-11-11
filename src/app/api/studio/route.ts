@@ -1,7 +1,7 @@
 import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { DEFAULTS } from "@/lib/models";
-import { brief, directions, diversityScores, qa, render, research, styleDNA } from "@/lib/pipeline";
+import { brief, directions, diversityScores, organic, qa, render, research, styleDNA } from "@/lib/pipeline";
 import { get, list, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
 import { rateLimit } from "@/lib/rate-limit";
@@ -30,6 +30,7 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("edit_brief"), runId: z.string().max(64), brief: BriefSchema }),
   z.object({ action: z.literal("directions"), runId: z.string().max(64), format: z.enum(["static", "video"]).optional() }),
   z.object({ action: z.literal("generate"), runId: z.string().max(64), refs: Refs }),
+  z.object({ action: z.literal("organic"), runId: z.string().max(64) }),
   z.object({ action: z.literal("regenerate"), runId: z.string().max(64), directionId: z.string().max(32), refs: Refs }),
 ]);
 
@@ -177,6 +178,16 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" }>): 
           }
           run.stage = "qa";
           say(run, "agent", `Generated ${made} creative${made === 1 ? "" : "s"}. Ones that pass QA can be sent to the Inbox for publishing.`);
+        },
+      };
+    case "organic":
+      if (!run.brief || !run.research) return { error: "Write the brief first" };
+      return {
+        activity: "Writing organic posts for Instagram, TikTok, LinkedIn and X…",
+        work: async () => {
+          const o = await organic(m.text, run.brief!, run.research!, run.styleDNA);
+          Object.assign(run, { organic: o.data, costUsd: run.costUsd + o.cost });
+          say(run, "agent", "Organic posts are ready: Instagram, TikTok, LinkedIn, an X thread and a carousel.");
         },
       };
     case "regenerate": {

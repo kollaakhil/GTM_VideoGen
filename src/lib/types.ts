@@ -38,6 +38,14 @@ export interface StyleDNA {
   colors: string[];
 }
 
+export interface OrganicPack {
+  instagram: { caption: string; hashtags: string[] };
+  tiktok: { hook: string; script: string; onScreenText: string[] };
+  linkedin: string;
+  xThread: string[];
+  carousel: { title: string; body: string }[];
+}
+
 export interface Brief {
   objective: string;
   audience: string;
@@ -130,6 +138,7 @@ export interface StudioRun {
   referenceUrl?: string | null;
   offer?: string | null;
   styleDNA?: StyleDNA | null;
+  organic?: OrganicPack | null;
   brief: Brief | null;
   directions: Direction[];
   creativeIds: string[];

@@ -636,8 +636,39 @@ function ProgressSteps({ p }: { p: CreativeProgress }) {
   );
 }
 
+function OrganicNode() {
+  const { run } = useFlow();
+  const [tab, setTab] = useState<"instagram" | "tiktok" | "linkedin" | "x" | "carousel">("instagram");
+  const o = run?.organic;
+  if (!o) return null;
+  const copy = (t: string) => void navigator.clipboard?.writeText(t);
+  const text =
+    tab === "instagram" ? `${o.instagram.caption}\n\n${o.instagram.hashtags.join(" ")}`
+    : tab === "tiktok" ? `HOOK: ${o.tiktok.hook}\n\n${o.tiktok.script}\n\nON SCREEN:\n${o.tiktok.onScreenText.join("\n")}`
+    : tab === "linkedin" ? o.linkedin
+    : tab === "x" ? o.xThread.map((t, i) => `${i + 1}/ ${t}`).join("\n\n")
+    : o.carousel.map((s, i) => `Slide ${i + 1}: ${s.title}\n${s.body}`).join("\n\n");
+  return (
+    <Shell label="Organic content" icon={MessageSquare} state="done" width={380}>
+      <div className="space-y-2.5">
+        <div className="flex flex-wrap gap-1">
+          {(["instagram", "tiktok", "linkedin", "x", "carousel"] as const).map((t) => (
+            <button key={t} onClick={() => setTab(t)} className={cn("rounded-md px-2 py-0.5 text-[11px] capitalize", tab === t ? "bg-white/10 text-white" : "text-zinc-400 hover:text-zinc-200")}>
+              {t === "x" ? "X thread" : t}
+            </button>
+          ))}
+        </div>
+        <pre className="nowheel max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-zinc-950/60 p-2.5 font-sans text-[12px] leading-relaxed text-zinc-300">{text}</pre>
+        <Button size="sm" variant="outline" className="w-full" onClick={() => copy(text)}>
+          Copy
+        </Button>
+      </div>
+    </Shell>
+  );
+}
+
 function PublishNode() {
-  const { run, byDir } = useFlow();
+  const { run, byDir, act, sending } = useFlow();
   if (!run) return null;
   const list = run.directions.map((d) => byDir[d.id]).filter(Boolean);
   const passed = list.filter((c) => c.qa?.pass).length;
@@ -666,6 +697,11 @@ function PublishNode() {
         <Link href="/inbox" className={cn(buttonVariants({ size: "sm", variant: "outline" }), "w-full")}>
           <Inbox /> Open Inbox
         </Link>
+        {!run.organic && (
+          <Button size="sm" variant="ghost" className="w-full text-zinc-300" disabled={sending || run.status === "working"} onClick={() => act("organic", { runId: run.id })}>
+            <MessageSquare /> Write organic posts too
+          </Button>
+        )}
       </div>
     </Shell>
   );
@@ -699,7 +735,7 @@ const GHOSTS = [
 ] as const;
 
 const noop = () => {};
-const nodeTypes = { ghost: GhostNode, style: StyleNode, brand: BrandNode, research: ResearchNode, brief: BriefNode, direction: DirectionNode, creative: CreativeNode, publish: PublishNode };
+const nodeTypes = { ghost: GhostNode, style: StyleNode, organic: OrganicNode, brand: BrandNode, research: ResearchNode, brief: BriefNode, direction: DirectionNode, creative: CreativeNode, publish: PublishNode };
 
 /* ------------------------------------------------------------------ */
 /* Graph                                                               */
@@ -775,6 +811,10 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>) {
 
     if (run.stage === "qa" || run.stage === "publish") {
       nodes.push({ id: "publish", type: "publish", position: { x: 950, y: PUB_Y }, data: { order: 5 } });
+      if (run.organic) {
+        nodes.push({ id: "organic", type: "organic", position: { x: 1340, y: PUB_Y }, data: {} });
+        edges.push(edge("publish", "organic", false, {}));
+      }
       run.directions.forEach((d, i) => {
         const c = byDir[d.id];
         if (c) edges.push(edge(`cr-${i}`, "publish", true, { tone: c.qa?.pass ? "pass" : "fail" }));
