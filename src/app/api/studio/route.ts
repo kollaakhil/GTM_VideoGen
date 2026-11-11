@@ -31,17 +31,36 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("directions"), runId: z.string().max(64), format: z.enum(["static", "video"]).optional() }),
   z.object({ action: z.literal("generate"), runId: z.string().max(64), refs: Refs }),
   z.object({ action: z.literal("organic"), runId: z.string().max(64) }),
+  z.object({ action: z.literal("cancel"), runId: z.string().max(64) }),
   z.object({ action: z.literal("regenerate"), runId: z.string().max(64), directionId: z.string().max(32), refs: Refs }),
 ]);
 
 const now = () => new Date().toISOString();
 const say = (run: StudioRun, role: RunEvent["role"], text: string) => run.events.push({ at: now(), role, text });
 
+// Jobs running in this server process. A run marked "working" whose job isn't here was cut off by a restart.
+const jobs: Map<string, AbortController> = ((globalThis as { __studioJobs?: Map<string, AbortController> }).__studioJobs ??= new Map());
+const live = (run: StudioRun) => !!run.jobId && jobs.has(run.jobId);
+
+async function healOrphan(run: StudioRun) {
+  if (run.status !== "working" || live(run)) return run;
+  stopProgress(run);
+  Object.assign(run, { status: "error", activity: null, jobId: null, updatedAt: now() });
+  say(run, "error", "This step was interrupted (the server restarted mid-step). Run it again.");
+  await put("studio_runs", run);
+  return run;
+}
+
+function stopProgress(run: StudioRun) {
+  for (const [k, v] of Object.entries(run.progress)) if (v !== "done" && v !== "failed") run.progress[k] = "failed";
+}
+
 export async function GET(req: Request) {
   const runId = new URL(req.url).searchParams.get("runId");
   if (runId) {
-    const run = await get("studio_runs", runId);
-    if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    const found = await get("studio_runs", runId);
+    if (!found) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    const run = await healOrphan(found);
     const creatives = (await list("creatives")).filter((c) => c.runId === runId).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     return NextResponse.json({ run, creatives });
   }
@@ -90,7 +109,19 @@ export async function POST(req: Request) {
   } else {
     const found = await get("studio_runs", body.runId);
     if (!found) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-    run = found;
+    run = await healOrphan(found);
+  }
+  if (body.action === "cancel") {
+    if (run.status !== "working") return NextResponse.json({ error: "Nothing is running" }, { status: 400 });
+    if (run.jobId) {
+      jobs.get(run.jobId)?.abort();
+      jobs.delete(run.jobId);
+    }
+    stopProgress(run);
+    Object.assign(run, { status: "idle", activity: null, jobId: null, updatedAt: now() });
+    say(run, "agent", "Stopped. Anything already sent to a model provider may still be billed. Pick up from here whenever you're ready.");
+    await put("studio_runs", run);
+    return NextResponse.json({ run });
   }
   if (run.status === "working") return NextResponse.json({ error: "This run is already working on a step" }, { status: 409 });
 
@@ -107,8 +138,11 @@ export async function POST(req: Request) {
 
   const job = plan(run, body);
   if ("error" in job) return NextResponse.json({ error: job.error }, { status: 400 });
+  const jobId = newId("job");
+  jobs.set(jobId, new AbortController());
   run.status = "working";
   run.activity = job.activity;
+  run.jobId = jobId;
   run.updatedAt = now();
   await put("studio_runs", run);
 
@@ -120,9 +154,10 @@ export async function POST(req: Request) {
       run.status = "error";
       say(run, "error", `${job.activity.replace("…", "")} failed: ${(e as Error).message}`);
     } finally {
-      run.activity = null;
-      run.updatedAt = now();
-      await put("studio_runs", run);
+      if (jobs.delete(jobId)) {
+        Object.assign(run, { activity: null, jobId: null, updatedAt: now() });
+        await put("studio_runs", run);
+      }
     }
   });
   return NextResponse.json({ run });
@@ -135,7 +170,7 @@ const brandName = (url: string) => {
 
 type Parsed = z.infer<typeof Body>;
 
-function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" }>): { activity: string; work: () => Promise<void> } | { error: string } {
+function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "cancel" }>): { activity: string; work: () => Promise<void> } | { error: string } {
   const m = run.models;
   switch (body.action) {
     case "research":
@@ -216,7 +251,10 @@ const goalCtx = (run: StudioRun) =>
 async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
   const m = run.models;
   const div = diversityScores(run.directions.map((d) => `${d.angle} ${d.visualPrompt}`));
-  const save = () => put("studio_runs", { ...run, updatedAt: now() });
+  const save = async () => {
+    if (!live(run)) throw new Error("Stopped");
+    await put("studio_runs", { ...run, updatedAt: now() });
+  };
   const results = await Promise.allSettled(
     dirs.map(async (d) => {
       const i = run.directions.indexOf(d);
@@ -266,6 +304,7 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
         costUsd: spent,
         createdAt: now(),
       };
+      if (!live(run)) return;
       await put("creatives", creative);
       for (const old of await list("creatives")) {
         if (old.runId === run.id && old.directionId === d.id && old.id !== creative.id && old.status === "draft") await put("creatives", { ...old, status: "rejected" });

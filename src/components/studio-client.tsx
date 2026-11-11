@@ -20,6 +20,7 @@ import "@xyflow/react/dist/style.css";
 import {
   AlertTriangle,
   ArrowRight,
+  Square,
   Check,
   ChevronDown,
   Film,
@@ -863,11 +864,15 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
         <span className="tabular-nums text-zinc-500">{elapsed}s</span>
       </span>
     );
+    buttons = [btn("Stop", () => act("cancel", { runId: run.id }), false, <Square className="fill-current" />)];
   } else {
     switch (run.stage) {
       case "research":
         text = "Research didn't finish.";
-        buttons = [btn("Start over", () => router.push("/studio"), true)];
+        buttons = [
+          btn("Start over", () => router.push("/studio"), false),
+          btn("Retry research", () => act("research", { brandUrl: run.brandUrl, goal: run.goal, format: run.format, referenceUrl: run.referenceUrl ?? "", offer: run.offer ?? undefined, models: run.models }), true),
+        ];
         break;
       case "brief":
         text = "Research is ready. Review it, then write the brief.";

@@ -130,6 +130,7 @@ export interface StudioRun {
   stage: Stage;
   status: "idle" | "working" | "error";
   activity: string | null;
+  jobId?: string | null;
   events: RunEvent[];
   progress: Record<string, CreativeProgress>;
   createdBy: string;
