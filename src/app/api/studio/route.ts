@@ -128,6 +128,11 @@ export async function POST(req: Request) {
   return NextResponse.json({ run });
 }
 
+const brandName = (url: string) => {
+  const host = new URL(url).hostname.replace(/^www\./, "").split(".")[0];
+  return host.charAt(0).toUpperCase() + host.slice(1);
+};
+
 type Parsed = z.infer<typeof Body>;
 
 function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" }>): { activity: string; work: () => Promise<void> } | { error: string } {
@@ -215,7 +220,7 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
   const results = await Promise.allSettled(
     dirs.map(async (d) => {
       const i = run.directions.indexOf(d);
-      const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i, style: { styleRef: run.research?.styleRef, colors: run.research?.colors } };
+      const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i, brand: brandName(run.brandUrl), style: { styleRef: run.research?.styleRef, colors: run.research?.colors } };
       run.progress[d.id] = "rendering";
       await save();
       let out = await render(d, opts);

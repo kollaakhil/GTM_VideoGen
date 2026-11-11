@@ -51,3 +51,20 @@ describe("spokenScript", () => {
     expect(spokenScript('VO (CASUAL): "Your feet called." [beat] SFX: whoosh Shop now.')).toBe("Your feet called. whoosh Shop now.");
   });
 });
+
+describe("captionVariants end card", () => {
+  it("appends a 1.5s typeset end card and keeps audio", async () => {
+    const { captionVariants } = await import("@/lib/video-post");
+    const file = path.join(os.tmpdir(), `end-${Date.now()}.mp4`);
+    execFileSync(ffmpegPath || "ffmpeg", ["-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=720x1280:rate=24:duration=2", "-f", "lavfi", "-i", "sine=duration=2", "-pix_fmt", "yuv420p", "-shortest", "-y", file]);
+    const out = await captionVariants(`data:video/mp4;base64,${fs.readFileSync(file).toString("base64")}`, "Shop the sale.", { brand: "Allbirds", line: "Up to 70% off select styles", cta: "SHOP_NOW", color: "#f5e9d6" });
+    const v = path.join(os.tmpdir(), `endv-${Date.now()}.mp4`);
+    fs.writeFileSync(v, Buffer.from(out[0].url.split(",")[1], "base64"));
+    const dur = Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", v]).toString());
+    const streams = execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", v]).toString();
+    expect(dur).toBeGreaterThan(3.3);
+    expect(streams).toContain("audio");
+    fs.rmSync(file);
+    fs.rmSync(v);
+  }, 120_000);
+});

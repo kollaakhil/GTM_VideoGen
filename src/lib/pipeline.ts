@@ -175,14 +175,14 @@ export async function directions(model: string, b: Brief, r: Research, format: "
   const { data, usage } = await chatJSON<{ directions: Omit<Direction, "id" | "format">[] }>(
     model,
     "You are a creative director. Pitch three genuinely different ad directions. Each must use a different angle, visual world and hook so ad platforms treat them as distinct creatives.",
-    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}${styleBlock(style)}\nReturn JSON: {"directions":[{"title","hook","angle","script" (only the words spoken aloud, no speaker labels, stage directions, brackets or notes),"visualPrompt" (${format === "video" ? "shot-by-shot scene description for a video model: subject, setting, camera moves, lighting. No text, signs, labels, price tags, logos or packaging copy anywhere in frame; captions are added in post" : "detailed prompt for an image model, include on-image headline text"}),"copy":{"metaPrimaryText" (max 125 chars),"metaHeadline" (max 40 chars),"metaCta" (one of SHOP_NOW, LEARN_MORE, SIGN_UP, GET_OFFER, ORDER_NOW),"googleHeadlines" (5 items, max 30 chars each),"googleDescriptions" (2 items, max 90 chars each)}}]} with exactly 3 items. Ad copy must use only facts from the brief.\n${format === "video" ? "" : "Visual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once."} Each direction must look visibly different (setting, composition, palette).`,
+    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}${styleBlock(style)}\nReturn JSON: {"directions":[{"title","hook","angle","script" (only the words spoken aloud, no speaker labels, stage directions, brackets or notes${format === "video" ? "; max 14 words, it must fit a 6-second clip" : ""}),"visualPrompt" (${format === "video" ? "shot-by-shot scene description for a video model: subject, setting, camera moves, lighting. The product is clearly visible in the first second and in the final shot. No text, signs, labels, price tags, logos or packaging copy anywhere in frame; captions are added in post" : "detailed prompt for an image model, include on-image headline text"}),"copy":{"metaPrimaryText" (max 125 chars),"metaHeadline" (max 40 chars),"metaCta" (one of SHOP_NOW, LEARN_MORE, SIGN_UP, GET_OFFER, ORDER_NOW),"googleHeadlines" (5 items, max 30 chars each),"googleDescriptions" (2 items, max 90 chars each)}}]} with exactly 3 items. Ad copy must use only facts from the brief.\n${format === "video" ? "" : "Visual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once."} Each direction must look visibly different (setting, composition, palette).`,
   );
   return { data: data.directions.slice(0, 3).map((d, i) => ({ ...d, id: `dir_${i}`, format })), cost: usage.costUsd };
 }
 
 export async function render(
   d: Direction,
-  opts: { imageModel: string; videoModel: string; refs: string[]; seed: number; fixes?: string[]; style?: { styleRef?: string | null; colors?: string[] } },
+  opts: { imageModel: string; videoModel: string; refs: string[]; seed: number; fixes?: string[]; brand?: string; style?: { styleRef?: string | null; colors?: string[] } },
 ): Promise<{ url: string; type: "image" | "video"; model: string; cost: number; variants?: { aspect: string; url: string }[] }> {
   if (!aiConfigured()) return { url: placeholderImage(d.hook, opts.seed), type: "image", model: "demo", cost: 0 };
   if (d.format === "video") {
@@ -191,7 +191,8 @@ export async function render(
       `${d.visualPrompt}\nDo not render any on-screen text, captions, prices, labels or logos; captions are added in post. Product must look exactly like the reference photo if one is given.\nSpoken voiceover: "${spokenScript(d.script)}"`,
       opts.refs[0],
     );
-    const variants = await captionVariants(v.url, d.script).catch((e) => {
+    const end = opts.brand ? { brand: opts.brand, line: d.copy?.metaHeadline, cta: d.copy?.metaCta, color: opts.style?.colors?.[0] } : undefined;
+    const variants = await captionVariants(v.url, d.script, end).catch((e) => {
       console.error("caption/variants failed", (e as Error).message);
       return [];
     });

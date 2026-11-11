@@ -76,7 +76,45 @@ async function probe(file: string) {
 }
 
 /** Burns captions from the script into the video and renders 9:16, 4:5 and 1:1 cuts (center crop). */
-export async function captionVariants(video: string, script: string): Promise<{ aspect: string; url: string }[]> {
+export type EndCard = { brand: string; line?: string; cta?: string; color?: string };
+
+const CTA_LABEL: Record<string, string> = { SHOP_NOW: "Shop now", LEARN_MORE: "Learn more", SIGN_UP: "Sign up", GET_OFFER: "Get offer", ORDER_NOW: "Order now" };
+
+/** Readable text colour (black/white) for a hex background. */
+function inkFor(hex: string): "black" | "white" {
+  const n = parseInt(hex.slice(1), 16);
+  const lum = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.6 ? "black" : "white";
+}
+
+function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) {
+  const c = ink === "white" ? "&H00FFFFFF" : "&H00000000";
+  const clean = (t: string) => t.replace(/[{}\\\n]/g, " ").trim();
+  const line = end.line ? clean(end.line).slice(0, 40) : "";
+  const fit = (n: number, len: number) => Math.round(Math.min(n, (w * 1.7) / Math.max(len, 1)));
+  const ev = (size: number, y: number, text: string, box = false) =>
+    `Dialogue: 0,0:00:00.00,0:00:01.50,${box ? "Box" : "Card"},{\\an5\\pos(${Math.round(w / 2)},${y})\\fs${size}}${text}`;
+  return [
+    "[Script Info]",
+    "ScriptType: v4.00+",
+    `PlayResX: ${w}`,
+    `PlayResY: ${h}`,
+    "",
+    "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
+    `Style: Card,DejaVu Sans,40,${c},${c},&H00000000,1,1,0,0,5,0,0,0`,
+    `Style: Box,DejaVu Sans,40,${ink === "white" ? "&H00000000" : "&H00FFFFFF"},${c},${c},1,3,${Math.round(h / 90)},0,5,0,0,0`,
+    "",
+    "[Events]",
+    "Format: Layer, Start, End, Style, Text",
+    ev(fit(h / 11, end.brand.length), Math.round(h * 0.4), clean(end.brand)),
+    ...(line ? [ev(fit(h / 28, line.length), Math.round(h * 0.52), line)] : []),
+    ...(end.cta ? [ev(Math.round(h / 26), Math.round(h * 0.64), CTA_LABEL[end.cta] ?? clean(end.cta), true)] : []),
+  ].join("\n");
+}
+
+/** Burns captions, crops to each aspect and appends a typeset end card (brand, offer line, CTA) so the wordmark is always spelled right. */
+export async function captionVariants(video: string, script: string, end?: EndCard): Promise<{ aspect: string; url: string }[]> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));
   try {
     const input = path.join(dir, "in.mp4");
@@ -97,11 +135,29 @@ export async function captionVariants(video: string, script: string): Promise<{ 
       await fs.writeFile(ass, assFile(cues, w, h));
       const out = path.join(dir, `${a.w}x${a.h}.mp4`);
       const vf = `crop=${w}:${h}${cues.length ? `,subtitles=${ass}:fontsdir=${FONTS}` : ""}`;
-      await run(
-        FFMPEG,
-        ["-hide_banner", "-loglevel", "error", "-i", input, "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", ...(src.audio ? ["-c:a", "copy"] : ["-an"]), "-movflags", "+faststart", "-y", out],
-        { timeout: 180_000 },
-      );
+      const enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", out];
+      if (!end) {
+        await run(FFMPEG, ["-hide_banner", "-loglevel", "error", "-i", input, "-vf", vf, ...enc.slice(0, 8), ...(src.audio ? ["-c:a", "copy"] : ["-an"]), ...enc.slice(8)], { timeout: 180_000 });
+      } else {
+        const bg = /^#[0-9a-f]{6}$/i.test(end.color ?? "") ? end.color! : "#111111";
+        const ink = inkFor(bg);
+        const endAss = path.join(dir, `${a.w}x${a.h}-end.ass`);
+        await fs.writeFile(endAss, endCardAss(end, ink, w, h));
+        const card = `subtitles=${endAss}:fontsdir=${FONTS},setsar=1,fps=30,format=yuv420p`;
+        const fc = src.audio
+          ? `[0:v]${vf},setsar=1,fps=30,format=yuv420p[v0];[1:v]${card}[v1];[0:a]aresample=44100,aformat=channel_layouts=stereo[a0];[2:a]aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]`
+          : `[0:v]${vf},setsar=1,fps=30,format=yuv420p[v0];[1:v]${card}[v1];[v0][v1]concat=n=2:v=1:a=0[v]`;
+        await run(
+          FFMPEG,
+          [
+            "-hide_banner", "-loglevel", "error", "-i", input,
+            "-f", "lavfi", "-i", `color=c=0x${bg.slice(1)}:s=${w}x${h}:d=1.5:r=30`,
+            ...(src.audio ? ["-f", "lavfi", "-t", "1.5", "-i", "anullsrc=r=44100:cl=stereo"] : []),
+            "-filter_complex", fc, "-map", "[v]", ...(src.audio ? ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"] : ["-an"]), ...enc,
+          ],
+          { timeout: 180_000 },
+        );
+      }
       results.push({ aspect: a.aspect, url: `data:video/mp4;base64,${(await fs.readFile(out)).toString("base64")}` });
     }
     return results;
