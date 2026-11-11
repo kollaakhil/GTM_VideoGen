@@ -25,7 +25,7 @@ const BriefSchema = z.object({
 });
 
 const Body = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("research"), brandUrl: z.string().url().max(2048), goal: Field(500).refine((g) => g.length >= 3, "Goal is too short"), format: z.enum(["static", "video"]), referenceUrl: z.string().url().max(2048).optional().or(z.literal("")), models: Models }),
+  z.object({ action: z.literal("research"), brandUrl: z.string().url().max(2048), goal: Field(500).refine((g) => g.length >= 3, "Goal is too short"), format: z.enum(["static", "video"]), referenceUrl: z.string().url().max(2048).optional().or(z.literal("")), offer: z.string().trim().max(600).optional(), models: Models }),
   z.object({ action: z.literal("brief"), runId: z.string().max(64) }),
   z.object({ action: z.literal("edit_brief"), runId: z.string().max(64), brief: BriefSchema }),
   z.object({ action: z.literal("directions"), runId: z.string().max(64), format: z.enum(["static", "video"]).optional() }),
@@ -75,6 +75,7 @@ export async function POST(req: Request) {
       progress: {},
       research: null,
       referenceUrl: body.referenceUrl || null,
+      offer: body.offer || null,
       styleDNA: null,
       brief: null,
       directions: [],
@@ -135,7 +136,7 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" }>): 
       return {
         activity: "Researching the brand…",
         work: async () => {
-          const [r, dna] = await Promise.all([research(m.text, run.brandUrl, run.goal), run.referenceUrl ? styleDNA(m.text, run.referenceUrl) : null]);
+          const [r, dna] = await Promise.all([research(m.text, run.brandUrl, goalCtx(run)), run.referenceUrl ? styleDNA(m.text, run.referenceUrl) : null]);
           Object.assign(run, { research: r.data, styleDNA: dna?.data ?? null, stage: "brief", costUsd: run.costUsd + r.cost + (dna?.cost ?? 0) });
           say(run, "agent", dna ? `Research is done, and I mapped ${dna.data.brand}'s creative style. Next: write the creative brief.` : "Research is done. Next: write the creative brief.");
         },
@@ -145,7 +146,7 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" }>): 
       return {
         activity: "Writing the brief…",
         work: async () => {
-          const b = await brief(m.text, run.research!, run.goal, run.styleDNA);
+          const b = await brief(m.text, run.research!, goalCtx(run), run.styleDNA);
           Object.assign(run, { brief: b.data, stage: "directions", directions: [], costUsd: run.costUsd + b.cost });
           say(run, "agent", "Brief is ready. Edit it if you like, then approve it to get three directions.");
         },
@@ -192,6 +193,9 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" }>): 
     }
   }
 }
+
+const goalCtx = (run: StudioRun) =>
+  run.offer ? `${run.goal}\nReal offer terms (use exactly; never invent prices, discounts or shipping terms beyond these): ${run.offer}` : run.goal;
 
 async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
   const m = run.models;

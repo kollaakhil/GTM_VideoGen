@@ -8,6 +8,8 @@ export interface Brand {
   voice: string;
   audience: string;
   colors: string[];
+  offer?: string;
+  photos?: string[];
   createdAt: string;
 }
 
@@ -125,6 +127,7 @@ export interface StudioRun {
   updatedAt: string;
   research: Research | null;
   referenceUrl?: string | null;
+  offer?: string | null;
   styleDNA?: StyleDNA | null;
   brief: Brief | null;
   directions: Direction[];

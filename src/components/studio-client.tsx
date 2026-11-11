@@ -46,7 +46,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CreativeCard } from "@/components/creative-card";
 import { cn } from "@/lib/utils";
 import type { ModelOption } from "@/lib/models";
-import type { Brief, Creative, CreativeProgress, StudioRun } from "@/lib/types";
+import type { Brand, Brief, Creative, CreativeProgress, StudioRun } from "@/lib/types";
 
 type Model = ModelOption & { ready: boolean };
 type Modality = "text" | "vision" | "image" | "video";
@@ -62,6 +62,9 @@ interface Ctx {
   form: {
     brandUrl: string;
     referenceUrl: string;
+    offer: string;
+    saveKit: boolean;
+    kits: Brand[];
     goal: string;
     format: "static" | "video";
     sel: Record<Modality, string>;
@@ -236,6 +239,38 @@ function BrandNode() {
         <div className="space-y-1.5">
           <Label>Website</Label>
           <Input value={form.brandUrl} onChange={(e) => form.set({ brandUrl: e.target.value })} placeholder="https://yourbrand.com" className="h-9 bg-zinc-950/60" />
+        </div>
+        {form.kits.length > 0 && (
+          <div className="space-y-1.5">
+            <Label>Brand kit</Label>
+            <select
+              defaultValue=""
+              onChange={(e) => {
+                const k = form.kits.find((x) => x.id === e.target.value);
+                if (k) form.set({ brandUrl: k.url, offer: k.offer ?? "", refs: k.photos ?? [] });
+              }}
+              className="h-9 w-full rounded-md border border-white/10 bg-zinc-950/60 px-2 text-sm text-zinc-200"
+            >
+              <option value="">Load a saved brand…</option>
+              {form.kits.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.name}
+                  {k.photos?.length ? ` · ${k.photos.length} photo${k.photos.length > 1 ? "s" : ""}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className="space-y-1.5">
+          <Label>Offer &amp; facts (optional)</Label>
+          <Textarea
+            value={form.offer}
+            onChange={(e) => form.set({ offer: e.target.value })}
+            placeholder="e.g. 20% off first order with code HELLO20, free US shipping over $50"
+            rows={2}
+            className="resize-none bg-zinc-950/60"
+          />
+          <p className="text-[10px] leading-snug text-zinc-500">Used word-for-word, so ads never invent prices or terms.</p>
         </div>
         <div className="space-y-1.5">
           <Label>Inspired by (optional)</Label>
@@ -896,7 +931,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
   const [notice, setNotice] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [form, setForm] = useState({ brandUrl: "https://", referenceUrl: "", goal: "", format: "static" as "static" | "video", sel: defaults, refs: [] as string[] });
+  const [form, setForm] = useState({ brandUrl: "https://", referenceUrl: "", offer: "", saveKit: true, kits: [] as Brand[], goal: "", format: "static" as "static" | "video", sel: defaults, refs: [] as string[] });
 
   const flash = (msg: string) => {
     setNotice(msg);
@@ -926,9 +961,15 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
     [fetchJSON],
   );
 
+  const loadKits = useCallback(
+    () => fetchJSON("/api/brands").then((j) => setForm((f) => ({ ...f, kits: j.brands }))).catch(() => {}),
+    [fetchJSON],
+  );
+
   useEffect(() => {
     loadRuns();
-  }, [loadRuns]);
+    loadKits();
+  }, [loadRuns, loadKits]);
 
   useEffect(() => {
     if (runId) loadRun(runId);
@@ -972,7 +1013,16 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
     [fetchJSON, router],
   );
 
-  const start = () => act("research", { brandUrl: form.brandUrl.trim(), referenceUrl: form.referenceUrl.trim(), goal: form.goal.trim(), format: form.format, models: form.sel });
+  const start = () => {
+    if (form.saveKit && form.brandUrl.trim().length > 10)
+      void fetch("/api/brands", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: form.brandUrl.trim(), offer: form.offer.trim() || undefined, photos: form.refs.length ? form.refs : undefined }),
+      }).then(loadKits);
+    return startRun();
+  };
+  const startRun = () => act("research", { offer: form.offer.trim() || undefined, brandUrl: form.brandUrl.trim(), referenceUrl: form.referenceUrl.trim(), goal: form.goal.trim(), format: form.format, models: form.sel });
 
   const creativeAction = async (c: Creative, a: CreativeAction, ch?: "meta" | "google") => {
     try {
