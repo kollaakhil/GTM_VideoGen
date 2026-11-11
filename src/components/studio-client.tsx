@@ -266,10 +266,8 @@ export function StudioClient({ models, defaults }: { models: Model[]; defaults: 
                 <div className="grid gap-3 md:grid-cols-3">
                   {run.directions.map((d) => (
                     <div key={d.id} className="rounded-lg border p-3">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm font-medium">{d.title}</div>
-                        <Badge variant="outline">{d.angle}</Badge>
-                      </div>
+                      <div className="text-sm font-medium">{d.title}</div>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground" title={d.angle}>{d.angle}</p>
                       <div className="mt-2 text-base font-semibold leading-snug">“{d.hook}”</div>
                       <p className="mt-2 line-clamp-4 text-xs text-muted-foreground">{d.script}</p>
                     </div>

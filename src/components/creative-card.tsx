@@ -25,7 +25,7 @@ export function CreativeCard({
   const k = kpis(c.metrics);
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
-      <div className="relative aspect-square bg-muted">
+      <div className="relative aspect-[4/5] bg-muted">
         {c.mediaType === "video" ? (
           <video src={c.mediaUrl} controls className="size-full object-cover" />
         ) : (
@@ -54,7 +54,7 @@ export function CreativeCard({
           )}
         </div>
         <div className="flex flex-wrap gap-1">
-          <Badge variant="secondary">{c.angle}</Badge>
+          <Badge variant="secondary" className="max-w-full truncate" title={c.angle}>{c.angle}</Badge>
           <Badge variant="outline">{c.format}</Badge>
           {c.channel && <Badge variant="outline">{c.channel === "meta" ? "Meta" : "Google"}</Badge>}
         </div>

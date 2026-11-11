@@ -6,6 +6,7 @@ import { get, newId, put, storeMedia } from "@/lib/store";
 import type { Creative, StudioRun } from "@/lib/types";
 
 export const maxDuration = 300;
+const AUTO_FIX_ATTEMPTS = 1;
 
 const Models = z
   .object({ text: z.string(), vision: z.string(), image: z.string(), video: z.string() })
@@ -60,9 +61,20 @@ export async function POST(req: Request) {
       const div = diversityScores(run.directions.map((d) => `${d.angle} ${d.visualPrompt}`));
       const results = await Promise.allSettled(
         run.directions.map(async (d, i) => {
-          const out = await render(d, { imageModel: m.image, videoModel: m.video, refs: body.refs ?? [], seed: i });
+          const opts = { imageModel: m.image, videoModel: m.video, refs: body.refs ?? [], seed: i };
+          let out = await render(d, opts);
+          let q = await qa(m.vision, out.url, out.type, run.brief!, d.hook);
+          let spent = out.cost + q.cost;
+          for (let attempt = 0; attempt < AUTO_FIX_ATTEMPTS && !q.data.pass && out.type === "image"; attempt++) {
+            const retry = await render(d, { ...opts, fixes: q.data.notes });
+            const rq = await qa(m.vision, retry.url, retry.type, run.brief!, d.hook);
+            spent += retry.cost + rq.cost;
+            if (rq.data.score >= q.data.score) {
+              out = retry;
+              q = { ...rq, data: { ...rq.data, notes: [`Auto-fixed after QA (was ${q.data.score}/10)`, ...rq.data.notes] } };
+            }
+          }
           const mediaUrl = await storeMedia(out.url, `${run.id}/${d.id}.png`);
-          const q = await qa(m.vision, out.url, out.type, run.brief!, d.hook);
           const creative: Creative = {
             id: newId("cr"),
             runId: run.id,
@@ -78,7 +90,7 @@ export async function POST(req: Request) {
             status: "draft",
             channel: null,
             metrics: null,
-            costUsd: out.cost + q.cost,
+            costUsd: spent,
             createdAt: new Date().toISOString(),
           };
           await put("creatives", creative);

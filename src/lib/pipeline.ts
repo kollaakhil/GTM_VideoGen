@@ -82,21 +82,26 @@ export async function directions(model: string, b: Brief, r: Research, format: "
   const { data, usage } = await chatJSON<{ directions: Omit<Direction, "id" | "format">[] }>(
     model,
     "You are a creative director. Pitch three genuinely different ad directions. Each must use a different angle, visual world and hook so ad platforms treat them as distinct creatives.",
-    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}\nReturn JSON: {"directions":[{"title","hook","angle","script" (voiceover/copy),"visualPrompt" (detailed prompt for an image/video model, include on-image headline text)}]} with exactly 3 items.`,
+    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}\nReturn JSON: {"directions":[{"title","hook","angle","script" (voiceover/copy),"visualPrompt" (detailed prompt for an image/video model, include on-image headline text)}]} with exactly 3 items.\nVisual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once. Each direction must look visibly different (setting, composition, palette).`,
   );
   return { data: data.directions.slice(0, 3).map((d, i) => ({ ...d, id: `dir_${i}`, format })), cost: usage.costUsd };
 }
 
 export async function render(
   d: Direction,
-  opts: { imageModel: string; videoModel: string; refs: string[]; seed: number },
+  opts: { imageModel: string; videoModel: string; refs: string[]; seed: number; fixes?: string[] },
 ): Promise<{ url: string; type: "image" | "video"; model: string; cost: number }> {
   if (!aiConfigured()) return { url: placeholderImage(d.hook, opts.seed), type: "image", model: "demo", cost: 0 };
   if (d.format === "video") {
     const v = await generateVideo(opts.videoModel, `${d.visualPrompt}\nVoiceover: ${d.script}`);
     return { url: v.url, type: "video", model: opts.videoModel, cost: v.usage.costUsd };
   }
-  const img = await generateImage(opts.imageModel, `${d.visualPrompt}\nSquare 1:1 social ad. Crisp legible headline text.`, opts.refs);
+  const fixes = opts.fixes?.length ? `\nFix these issues from the last version: ${opts.fixes.join(" ")}` : "";
+  const img = await generateImage(
+    opts.imageModel,
+    `${d.visualPrompt}\n4:5 vertical social ad. Crisp, legible text. Render only the text quoted above; no placeholder or fine-print text.${fixes}`,
+    opts.refs,
+  );
   return { url: img.url, type: "image", model: opts.imageModel, cost: img.usage.costUsd };
 }
 
