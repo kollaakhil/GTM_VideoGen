@@ -76,8 +76,11 @@ interface Ctx {
 const FlowCtx = createContext<Ctx | null>(null);
 const useFlow = () => useContext(FlowCtx)!;
 
-const COL = { brand: 0, research: 440, brief: 900, dir: 1380, creative: 1800, publish: 2200 };
-const ROW = 920;
+const SPINE = { brand: 0, research: 440, brief: 900 };
+const DIR_Y = 780;
+const CR_Y = 1150;
+const PUB_Y = 1980;
+const DIR_X = [560, 930, 1300];
 const WORKING: CreativeProgress[] = ["queued", "rendering", "qa", "fixing"];
 const PROGRESS_LABEL: Record<CreativeProgress, string> = {
   queued: "Queued",
@@ -87,6 +90,18 @@ const PROGRESS_LABEL: Record<CreativeProgress, string> = {
   done: "Done",
   failed: "Failed",
 };
+
+const HANDLE = "!size-2 !border-0 !bg-zinc-600 !opacity-0";
+function Handles() {
+  return (
+    <>
+      <Handle id="l" type="target" position={Position.Left} isConnectable={false} className={HANDLE} />
+      <Handle id="t" type="target" position={Position.Top} isConnectable={false} className={HANDLE} />
+      <Handle id="r" type="source" position={Position.Right} isConnectable={false} className={HANDLE} />
+      <Handle id="b" type="source" position={Position.Bottom} isConnectable={false} className={HANDLE} />
+    </>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Node chrome                                                         */
@@ -143,8 +158,7 @@ function Shell({
         </div>
         <div className="nodrag nowheel cursor-default select-text px-4 py-3.5">{children}</div>
       </div>
-      <Handle type="target" position={Position.Left} isConnectable={false} className="!left-0 !size-2.5 !border-2 !border-zinc-900 !bg-zinc-500" />
-      <Handle type="source" position={Position.Right} isConnectable={false} className="!right-0 !size-2.5 !border-2 !border-zinc-900 !bg-zinc-500" />
+      <Handles />
     </div>
   );
 }
@@ -327,8 +341,8 @@ function ResearchNode() {
         <div className="space-y-3">
           <p className={cn("text-[13px] leading-relaxed text-zinc-300", !more && "line-clamp-4")}>{r.summary}</p>
           <div className="grid grid-cols-2 gap-3">
-            <Row label="Audience">{r.audience}</Row>
-            <Row label="Tone">{r.tone}</Row>
+            <Row label="Audience"><span className={cn(!more && "line-clamp-4")}>{r.audience}</span></Row>
+            <Row label="Tone"><span className={cn(!more && "line-clamp-4")}>{r.tone}</span></Row>
           </div>
           {more && (
             <Row label="Value props">
@@ -342,9 +356,10 @@ function ResearchNode() {
           <div className="space-y-1.5">
             <Label>Angles</Label>
             <div className="flex flex-wrap gap-1">
-              {r.angles.map((a) => (
-                <span key={a} className="rounded-md bg-white/[0.06] px-2 py-0.5 text-[11px] text-zinc-300">{a}</span>
+              {(more ? r.angles : r.angles.slice(0, 4)).map((a) => (
+                <span key={a} title={a} className="max-w-full truncate rounded-md bg-white/[0.06] px-2 py-0.5 text-[11px] text-zinc-300">{a.split(/[:.(]/)[0]}</span>
               ))}
+              {!more && r.angles.length > 4 && <span className="px-1 py-0.5 text-[11px] text-zinc-500">+{r.angles.length - 4}</span>}
             </div>
           </div>
           <button onClick={() => setMore(!more)} className="text-[11px] text-indigo-300 hover:text-indigo-200">{more ? "Show less" : "Show more"}</button>
@@ -516,8 +531,7 @@ function CreativeNode({ data }: NodeProps<Node<{ index: number }>>) {
           onRegenerate={redo}
         />
       </div>
-      <Handle type="target" position={Position.Left} isConnectable={false} className="!left-0 !size-2.5 !border-2 !border-zinc-900 !bg-zinc-500" />
-      <Handle type="source" position={Position.Right} isConnectable={false} className="!right-0 !size-2.5 !border-2 !border-zinc-900 !bg-zinc-500" />
+      <Handles />
     </div>
   );
 }
@@ -572,7 +586,7 @@ function PublishNode() {
   );
 }
 
-function GhostNode({ data }: NodeProps<Node<{ label: string; step: number; hint: string; icon: keyof typeof GHOST_ICONS }>>) {
+function GhostNode({ data }: NodeProps<Node<{ label: string; step: number; hint: string; icon: keyof typeof GHOST_ICONS; order: number }>>) {
   const Icon = GHOST_ICONS[data.icon];
   return (
     <div className="relative w-[280px] opacity-60 animate-in fade-in duration-700">
@@ -585,19 +599,18 @@ function GhostNode({ data }: NodeProps<Node<{ label: string; step: number; hint:
         </div>
         <div className="text-[12px] leading-snug text-zinc-500">{data.hint}</div>
       </div>
-      <Handle type="target" position={Position.Left} isConnectable={false} className="!left-0 !size-2 !border-0 !bg-zinc-700" />
-      <Handle type="source" position={Position.Right} isConnectable={false} className="!right-0 !size-2 !border-0 !bg-zinc-700" />
+      <Handles />
     </div>
   );
 }
 
 const GHOST_ICONS = { research: Search, brief: Lightbulb, dir: Wand2, creative: ImageIcon, publish: Rocket };
 const GHOSTS = [
-  { key: "research", step: 2, label: "Research", hint: "Reads your site and maps audience, tone and angles", x: COL.research },
-  { key: "brief", step: 3, label: "Creative brief", hint: "A 20-second brief you can edit and approve", x: COL.brief },
-  { key: "dir", step: 4, label: "Directions", hint: "Three distinct hooks and visual worlds", x: COL.dir },
-  { key: "creative", step: 5, label: "Creatives", hint: "Images or video, scored by the Vision QA gate", x: COL.creative },
-  { key: "publish", step: 6, label: "Publish", hint: "Paused ads, approved by you in the Inbox", x: COL.publish },
+  { key: "research", step: 2, label: "Research", hint: "Reads your site and maps audience, tone and angles", x: SPINE.research, y: 160, order: 1 },
+  { key: "brief", step: 3, label: "Creative brief", hint: "A 20-second brief you can edit and approve", x: SPINE.brief, y: 160, order: 2 },
+  { key: "dir", step: 4, label: "Directions", hint: "Three distinct hooks and visual worlds", x: 960, y: DIR_Y, order: 3 },
+  { key: "creative", step: 5, label: "Creatives", hint: "Images or video, scored by the Vision QA gate", x: 960, y: CR_Y, order: 4 },
+  { key: "publish", step: 6, label: "Publish", hint: "Paused ads, approved by you in the Inbox", x: 960, y: PUB_Y, order: 5 },
 ] as const;
 
 const noop = () => {};
@@ -611,12 +624,14 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>) {
   return useMemo(() => {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
-    const mid = ROW;
     const working = run?.status === "working";
-    const edge = (source: string, target: string, opts: { active?: boolean; tone?: "pass" | "fail" } = {}): Edge => ({
+    let order = 0;
+    const edge = (source: string, target: string, down: boolean, opts: { active?: boolean; tone?: "pass" | "fail" } = {}): Edge => ({
       id: `${source}->${target}`,
       source,
       target,
+      sourceHandle: down ? "b" : "r",
+      targetHandle: down ? "t" : "l",
       animated: !!opts.active,
       style: {
         stroke: opts.active ? "#818cf8" : opts.tone === "pass" ? "#34d399" : opts.tone === "fail" ? "#f87171" : "#52525b",
@@ -624,61 +639,57 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>) {
         strokeDasharray: opts.tone === "fail" ? "5 5" : undefined,
       },
     });
-
     const withGhosts = () => {
-      const real = nodes.filter((n) => n.type !== "ghost");
-      const maxX = Math.max(...real.map((n) => n.position.x));
-      let sources = real.filter((n) => n.position.x === maxX).map((n) => n.id);
+      let sources = nodes.filter((n) => (n.data as { order?: number }).order === order).map((n) => n.id);
       for (const g of GHOSTS) {
-        if (g.x <= maxX) continue;
+        if (g.order <= order) continue;
         const id = `ghost-${g.key}`;
-        nodes.push({ id, type: "ghost", position: { x: g.x, y: mid + 160 }, data: { label: g.label, step: g.step, hint: g.hint, icon: g.key } });
-        sources.forEach((src) => edges.push({ id: `${src}->${id}`, source: src, target: id, style: { stroke: "#3f3f46", strokeWidth: 1.5, strokeDasharray: "4 6" } }));
+        nodes.push({ id, type: "ghost", position: { x: g.x, y: g.y }, data: { label: g.label, step: g.step, hint: g.hint, icon: g.key, order: g.order } });
+        sources.forEach((src) => edges.push({ ...edge(src, id, g.order >= 3), animated: false, style: { stroke: "#3f3f46", strokeWidth: 1.5, strokeDasharray: "4 6" } }));
         sources = [id];
       }
       return { nodes, edges };
     };
 
-    nodes.push({ id: "brand", type: "brand", position: { x: COL.brand, y: mid }, data: {} });
+    nodes.push({ id: "brand", type: "brand", position: { x: SPINE.brand, y: 0 }, data: { order: 0 } });
     if (!run) return withGhosts();
 
-    nodes.push({ id: "research", type: "research", position: { x: COL.research, y: mid }, data: {} });
-    edges.push(edge("brand", "research", { active: working && run.stage === "research" }));
+    nodes.push({ id: "research", type: "research", position: { x: SPINE.research, y: 0 }, data: { order: 1 } });
+    edges.push(edge("brand", "research", false, { active: working && run.stage === "research" }));
+    order = 1;
 
-    const showBrief = !!run.brief || (run.stage === "brief" && run.status !== "idle");
-    if (showBrief) {
-      nodes.push({ id: "brief", type: "brief", position: { x: COL.brief, y: mid }, data: {} });
-      edges.push(edge("research", "brief", { active: working && run.stage === "brief" }));
+    if (run.brief || (run.stage === "brief" && run.status !== "idle")) {
+      nodes.push({ id: "brief", type: "brief", position: { x: SPINE.brief, y: 0 }, data: { order: 2 } });
+      edges.push(edge("research", "brief", false, { active: working && run.stage === "brief" }));
+      order = 2;
     }
 
-    const showDirs = run.directions.length > 0 || (run.stage === "directions" && run.status !== "idle");
-    if (showDirs) {
+    if (run.directions.length > 0 || (run.stage === "directions" && run.status !== "idle")) {
       [0, 1, 2].forEach((i) => {
-        const id = `dir-${i}`;
-        nodes.push({ id, type: "direction", position: { x: COL.dir, y: i * ROW + 260 }, data: { index: i } });
-        edges.push(edge("brief", id, { active: working && run.stage === "directions" }));
+        nodes.push({ id: `dir-${i}`, type: "direction", position: { x: DIR_X[i], y: DIR_Y }, data: { index: i, order: 3 } });
+        edges.push(edge("brief", `dir-${i}`, true, { active: working && run.stage === "directions" }));
       });
+      order = 3;
     }
 
-    const generating = run.directions.some((d) => run.progress[d.id] || byDir[d.id]);
-    if (generating) {
-      run.directions.forEach((d, i) => {
-        const id = `cr-${i}`;
-        const c = byDir[d.id];
-        const p = run.progress[d.id];
-        const busy = p && WORKING.includes(p);
-        if (!c && !p) return;
-        nodes.push({ id, type: "creative", position: { x: COL.creative, y: i * ROW }, data: { index: i } });
-        edges.push(edge(`dir-${i}`, id, { active: !!busy }));
-      });
-    }
+    let anyCreative = false;
+    run.directions.forEach((d, i) => {
+      const c = byDir[d.id];
+      const p = run.progress[d.id];
+      if (!c && !p) return;
+      anyCreative = true;
+      nodes.push({ id: `cr-${i}`, type: "creative", position: { x: DIR_X[i] + 20, y: CR_Y }, data: { index: i, order: 4 } });
+      edges.push(edge(`dir-${i}`, `cr-${i}`, true, { active: !!p && WORKING.includes(p) }));
+    });
+    if (anyCreative) order = 4;
 
     if (run.stage === "qa" || run.stage === "publish") {
-      nodes.push({ id: "publish", type: "publish", position: { x: COL.publish, y: mid + 260 }, data: {} });
+      nodes.push({ id: "publish", type: "publish", position: { x: 950, y: PUB_Y }, data: { order: 5 } });
       run.directions.forEach((d, i) => {
         const c = byDir[d.id];
-        if (c) edges.push(edge(`cr-${i}`, "publish", { tone: c.qa?.pass ? "pass" : "fail" }));
+        if (c) edges.push(edge(`cr-${i}`, "publish", true, { tone: c.qa?.pass ? "pass" : "fail" }));
       });
+      order = 5;
     }
     return withGhosts();
   }, [run, byDir]);
@@ -780,17 +791,16 @@ function Canvas({ elapsed, notice }: { elapsed: number; notice: string | null })
   const seen = useRef<string>("");
 
   useEffect(() => {
-    const firstGhost = nodes.find((n) => n.type === "ghost")?.id;
-    const ids = nodes.filter((n) => n.type !== "ghost" || n.id === firstGhost).map((n) => n.id);
+    const ids = nodes.filter((n) => n.type !== "ghost").map((n) => n.id);
     const key = ids.join(",");
     if (key === seen.current) return;
-    const prev = new Set(seen.current.split(","));
+    const prev = new Set(seen.current ? seen.current.split(",") : []);
     seen.current = key;
     const fresh = ids.filter((id) => !prev.has(id));
-    const real = fresh.filter((id) => !id.startsWith("ghost-"));
-    const focus = prev.size > 1 && real.length ? real : nodes.length <= 6 ? ["brand"] : ids.filter((id) => !id.startsWith("ghost-")).slice(-3);
-    const t = setTimeout(() => flow.fitView({ nodes: focus.map((id) => ({ id })), padding: 0.2, maxZoom: 1, minZoom: 0.55, duration: 700 }), 150);
-    return () => clearTimeout(t);
+    const focus = prev.size > 0 && fresh.length ? fresh : ids.length === 1 ? ["brand"] : ids.slice(-3);
+    // Not cleared on re-render: polling recreates `nodes`, which would otherwise cancel the pending fit.
+    const fit = () => flow.fitView({ nodes: focus.map((id) => ({ id })), padding: 0.15, maxZoom: 1, minZoom: 0.45, duration: prev.size ? 700 : 0 });
+    setTimeout(fit, 250);
   }, [nodes, flow]);
 
   return (
