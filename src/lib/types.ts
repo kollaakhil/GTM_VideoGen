@@ -45,6 +45,14 @@ export interface Brief {
   kpi: string;
 }
 
+export interface AdCopy {
+  metaPrimaryText: string;
+  metaHeadline: string;
+  metaCta: string;
+  googleHeadlines: string[];
+  googleDescriptions: string[];
+}
+
 export interface Direction {
   id: string;
   title: string;
@@ -53,6 +61,7 @@ export interface Direction {
   format: "static" | "video";
   script: string;
   visualPrompt: string;
+  copy?: AdCopy;
 }
 
 export interface QAResult {
@@ -87,6 +96,7 @@ export interface Creative {
   costUsd: number;
   createdAt: string;
   directionId?: string;
+  copy?: AdCopy | null;
   qaOverride?: { by: string; at: string } | null;
 }
 

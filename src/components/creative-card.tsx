@@ -70,6 +70,17 @@ export function CreativeCard({
             <Stat label="ROAS" value={`${k.roas.toFixed(1)}x`} />
           </div>
         )}
+        {c.copy && (
+          <details className="group rounded-md border border-white/[0.06] px-2 py-1.5 text-[11px]">
+            <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">Ad copy</summary>
+            <div className="mt-1.5 space-y-1.5">
+              <div><span className="text-muted-foreground">Meta · </span>{c.copy.metaPrimaryText}</div>
+              <div><span className="text-muted-foreground">Headline · </span><span className="font-medium">{c.copy.metaHeadline}</span> <span className="text-muted-foreground">[{c.copy.metaCta.replace(/_/g, " ").toLowerCase()}]</span></div>
+              <div><span className="text-muted-foreground">Google · </span>{c.copy.googleHeadlines.join(" | ")}</div>
+              <div className="text-muted-foreground">{c.copy.googleDescriptions.join(" ")}</div>
+            </div>
+          </details>
+        )}
         {c.qa && c.qa.notes.length > 0 && (
           <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-muted-foreground">
             {c.qa.notes.slice(0, 3).map((n) => (

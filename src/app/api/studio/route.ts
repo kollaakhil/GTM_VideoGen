@@ -224,6 +224,7 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
         id: newId("cr"),
         runId: run.id,
         directionId: d.id,
+        copy: d.copy ?? null,
         title: d.title,
         hook: d.hook,
         angle: d.angle,

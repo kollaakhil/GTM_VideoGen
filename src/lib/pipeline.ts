@@ -139,13 +139,20 @@ export async function directions(model: string, b: Brief, r: Research, format: "
         format,
         script: `VO: ${d.hook}. ${b.insight} Start your ${b.offer} today.`,
         visualPrompt: `Bold ${format} ad, ${d.angle.toLowerCase()} concept, headline "${d.hook}"`,
+        copy: {
+          metaPrimaryText: `${d.hook}. ${b.insight} Start your ${b.offer} today.`.slice(0, 125),
+          metaHeadline: d.hook.slice(0, 40),
+          metaCta: "SIGN_UP",
+          googleHeadlines: [d.hook.slice(0, 30), d.angle.slice(0, 30), b.offer.slice(0, 30)],
+          googleDescriptions: [b.insight.slice(0, 90)],
+        },
       })),
     };
   }
   const { data, usage } = await chatJSON<{ directions: Omit<Direction, "id" | "format">[] }>(
     model,
     "You are a creative director. Pitch three genuinely different ad directions. Each must use a different angle, visual world and hook so ad platforms treat them as distinct creatives.",
-    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}${styleBlock(style)}\nReturn JSON: {"directions":[{"title","hook","angle","script" (voiceover/copy),"visualPrompt" (detailed prompt for an image/video model, include on-image headline text)}]} with exactly 3 items.\nVisual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once. Each direction must look visibly different (setting, composition, palette).`,
+    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}${styleBlock(style)}\nReturn JSON: {"directions":[{"title","hook","angle","script" (voiceover/copy),"visualPrompt" (detailed prompt for an image/video model, include on-image headline text),"copy":{"metaPrimaryText" (max 125 chars),"metaHeadline" (max 40 chars),"metaCta" (one of SHOP_NOW, LEARN_MORE, SIGN_UP, GET_OFFER, ORDER_NOW),"googleHeadlines" (5 items, max 30 chars each),"googleDescriptions" (2 items, max 90 chars each)}}]} with exactly 3 items. Ad copy must use only facts from the brief.\nVisual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once. Each direction must look visibly different (setting, composition, palette).`,
   );
   return { data: data.directions.slice(0, 3).map((d, i) => ({ ...d, id: `dir_${i}`, format })), cost: usage.costUsd };
 }
