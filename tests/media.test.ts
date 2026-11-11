@@ -44,3 +44,10 @@ describe("captionVariants", () => {
     fs.rmSync(sq);
   }, 120_000);
 });
+
+describe("spokenScript", () => {
+  it("strips speaker labels and stage directions from captions", async () => {
+    const { spokenScript } = await import("@/lib/video-post");
+    expect(spokenScript('VO (CASUAL): "Your feet called." [beat] SFX: whoosh Shop now.')).toBe("Your feet called. whoosh Shop now.");
+  });
+});

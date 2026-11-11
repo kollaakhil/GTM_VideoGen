@@ -22,9 +22,19 @@ const assTime = (t: number) => {
   return `${h}:${String(m).padStart(2, "0")}:${s}`;
 };
 
+/** Keeps only spoken words: drops speaker labels (VO:, SFX:), bracketed/parenthesised directions and notes. */
+export function spokenScript(script: string) {
+  return script
+    .replace(/\([^)]*\)|\[[^\]]*\]|\{[^}]*\}/g, " ")
+    .replace(/\b[A-Z][A-Z /&-]{1,24}:\s*/g, " ")
+    .replace(/["“”]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** Splits a voiceover script into short caption chunks spread evenly over the clip. */
 export function captionCues(script: string, duration: number, wordsPerCue = 4) {
-  const words = script.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const words = spokenScript(script).split(" ").filter(Boolean);
   if (!words.length || duration <= 0) return [];
   const chunks: string[] = [];
   for (let i = 0; i < words.length; i += wordsPerCue) chunks.push(words.slice(i, i + wordsPerCue).join(" "));

@@ -7,7 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import { safeFetchText } from "./safe-fetch";
-import { captionVariants } from "./video-post";
+import { captionVariants, spokenScript } from "./video-post";
 import type { OrganicPack, StyleDNA, Brief, Direction, QAResult, Research } from "./types";
 
 type Site = { text: string; error: string | null; styleRef: string | null; colors: string[] };
@@ -175,7 +175,7 @@ export async function directions(model: string, b: Brief, r: Research, format: "
   const { data, usage } = await chatJSON<{ directions: Omit<Direction, "id" | "format">[] }>(
     model,
     "You are a creative director. Pitch three genuinely different ad directions. Each must use a different angle, visual world and hook so ad platforms treat them as distinct creatives.",
-    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}${styleBlock(style)}\nReturn JSON: {"directions":[{"title","hook","angle","script" (voiceover/copy),"visualPrompt" (detailed prompt for an image/video model, include on-image headline text),"copy":{"metaPrimaryText" (max 125 chars),"metaHeadline" (max 40 chars),"metaCta" (one of SHOP_NOW, LEARN_MORE, SIGN_UP, GET_OFFER, ORDER_NOW),"googleHeadlines" (5 items, max 30 chars each),"googleDescriptions" (2 items, max 90 chars each)}}]} with exactly 3 items. Ad copy must use only facts from the brief.\nVisual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once. Each direction must look visibly different (setting, composition, palette).`,
+    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}${styleBlock(style)}\nReturn JSON: {"directions":[{"title","hook","angle","script" (only the words spoken aloud, no speaker labels, stage directions, brackets or notes),"visualPrompt" (detailed prompt for an image/video model, include on-image headline text),"copy":{"metaPrimaryText" (max 125 chars),"metaHeadline" (max 40 chars),"metaCta" (one of SHOP_NOW, LEARN_MORE, SIGN_UP, GET_OFFER, ORDER_NOW),"googleHeadlines" (5 items, max 30 chars each),"googleDescriptions" (2 items, max 90 chars each)}}]} with exactly 3 items. Ad copy must use only facts from the brief.\nVisual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once. Each direction must look visibly different (setting, composition, palette).`,
   );
   return { data: data.directions.slice(0, 3).map((d, i) => ({ ...d, id: `dir_${i}`, format })), cost: usage.costUsd };
 }
@@ -186,7 +186,11 @@ export async function render(
 ): Promise<{ url: string; type: "image" | "video"; model: string; cost: number; variants?: { aspect: string; url: string }[] }> {
   if (!aiConfigured()) return { url: placeholderImage(d.hook, opts.seed), type: "image", model: "demo", cost: 0 };
   if (d.format === "video") {
-    const v = await generateVideo(opts.videoModel, `${d.visualPrompt}\nVoiceover: ${d.script}`, opts.refs[0]);
+    const v = await generateVideo(
+      opts.videoModel,
+      `${d.visualPrompt}\nDo not render any on-screen text, captions, prices, labels or logos; captions are added in post. Product must look exactly like the reference photo if one is given.\nSpoken voiceover: "${spokenScript(d.script)}"`,
+      opts.refs[0],
+    );
     const variants = await captionVariants(v.url, d.script).catch((e) => {
       console.error("caption/variants failed", (e as Error).message);
       return [];
