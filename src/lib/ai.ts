@@ -68,15 +68,108 @@ async function falVideo(model: string, prompt: string): Promise<string> {
   throw new Error("fal job timed out");
 }
 
+type VideoSpec = { durations?: number[] | null; resolutions?: string[] | null; aspects?: string[] | null };
+let videoCatalog: { at: number; specs: Map<string, VideoSpec> } | null = null;
+
+async function openrouterVideoSpec(model: string): Promise<VideoSpec> {
+  if (!videoCatalog || Date.now() - videoCatalog.at > 3_600_000) {
+    const res = await fetch("https://openrouter.ai/api/v1/videos/models");
+    const json = res.ok ? await res.json() : { data: [] };
+    videoCatalog = {
+      at: Date.now(),
+      specs: new Map(
+        (json.data ?? []).map((m: { id: string; supported_durations?: number[]; supported_resolutions?: string[]; supported_aspect_ratios?: string[] }) => [
+          m.id,
+          { durations: m.supported_durations, resolutions: m.supported_resolutions, aspects: m.supported_aspect_ratios },
+        ]),
+      ),
+    };
+  }
+  return videoCatalog.specs.get(model) ?? {};
+}
+
+const prefer = <T,>(options: T[] | null | undefined, wanted: T[]): T | undefined => (options?.length ? (wanted.find((w) => options.includes(w)) ?? options[0]) : undefined);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const VIDEO_TIMEOUT_MS = 12 * 60_000;
+
+async function downloadAsDataUrl(url: string, headers: Record<string, string> = {}): Promise<string> {
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw new Error(`Video download failed (${res.status})`);
+  const type = res.headers.get("content-type")?.split(";")[0] || "video/mp4";
+  return `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString("base64")}`;
+}
+
+async function openrouterVideo(model: string, prompt: string): Promise<{ url: string; usage: Usage }> {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
+  const auth = { Authorization: `Bearer ${key}` };
+  const spec = await openrouterVideoSpec(model);
+  const body = {
+    model,
+    prompt,
+    duration: prefer(spec.durations, [6, 5, 8, 4]),
+    resolution: prefer(spec.resolutions, ["720p", "768p", "1080p"]),
+    aspect_ratio: prefer(spec.aspects, ["9:16", "3:4", "1:1"]),
+    generate_audio: true,
+  };
+  const submit = await fetch("https://openrouter.ai/api/v1/videos", { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Title": "GTM Engine" }, body: JSON.stringify(body) });
+  if (!submit.ok) throw new Error(`OpenRouter video ${submit.status}: ${(await submit.text()).slice(0, 300)}`);
+  let job = await submit.json();
+  const started = Date.now();
+  while (job.status !== "completed") {
+    if (["failed", "cancelled", "expired"].includes(job.status)) throw new Error(`Video ${job.status}: ${JSON.stringify(job.error ?? "").slice(0, 300)}`);
+    if (Date.now() - started > VIDEO_TIMEOUT_MS) throw new Error("Video generation timed out");
+    await sleep(8000);
+    const poll = await fetch(new URL(job.polling_url ?? `/api/v1/videos/${job.id}`, "https://openrouter.ai"), { headers: auth });
+    if (poll.ok) job = await poll.json();
+    else if (poll.status < 500) throw new Error(`OpenRouter video poll ${poll.status}: ${(await poll.text()).slice(0, 200)}`);
+  }
+  const src: string = job.unsigned_urls?.[0] ?? `https://openrouter.ai/api/v1/videos/${job.id}/content?index=0`;
+  const url = await downloadAsDataUrl(src, src.startsWith("https://openrouter.ai/") ? auth : {});
+  return { url, usage: { costUsd: job.usage?.cost ?? 0 } };
+}
+
+const HIGGSFIELD_ASPECTS: Record<string, string[]> = { kling: ["9:16", "1:1"], default: ["9:16", "3:4", "1:1"] };
+
+async function higgsfieldVideo(model: string, prompt: string): Promise<{ url: string; usage: Usage }> {
+  const id = process.env.HF_API_KEY_ID;
+  const secret = process.env.HF_API_KEY_SECRET;
+  if (!id || !secret) throw new Error("Higgsfield is not connected (set HF_API_KEY_ID and HF_API_KEY_SECRET)");
+  const endpoint = model.replace(/^higgsfield:/, "");
+  if (!/^[a-z0-9][a-z0-9./-]+$/.test(endpoint)) throw new Error("Invalid Higgsfield model");
+  const auth = { Authorization: `Key ${id}:${secret}` };
+  const kling = endpoint.startsWith("kling-video/");
+  const body: Record<string, unknown> = { prompt: prompt.slice(0, kling ? 2500 : 4000), duration: 5, aspect_ratio: (kling ? HIGGSFIELD_ASPECTS.kling : HIGGSFIELD_ASPECTS.default)[0] };
+  if (kling) body.sound = "on";
+  else Object.assign(body, { resolution: "720p", generate_audio: true });
+  const submit = await fetch(`https://api.higgsfield.ai/${endpoint}`, {
+    method: "POST",
+    headers: { ...auth, "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify(body),
+  });
+  if (!submit.ok) throw new Error(`Higgsfield ${submit.status}: ${(await submit.text()).slice(0, 300)}`);
+  let job = await submit.json();
+  const statusUrl: string = job.status_url ?? `https://api.higgsfield.ai/requests/${job.request_id}/status`;
+  if (!statusUrl.startsWith("https://api.higgsfield.ai/")) throw new Error("Unexpected Higgsfield status URL");
+  const started = Date.now();
+  while (job.status !== "completed") {
+    if (["failed", "nsfw", "canceled", "cancelled"].includes(job.status)) throw new Error(`Higgsfield ${job.status}${job.error ? `: ${String(job.error).slice(0, 200)}` : ""}`);
+    if (Date.now() - started > VIDEO_TIMEOUT_MS) throw new Error("Higgsfield video timed out");
+    await sleep(8000);
+    const poll = await fetch(statusUrl, { headers: auth });
+    if (poll.ok) job = await poll.json();
+    else if (poll.status < 500) throw new Error(`Higgsfield status ${poll.status}: ${(await poll.text()).slice(0, 200)}`);
+  }
+  const out: string | undefined = job.video?.url ?? job.videos?.[0]?.url;
+  if (!out) throw new Error("Higgsfield returned no video");
+  return { url: await downloadAsDataUrl(out), usage: { costUsd: 0 } };
+}
+
 export async function generateVideo(model: string, prompt: string): Promise<{ url: string; usage: Usage }> {
   const provider = providerOf(model);
   if (provider === "fal") return { url: await falVideo(model, prompt), usage: { costUsd: 0 } };
-  if (provider === "higgsfield") throw new Error("Higgsfield adapter needs HIGGSFIELD_API_KEY and API docs; not configured yet");
-  const json = await openrouter({ model, modalities: ["video", "text"], messages: [{ role: "user", content: prompt }] });
-  const msg = json.choices?.[0]?.message;
-  const url: string | undefined = msg?.videos?.[0]?.video_url?.url ?? msg?.videos?.[0]?.url;
-  if (!url) throw new Error("Video model returned no video");
-  return { url, usage: { costUsd: json.usage?.cost ?? 0 } };
+  if (provider === "higgsfield") return higgsfieldVideo(model, prompt);
+  return openrouterVideo(model, prompt);
 }
 
 export function aiConfigured() {

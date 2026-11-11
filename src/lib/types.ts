@@ -18,6 +18,8 @@ export interface Research {
   tone: string;
   angles: string[];
   sources: string[];
+  styleRef?: string | null;
+  colors?: string[];
 }
 
 export interface Brief {

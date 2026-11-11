@@ -167,9 +167,13 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" }>): 
           run.creativeIds = [];
           run.progress = Object.fromEntries(run.directions.map((d) => [d.id, "queued" as const]));
           await generateMany(run, run.directions, body.refs ?? []);
+          const made = run.creativeIds.length;
+          if (made === 0) {
+            say(run, "error", "None of the creatives could be generated. Check the errors above, switch the model under Models if needed, and generate again.");
+            return;
+          }
           run.stage = "qa";
-          const passed = run.creativeIds.length;
-          say(run, "agent", `Generated ${passed} creative${passed === 1 ? "" : "s"}. Ones that pass QA can be sent to the Inbox for publishing.`);
+          say(run, "agent", `Generated ${made} creative${made === 1 ? "" : "s"}. Ones that pass QA can be sent to the Inbox for publishing.`);
         },
       };
     case "regenerate": {
@@ -194,7 +198,7 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
   const results = await Promise.allSettled(
     dirs.map(async (d) => {
       const i = run.directions.indexOf(d);
-      const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i };
+      const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i, style: { styleRef: run.research?.styleRef, colors: run.research?.colors } };
       run.progress[d.id] = "rendering";
       await save();
       let out = await render(d, opts);
