@@ -70,6 +70,15 @@ export function CreativeCard({
             <Stat label="ROAS" value={`${k.roas.toFixed(1)}x`} />
           </div>
         )}
+        {!!c.variants?.length && (
+          <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+            Cuts:
+            <a href={c.mediaUrl} target="_blank" rel="noreferrer" className="rounded border border-white/10 px-1.5 py-0.5 hover:text-foreground">9:16</a>
+            {c.variants.map((v) => (
+              <a key={v.aspect} href={v.url} target="_blank" rel="noreferrer" className="rounded border border-white/10 px-1.5 py-0.5 hover:text-foreground">{v.aspect}</a>
+            ))}
+          </div>
+        )}
         {c.copy && (
           <details className="group rounded-md border border-white/[0.06] px-2 py-1.5 text-[11px]">
             <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">Ad copy</summary>

@@ -99,6 +99,7 @@ export interface Creative {
   createdAt: string;
   directionId?: string;
   copy?: AdCopy | null;
+  variants?: { aspect: string; url: string }[];
   qaOverride?: { by: string; at: string } | null;
 }
 

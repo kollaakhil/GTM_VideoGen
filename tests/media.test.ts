@@ -27,3 +27,20 @@ describe("filmstrip", () => {
     fs.rmSync(file);
   }, 60_000);
 });
+
+describe("captionVariants", () => {
+  it("burns captions and renders 9:16, 4:5 and 1:1 cuts", async () => {
+    const { captionVariants, captionCues } = await import("@/lib/video-post");
+    expect(captionCues("one two three four five six", 6).length).toBe(2);
+    const file = path.join(os.tmpdir(), `cap-${Date.now()}.mp4`);
+    execFileSync(ffmpegPath || "ffmpeg", ["-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=720x1280:rate=24:duration=3", "-pix_fmt", "yuv420p", "-y", file]);
+    const out = await captionVariants(`data:video/mp4;base64,${fs.readFileSync(file).toString("base64")}`, "Comfort that sells itself. Shop the sale.");
+    expect(out.map((o) => o.aspect)).toEqual(["9:16", "4:5", "1:1"]);
+    const sq = path.join(os.tmpdir(), `sq-${Date.now()}.mp4`);
+    fs.writeFileSync(sq, Buffer.from(out[2].url.split(",")[1], "base64"));
+    const info = execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", sq]).toString().trim();
+    expect(info).toBe("720,720");
+    fs.rmSync(file);
+    fs.rmSync(sq);
+  }, 120_000);
+});

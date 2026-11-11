@@ -7,6 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import { safeFetchText } from "./safe-fetch";
+import { captionVariants } from "./video-post";
 import type { StyleDNA, Brief, Direction, QAResult, Research } from "./types";
 
 type Site = { text: string; error: string | null; styleRef: string | null; colors: string[] };
@@ -160,11 +161,16 @@ export async function directions(model: string, b: Brief, r: Research, format: "
 export async function render(
   d: Direction,
   opts: { imageModel: string; videoModel: string; refs: string[]; seed: number; fixes?: string[]; style?: { styleRef?: string | null; colors?: string[] } },
-): Promise<{ url: string; type: "image" | "video"; model: string; cost: number }> {
+): Promise<{ url: string; type: "image" | "video"; model: string; cost: number; variants?: { aspect: string; url: string }[] }> {
   if (!aiConfigured()) return { url: placeholderImage(d.hook, opts.seed), type: "image", model: "demo", cost: 0 };
   if (d.format === "video") {
     const v = await generateVideo(opts.videoModel, `${d.visualPrompt}\nVoiceover: ${d.script}`, opts.refs[0]);
-    return { url: v.url, type: "video", model: opts.videoModel, cost: v.usage.costUsd };
+    const variants = await captionVariants(v.url, d.script).catch((e) => {
+      console.error("caption/variants failed", (e as Error).message);
+      return [];
+    });
+    const main = variants.find((x) => x.aspect === "9:16")?.url ?? v.url;
+    return { url: main, type: "video", model: opts.videoModel, cost: v.usage.costUsd, variants };
   }
   const fixes = opts.fixes?.length ? `\nFix these issues from the last version: ${opts.fixes.join(" ")}` : "";
   const colors = opts.style?.colors?.length ? `\nBrand colors: ${opts.style.colors.join(", ")}.` : "";

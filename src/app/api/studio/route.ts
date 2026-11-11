@@ -223,7 +223,11 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
           out = retry;
         }
       }
-      const mediaUrl = await storeMedia(out.url, `${run.id}/${d.id}-${Date.now()}`);
+      const stamp = Date.now();
+      const mediaUrl = await storeMedia(out.url, `${run.id}/${d.id}-${stamp}`);
+      const variants = await Promise.all(
+        (out.variants ?? []).filter((v) => v.aspect !== "9:16").map(async (v) => ({ aspect: v.aspect, url: await storeMedia(v.url, `${run.id}/${d.id}-${stamp}-${v.aspect.replace(":", "x")}`) })),
+      );
       const creative: Creative = {
         id: newId("cr"),
         runId: run.id,
@@ -234,6 +238,7 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
         angle: d.angle,
         format: d.format,
         mediaUrl,
+        variants,
         mediaType: out.type,
         model: out.model,
         qa: q.data,
