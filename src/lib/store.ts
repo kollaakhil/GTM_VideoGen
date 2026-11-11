@@ -87,7 +87,7 @@ export async function list<K extends TableName>(table: K): Promise<Tables[K][]> 
     if (error) throw new Error(error.message);
     return (data ?? []).map((r) => r.data as Tables[K]);
   }
-  const rows = [...(mem()[table] as Map<string, Tables[K]>).values()];
+  const rows = [...(mem()[table] as Map<string, Tables[K]>).values()].map((r) => structuredClone(r));
   return rows.sort((a, b) => String((b as { createdAt?: string }).createdAt ?? "").localeCompare(String((a as { createdAt?: string }).createdAt ?? "")));
 }
 
@@ -98,7 +98,8 @@ export async function get<K extends TableName>(table: K, id: string): Promise<Ta
     if (error) throw new Error(error.message);
     return (data?.data as Tables[K]) ?? null;
   }
-  return (mem()[table] as Map<string, Tables[K]>).get(id) ?? null;
+  const row = (mem()[table] as Map<string, Tables[K]>).get(id);
+  return row ? structuredClone(row) : null;
 }
 
 export async function put<K extends TableName>(table: K, row: Tables[K] & { id: string }): Promise<Tables[K]> {
@@ -108,7 +109,7 @@ export async function put<K extends TableName>(table: K, row: Tables[K] & { id: 
     if (error) throw new Error(error.message);
     return row;
   }
-  (mem()[table] as Map<string, Tables[K]>).set(row.id, row);
+  (mem()[table] as Map<string, Tables[K]>).set(row.id, structuredClone(row));
   persist();
   return row;
 }
