@@ -99,7 +99,7 @@ async function downloadAsDataUrl(url: string, headers: Record<string, string> = 
   return `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString("base64")}`;
 }
 
-async function openrouterVideo(model: string, prompt: string): Promise<{ url: string; usage: Usage }> {
+async function openrouterVideo(model: string, prompt: string, firstFrame?: string): Promise<{ url: string; usage: Usage }> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
   const auth = { Authorization: `Bearer ${key}` };
@@ -111,6 +111,7 @@ async function openrouterVideo(model: string, prompt: string): Promise<{ url: st
     resolution: prefer(spec.resolutions, ["720p", "768p", "1080p"]),
     aspect_ratio: prefer(spec.aspects, ["9:16", "3:4", "1:1"]),
     generate_audio: true,
+    ...(firstFrame ? { frame_images: [{ type: "image_url", image_url: { url: firstFrame }, frame_type: "first_frame" }] } : {}),
   };
   const submit = await fetch("https://openrouter.ai/api/v1/videos", { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Title": "GTM Engine" }, body: JSON.stringify(body) });
   if (!submit.ok) throw new Error(`OpenRouter video ${submit.status}: ${(await submit.text()).slice(0, 300)}`);
@@ -165,11 +166,11 @@ async function higgsfieldVideo(model: string, prompt: string): Promise<{ url: st
   return { url: await downloadAsDataUrl(out), usage: { costUsd: 0 } };
 }
 
-export async function generateVideo(model: string, prompt: string): Promise<{ url: string; usage: Usage }> {
+export async function generateVideo(model: string, prompt: string, firstFrame?: string): Promise<{ url: string; usage: Usage }> {
   const provider = providerOf(model);
   if (provider === "fal") return { url: await falVideo(model, prompt), usage: { costUsd: 0 } };
   if (provider === "higgsfield") return higgsfieldVideo(model, prompt);
-  return openrouterVideo(model, prompt);
+  return openrouterVideo(model, prompt, firstFrame);
 }
 
 export function aiConfigured() {

@@ -163,7 +163,7 @@ export async function render(
 ): Promise<{ url: string; type: "image" | "video"; model: string; cost: number }> {
   if (!aiConfigured()) return { url: placeholderImage(d.hook, opts.seed), type: "image", model: "demo", cost: 0 };
   if (d.format === "video") {
-    const v = await generateVideo(opts.videoModel, `${d.visualPrompt}\nVoiceover: ${d.script}`);
+    const v = await generateVideo(opts.videoModel, `${d.visualPrompt}\nVoiceover: ${d.script}`, opts.refs[0]);
     return { url: v.url, type: "video", model: opts.videoModel, cost: v.usage.costUsd };
   }
   const fixes = opts.fixes?.length ? `\nFix these issues from the last version: ${opts.fixes.join(" ")}` : "";
