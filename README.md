@@ -1,36 +1,28 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GTM Engine
 
-## Getting Started
+AI marketing studio: brand research → brief → three directions → image/video creatives → Vision QA gate → approval inbox → Meta / Google publishing, with performance data and a server-side signal loop (Meta CAPI) in Supabase.
 
-First, run the development server:
+## Stack
+Next.js 15 (App Router) · Tailwind + shadcn/ui · Supabase (Postgres + Storage) · OpenRouter (text, vision, image, Gemini Omni video) · fal.ai / Higgsfield (extra video models)
 
+## Run locally
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp .env.example .env.local   # fill in what you have
 pnpm dev
-# or
-bun dev
 ```
+Without keys the app runs in **demo mode**: an in-memory store with sample data and placeholder creatives.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Supabase
+Apply `supabase/migrations/0001_init.sql` (SQL editor or `supabase db push`), then set `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Pages
+- **Studio**: chat + canvas pipeline with approve/redo at each step
+- **Library**: creatives with QA score, distinctness, status, live KPIs
+- **Campaigns**: synced Meta / Google campaigns
+- **Performance**: spend, revenue, ROAS by angle, signal-loop log
+- **Inbox**: approvals for anything that spends money (ads are created PAUSED)
+- **Connections**: integration health from env vars
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Signal loop
+`POST /api/webhooks/stripe` verifies the Stripe signature, SHA-256 hashes the customer email and sends a `Purchase` event to Meta CAPI.

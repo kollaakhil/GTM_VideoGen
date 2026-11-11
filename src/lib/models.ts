@@ -1,0 +1,41 @@
+export type Modality = "text" | "vision" | "image" | "video";
+export type Provider = "openrouter" | "fal" | "higgsfield";
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  provider: Provider;
+  modality: Modality;
+}
+
+export const MODELS: ModelOption[] = [
+  { id: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5", provider: "openrouter", modality: "text" },
+  { id: "anthropic/claude-opus-5.5", label: "Claude Opus 5.5", provider: "openrouter", modality: "text" },
+  { id: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash", provider: "openrouter", modality: "text" },
+  { id: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash (vision)", provider: "openrouter", modality: "vision" },
+  { id: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5 (vision)", provider: "openrouter", modality: "vision" },
+  { id: "google/gemini-nano-banana-2.1", label: "Nano Banana 2.1", provider: "openrouter", modality: "image" },
+  { id: "google/gemini-3-pro-image", label: "Gemini 3 Pro Image", provider: "openrouter", modality: "image" },
+  { id: "openai/gpt-5.4-image-2", label: "GPT-5.4 Image 2", provider: "openrouter", modality: "image" },
+  { id: "google/gemini-omni-1.2-flash", label: "Gemini Omni 1.2 (OpenRouter)", provider: "openrouter", modality: "video" },
+  { id: "fal-ai/bytedance/seedance/v1/pro/text-to-video", label: "Seedance Pro (fal)", provider: "fal", modality: "video" },
+  { id: "fal-ai/kling-video/v2.1/master/text-to-video", label: "Kling 2.1 Master (fal)", provider: "fal", modality: "video" },
+  { id: "higgsfield/default", label: "Higgsfield", provider: "higgsfield", modality: "video" },
+];
+
+export const DEFAULTS = {
+  text: process.env.TEXT_MODEL || "anthropic/claude-sonnet-5.5",
+  vision: process.env.VISION_MODEL || "google/gemini-3.8-flash",
+  image: process.env.IMAGE_MODEL || "google/gemini-nano-banana-2.1",
+  video: process.env.VIDEO_MODEL || "google/gemini-omni-1.2-flash",
+};
+
+export function providerOf(modelId: string): Provider {
+  return MODELS.find((m) => m.id === modelId)?.provider ?? (modelId.startsWith("fal-ai/") ? "fal" : "openrouter");
+}
+
+export function providerConfigured(p: Provider): boolean {
+  if (p === "openrouter") return !!process.env.OPENROUTER_API_KEY;
+  if (p === "fal") return !!process.env.FAL_KEY;
+  return !!process.env.HIGGSFIELD_API_KEY;
+}

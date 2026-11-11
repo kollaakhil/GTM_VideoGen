@@ -1,0 +1,127 @@
+export type Channel = "meta" | "google";
+export type CreativeStatus = "draft" | "approved" | "live" | "paused" | "rejected";
+
+export interface Brand {
+  id: string;
+  name: string;
+  url: string;
+  voice: string;
+  audience: string;
+  colors: string[];
+  createdAt: string;
+}
+
+export interface Research {
+  summary: string;
+  audience: string;
+  valueProps: string[];
+  tone: string;
+  angles: string[];
+  sources: string[];
+}
+
+export interface Brief {
+  objective: string;
+  audience: string;
+  insight: string;
+  offer: string;
+  mandatories: string[];
+  kpi: string;
+}
+
+export interface Direction {
+  id: string;
+  title: string;
+  hook: string;
+  angle: string;
+  format: "static" | "video";
+  script: string;
+  visualPrompt: string;
+}
+
+export interface QAResult {
+  score: number;
+  pass: boolean;
+  notes: string[];
+}
+
+export interface Metrics {
+  spend: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  revenue: number;
+}
+
+export interface Creative {
+  id: string;
+  runId: string;
+  title: string;
+  hook: string;
+  angle: string;
+  format: "static" | "video";
+  mediaUrl: string;
+  mediaType: "image" | "video";
+  model: string;
+  qa: QAResult | null;
+  diversity: number | null;
+  status: CreativeStatus;
+  channel: Channel | null;
+  metrics: Metrics | null;
+  costUsd: number;
+  createdAt: string;
+}
+
+export type Stage = "research" | "brief" | "directions" | "generate" | "qa" | "publish";
+
+export interface StudioRun {
+  id: string;
+  brandUrl: string;
+  goal: string;
+  stage: Stage;
+  research: Research | null;
+  brief: Brief | null;
+  directions: Direction[];
+  creativeIds: string[];
+  costUsd: number;
+  createdAt: string;
+}
+
+export interface InboxItem {
+  id: string;
+  kind: "publish" | "budget";
+  title: string;
+  detail: string;
+  channel: Channel;
+  creativeId: string | null;
+  dailyBudget: number | null;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+}
+
+export interface Campaign {
+  id: string;
+  channel: Channel;
+  name: string;
+  status: "active" | "paused" | "draft";
+  dailyBudget: number;
+  metrics: Metrics;
+}
+
+export interface MetricDay {
+  date: string;
+  channel: Channel;
+  spend: number;
+  revenue: number;
+  conversions: number;
+}
+
+export interface SignalEvent {
+  id: string;
+  destination: "meta_capi" | "google_offline";
+  eventName: string;
+  value: number;
+  status: "sent" | "skipped" | "failed";
+  detail: string;
+  createdAt: string;
+}
