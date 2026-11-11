@@ -7,7 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import { safeFetchText } from "./safe-fetch";
-import type { Brief, Direction, QAResult, Research } from "./types";
+import type { StyleDNA, Brief, Direction, QAResult, Research } from "./types";
 
 type Site = { text: string; error: string | null; styleRef: string | null; colors: string[] };
 
@@ -45,6 +45,34 @@ async function fetchSite(url: string): Promise<Site> {
   }
 }
 
+/** Distils a reference brand's creative style so it can be applied to a different brand without copying it. */
+export async function styleDNA(model: string, referenceUrl: string): Promise<{ data: StyleDNA; cost: number }> {
+  if (!aiConfigured()) {
+    return {
+      cost: 0,
+      data: {
+        referenceUrl, brand: new URL(referenceUrl).hostname, tone: "Irreverent, deadpan, punk-rock confidence", humor: "Absurdist and self-aware",
+        visualLanguage: "High-contrast black and white with one loud accent color, heavy condensed type", pacing: "Fast cuts, abrupt hard stops",
+        hookPatterns: ["Shock opener", "Mock-serious announcement"], copyRules: ["Short declarative lines", "Never earnest"], doNotCopy: ["Logo", "Slogans", "Mascots"],
+        styleRef: null, colors: [],
+      },
+    };
+  }
+  const site = await fetchSite(referenceUrl);
+  if (site.error && /private|not allowed|Invalid URL/.test(site.error)) throw new Error(site.error);
+  const { data, usage } = await chatJSON<Omit<StyleDNA, "referenceUrl" | "styleRef" | "colors">>(
+    model,
+    "You are a brand strategist who reverse-engineers a reference brand's creative style so another brand can borrow the *approach*, never the assets.",
+    `Reference brand site (${referenceUrl}):\n${site.text || `(could not fetch: ${site.error}; use what you know about this brand and say so)`}\n\nReturn JSON: {"brand": string, "tone": string (max 15 words), "humor": string (max 12 words), "visualLanguage": string (max 25 words: palette, type, photography, composition), "pacing": string (max 15 words, for video), "hookPatterns": string[] (3-5 recurring hook formulas, abstracted), "copyRules": string[] (3-5 rules), "doNotCopy": string[] (their trademarks, slogans, mascots, product names, signature phrases)}`,
+  );
+  return { data: { ...data, referenceUrl, styleRef: site.styleRef, colors: site.colors }, cost: usage.costUsd };
+}
+
+const styleBlock = (d?: StyleDNA | null) =>
+  d
+    ? `\nCreative style to borrow (from ${d.brand}, applied to OUR brand): tone: ${d.tone}; humor: ${d.humor}; visuals: ${d.visualLanguage}; pacing: ${d.pacing}; hook patterns: ${d.hookPatterns.join("; ")}; copy rules: ${d.copyRules.join("; ")}. Never use or reference: ${d.doNotCopy.join(", ")}, or ${d.brand}'s name, logo or claims.`
+    : "";
+
 export const QA_PASS_SCORE = Number(process.env.QA_PASS_SCORE) || 8;
 
 export async function research(model: string, brandUrl: string, goal: string): Promise<{ data: Research; cost: number }> {
@@ -74,7 +102,7 @@ export async function research(model: string, brandUrl: string, goal: string): P
   };
 }
 
-export async function brief(model: string, r: Research, goal: string): Promise<{ data: Brief; cost: number }> {
+export async function brief(model: string, r: Research, goal: string, style?: StyleDNA | null): Promise<{ data: Brief; cost: number }> {
   if (!aiConfigured()) {
     return {
       cost: 0,
@@ -91,12 +119,12 @@ export async function brief(model: string, r: Research, goal: string): Promise<{
   const { data, usage } = await chatJSON<Brief>(
     model,
     "You write tight creative briefs for paid social and search ads. Be specific and brief; a busy founder must read it in 20 seconds.",
-    `Goal: ${goal}\nResearch: ${JSON.stringify(r)}\nReturn JSON: {"objective" (max 20 words),"audience" (max 15 words),"insight" (one sentence, max 25 words),"offer" (max 15 words, only facts found in research),"mandatories": string[] (3-5 items, max 10 words each),"kpi" (max 10 words)}`,
+    `Goal: ${goal}\nResearch: ${JSON.stringify(r)}${styleBlock(style)}\nReturn JSON: {"objective" (max 20 words),"audience" (max 15 words),"insight" (one sentence, max 25 words),"offer" (max 15 words, only facts found in research),"mandatories": string[] (3-5 items, max 10 words each),"kpi" (max 10 words)}`,
   );
   return { data, cost: usage.costUsd };
 }
 
-export async function directions(model: string, b: Brief, r: Research, format: "static" | "video"): Promise<{ data: Direction[]; cost: number }> {
+export async function directions(model: string, b: Brief, r: Research, format: "static" | "video", style?: StyleDNA | null): Promise<{ data: Direction[]; cost: number }> {
   if (!aiConfigured()) {
     const demo = [
       { title: "Before / after", hook: "From 3 hours to 3 minutes", angle: "Time saved" },
@@ -117,7 +145,7 @@ export async function directions(model: string, b: Brief, r: Research, format: "
   const { data, usage } = await chatJSON<{ directions: Omit<Direction, "id" | "format">[] }>(
     model,
     "You are a creative director. Pitch three genuinely different ad directions. Each must use a different angle, visual world and hook so ad platforms treat them as distinct creatives.",
-    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}\nReturn JSON: {"directions":[{"title","hook","angle","script" (voiceover/copy),"visualPrompt" (detailed prompt for an image/video model, include on-image headline text)}]} with exactly 3 items.\nVisual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once. Each direction must look visibly different (setting, composition, palette).`,
+    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}${styleBlock(style)}\nReturn JSON: {"directions":[{"title","hook","angle","script" (voiceover/copy),"visualPrompt" (detailed prompt for an image/video model, include on-image headline text)}]} with exactly 3 items.\nVisual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once. Each direction must look visibly different (setting, composition, palette).`,
   );
   return { data: data.directions.slice(0, 3).map((d, i) => ({ ...d, id: `dir_${i}`, format })), cost: usage.costUsd };
 }

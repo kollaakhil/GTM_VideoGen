@@ -22,6 +22,20 @@ export interface Research {
   colors?: string[];
 }
 
+export interface StyleDNA {
+  referenceUrl: string;
+  brand: string;
+  tone: string;
+  humor: string;
+  visualLanguage: string;
+  pacing: string;
+  hookPatterns: string[];
+  copyRules: string[];
+  doNotCopy: string[];
+  styleRef: string | null;
+  colors: string[];
+}
+
 export interface Brief {
   objective: string;
   audience: string;
@@ -100,6 +114,8 @@ export interface StudioRun {
   createdBy: string;
   updatedAt: string;
   research: Research | null;
+  referenceUrl?: string | null;
+  styleDNA?: StyleDNA | null;
   brief: Brief | null;
   directions: Direction[];
   creativeIds: string[];

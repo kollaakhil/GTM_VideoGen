@@ -61,6 +61,7 @@ interface Ctx {
   models: Model[];
   form: {
     brandUrl: string;
+    referenceUrl: string;
     goal: string;
     format: "static" | "video";
     sel: Record<Modality, string>;
@@ -221,18 +222,30 @@ function BrandNode() {
             </div>
           </div>
           <p className="text-[13px] leading-snug text-zinc-300">{run.goal}</p>
+          {run.referenceUrl && <div className="text-[11px] text-fuchsia-300/90">Inspired by {run.referenceUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</div>}
         </div>
       </Shell>
     );
   }
   const pick = (m: Modality) => models.filter((x) => x.modality === m);
-  const canStart = !sending && form.goal.trim().length >= 3 && /^https?:\/\/[^/\s]+\.[^/\s]+/.test(form.brandUrl);
+  const urlOk = (u: string) => /^https?:\/\/[^/\s]+\.[^/\s]+/.test(u);
+  const canStart = !sending && form.goal.trim().length >= 3 && urlOk(form.brandUrl) && (!form.referenceUrl.trim() || urlOk(form.referenceUrl.trim()));
   return (
     <Shell step={1} label="Brand & goal" icon={Globe} state="active" width={380}>
       <div className="space-y-3">
         <div className="space-y-1.5">
           <Label>Website</Label>
           <Input value={form.brandUrl} onChange={(e) => form.set({ brandUrl: e.target.value })} placeholder="https://yourbrand.com" className="h-9 bg-zinc-950/60" />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Inspired by (optional)</Label>
+          <Input
+            value={form.referenceUrl}
+            onChange={(e) => form.set({ referenceUrl: e.target.value })}
+            placeholder="https://liquiddeath.com"
+            className="h-9 bg-zinc-950/60"
+          />
+          <p className="text-[10px] leading-snug text-zinc-500">Borrow another brand&apos;s creative style, never its logo or claims.</p>
         </div>
         <div className="space-y-1.5">
           <Label>Goal</Label>
@@ -363,6 +376,43 @@ function ResearchNode() {
             </div>
           </div>
           <button onClick={() => setMore(!more)} className="text-[11px] text-indigo-300 hover:text-indigo-200">{more ? "Show less" : "Show more"}</button>
+        </div>
+      )}
+    </Shell>
+  );
+}
+
+function StyleNode() {
+  const { run } = useFlow();
+  if (!run) return null;
+  const d = run.styleDNA;
+  const failed = run.status === "error" && run.stage === "research";
+  return (
+    <Shell label="Style DNA" icon={Sparkles} state={d ? "done" : failed ? "error" : "working"} width={380}>
+      {!d ? (
+        failed ? <p className="text-xs text-red-300">Couldn&apos;t read the reference brand.</p> : <Skeleton text="Reverse-engineering the reference brand's style…" />
+      ) : (
+        <div className="space-y-3">
+          <div className="text-[13px] text-zinc-200">
+            Borrowing <span className="font-semibold text-white">{d.brand}</span>&apos;s approach
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Row label="Tone">{d.tone}</Row>
+            <Row label="Humor">{d.humor}</Row>
+          </div>
+          <Row label="Visuals">{d.visualLanguage}</Row>
+          <Row label="Pacing">{d.pacing}</Row>
+          <div className="space-y-1.5">
+            <Label>Hook patterns</Label>
+            <div className="flex flex-wrap gap-1">
+              {d.hookPatterns.map((h) => (
+                <span key={h} className="rounded-md bg-fuchsia-500/10 px-2 py-0.5 text-[11px] text-fuchsia-200">{h}</span>
+              ))}
+            </div>
+          </div>
+          <Row label="Never copy">
+            <span className="text-zinc-400">{d.doNotCopy.join(", ")}</span>
+          </Row>
         </div>
       )}
     </Shell>
@@ -614,7 +664,7 @@ const GHOSTS = [
 ] as const;
 
 const noop = () => {};
-const nodeTypes = { ghost: GhostNode, brand: BrandNode, research: ResearchNode, brief: BriefNode, direction: DirectionNode, creative: CreativeNode, publish: PublishNode };
+const nodeTypes = { ghost: GhostNode, style: StyleNode, brand: BrandNode, research: ResearchNode, brief: BriefNode, direction: DirectionNode, creative: CreativeNode, publish: PublishNode };
 
 /* ------------------------------------------------------------------ */
 /* Graph                                                               */
@@ -657,10 +707,15 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>) {
     nodes.push({ id: "research", type: "research", position: { x: SPINE.research, y: 0 }, data: { order: 1 } });
     edges.push(edge("brand", "research", false, { active: working && run.stage === "research" }));
     order = 1;
+    if (run.referenceUrl) {
+      nodes.push({ id: "style", type: "style", position: { x: SPINE.research, y: -620 }, data: {} });
+      edges.push(edge("brand", "style", false, { active: working && run.stage === "research" }));
+    }
 
     if (run.brief || (run.stage === "brief" && run.status !== "idle")) {
       nodes.push({ id: "brief", type: "brief", position: { x: SPINE.brief, y: 0 }, data: { order: 2 } });
       edges.push(edge("research", "brief", false, { active: working && run.stage === "brief" }));
+      if (run.referenceUrl) edges.push(edge("style", "brief", false, { active: working && run.stage === "brief" }));
       order = 2;
     }
 
@@ -841,7 +896,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
   const [notice, setNotice] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [form, setForm] = useState({ brandUrl: "https://", goal: "", format: "static" as "static" | "video", sel: defaults, refs: [] as string[] });
+  const [form, setForm] = useState({ brandUrl: "https://", referenceUrl: "", goal: "", format: "static" as "static" | "video", sel: defaults, refs: [] as string[] });
 
   const flash = (msg: string) => {
     setNotice(msg);
@@ -917,7 +972,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
     [fetchJSON, router],
   );
 
-  const start = () => act("research", { brandUrl: form.brandUrl.trim(), goal: form.goal.trim(), format: form.format, models: form.sel });
+  const start = () => act("research", { brandUrl: form.brandUrl.trim(), referenceUrl: form.referenceUrl.trim(), goal: form.goal.trim(), format: form.format, models: form.sel });
 
   const creativeAction = async (c: Creative, a: CreativeAction, ch?: "meta" | "google") => {
     try {
