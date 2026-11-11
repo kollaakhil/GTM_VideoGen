@@ -213,7 +213,7 @@ async function videoQA(model: string, video: string, b: Brief, hook: string): Pr
   }
   const { data, usage } = await chatJSON<{ score: number; notes: string[] }>(
     model,
-    `${QA_RUBRIC} You are reviewing a filmstrip of a vertical video ad: frames left-to-right, top-to-bottom at ${strip.frames.map((t) => `${t.toFixed(1)}s`).join(", ")}. Judge it frame by frame: the first frame must show a meaningful focal point (not black, a fade or a logo wait); the hook and product must be clear within ~2 seconds with sound off; on-screen text must be readable and spelled correctly; check for AI artifacts (morphing hands, faces, warped product or text), continuity breaks, and whether the ending gives the CTA or product enough hold.`,
+    `${QA_RUBRIC} You are reviewing a filmstrip of a vertical video ad: frames left-to-right, top-to-bottom at ${strip.frames.map((t) => `${t.toFixed(1)}s`).join(", ")}. Judge it frame by frame: the first frame must show a meaningful focal point (not black, a fade or a logo wait); the hook and product must be clear within ~2 seconds with sound off; on-screen text must be readable and spelled correctly; check for AI artifacts (morphing hands, faces, warped product or text), continuity breaks, and whether the ending gives the CTA or product enough hold. You only see frames, not audio: never comment on voiceover or sound.`,
     [
       { type: "text", text: `Brief: ${JSON.stringify(b)}\nIntended hook: ${hook}\nReturn JSON: {"score": number, "notes": string[] (max 4, concrete fixes, cite the frame time)}` },
       { type: "image_url", image_url: { url: strip.sheet } },
