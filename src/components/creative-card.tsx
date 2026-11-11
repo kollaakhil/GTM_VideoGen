@@ -53,8 +53,8 @@ export function CreativeCard({
             </span>
           )}
         </div>
+        <p className="line-clamp-2 text-xs text-muted-foreground" title={c.angle}>{c.angle}</p>
         <div className="flex flex-wrap gap-1">
-          <Badge variant="secondary" className="max-w-full truncate" title={c.angle}>{c.angle}</Badge>
           <Badge variant="outline">{c.format}</Badge>
           {c.channel && <Badge variant="outline">{c.channel === "meta" ? "Meta" : "Google"}</Badge>}
         </div>

@@ -162,7 +162,7 @@ export function StudioClient({ models, defaults }: { models: Model[]; defaults: 
       </section>
 
       {/* Right: canvas */}
-      <section className="min-w-0 flex-1 overflow-y-auto">
+      <section className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
         <div className="sticky top-0 z-10 flex items-center gap-1 border-b bg-background/90 px-6 py-3 backdrop-blur">
           {STAGES.map((s, i) => (
             <div key={s.id} className="flex items-center gap-1">
