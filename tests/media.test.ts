@@ -32,6 +32,7 @@ describe("captionVariants", () => {
   it("burns captions and renders 9:16, 4:5 and 1:1 cuts", async () => {
     const { captionVariants, captionCues } = await import("@/lib/video-post");
     expect(captionCues("one two three four five six", 6).length).toBe(2);
+    expect(captionCues("No decorator quote. Set it up yourself.", 4).map((c) => c.text)).toEqual(["No decorator quote.", "Set it up yourself."]);
     const file = path.join(os.tmpdir(), `cap-${Date.now()}.mp4`);
     execFileSync(ffmpegPath || "ffmpeg", ["-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=720x1280:rate=24:duration=3", "-pix_fmt", "yuv420p", "-y", file]);
     const out = await captionVariants(`data:video/mp4;base64,${fs.readFileSync(file).toString("base64")}`, "Comfort that sells itself. Shop the sale.");
