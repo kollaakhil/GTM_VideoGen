@@ -14,6 +14,7 @@ export interface Brand {
 }
 
 export interface Research {
+  brand?: string;
   summary: string;
   audience: string;
   valueProps: string[];

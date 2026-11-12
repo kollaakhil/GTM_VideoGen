@@ -477,13 +477,13 @@ Start exactly from the given first frame and keep the product, people and settin
   }
   const st = await stitchShots(clips, { voices, music });
   const segments = shots.map((s, i) => ({ start: st.starts[i], end: st.starts[i + 1] ?? st.duration, text: s.vo }));
-  const end = { brand: brandName(run.brandUrl), line: d.copy?.metaHeadline, cta: d.copy?.metaCta, color: run.research?.colors?.[0] };
+  const end = { brand: run.research?.brand || brandName(run.brandUrl), line: d.copy?.metaHeadline, cta: d.copy?.metaCta, color: run.research?.colors?.[0] };
   const variants = await captionVariants(st.url, "", end, segments).catch((e) => {
     console.error("caption/variants failed", (e as Error).message);
     return [];
   });
   const main = variants.find((x) => x.aspect === "9:16")?.url ?? st.url;
-  const q = await qa(run.models.vision, main, "video", run.brief!, d.hook);
+  const q = await qa(run.models.vision, main, "video", run.brief!, d.hook, shots.map((s) => s.vo).join(" "));
   spent += q.cost;
   await saveCreative(run, d, { url: main, type: "video", model, variants }, q.data, spent, null);
   return { score: q.data.score, spent };
@@ -499,7 +499,7 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
   const results = await Promise.allSettled(
     dirs.map(async (d) => {
       const i = run.directions.indexOf(d);
-      const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i, brand: brandName(run.brandUrl), style: { styleRef: run.research?.styleRef, colors: run.research?.colors } };
+      const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i, brand: run.research?.brand || brandName(run.brandUrl), style: { styleRef: run.research?.styleRef, colors: run.research?.colors } };
       run.progress[d.id] = "rendering";
       await save();
       let out = await render(d, opts);

@@ -58,7 +58,7 @@ export async function shotQA(visionModel: string, image: string, s: Shot, kind: 
       type: "text",
       text: `You are a strict creative director reviewing a ${kind === "clip" ? "contact sheet of frames from one video shot (left to right = time)" : "storyboard keyframe"} for a vertical video ad.
 Intended shot: ${s.visual} Camera: ${s.camera}. Beat: ${s.beat}.${productRef ? "\nThe second image is the real product photo: the product in the frame must match it." : ""}
-Score 1-10. Deduct hard for: any text, letters, logos or price tags in frame (should be none); garbled or warped objects, hands or faces; product not matching the reference; weak focal point; subject outside the 9:16 safe area; not matching the intended shot${kind === "clip" ? "; flicker, morphing, identity drift or frozen motion between frames" : ""}.
+Score 1-10. Anchors: 8 = usable as is with only minor polish notes; 6-7 = a visible defect most viewers would notice; 1-5 = broken. Taste-level suggestions alone never pull a score below 8. Deduct hard for: any text, letters, logos or price tags in frame (should be none); garbled or warped objects, hands or faces; product not matching the reference; weak focal point; subject outside the 9:16 safe area; not matching the intended shot${kind === "clip" ? "; flicker, morphing, identity drift or frozen motion between frames" : ""}.
 You only see frames, not audio. Return JSON: {"score": number, "notes": string[] (max 4, each a specific fix)}`,
     },
     { type: "image_url", image_url: { url: image } },

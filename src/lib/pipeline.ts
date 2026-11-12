@@ -117,7 +117,7 @@ export async function research(model: string, brandUrl: string, goal: string): P
   const { data, usage } = await chatJSON<Research>(
     model,
     "You are a senior performance-marketing strategist. Analyse the brand from its website copy.",
-    `Goal: ${goal}\nWebsite (${brandUrl}) text:\n${site.text || `(could not fetch site: ${site.error}; infer from URL and say so in the summary)`}\n\nReturn JSON: {"summary": string (max 60 words), "audience": string, "valueProps": string[], "tone": string, "angles": string[] (5-6 distinct ad angles), "sources": string[]}`,
+    `Goal: ${goal}\nWebsite (${brandUrl}) text:\n${site.text || `(could not fetch site: ${site.error}; infer from URL and say so in the summary)`}\n\nReturn JSON: {"brand": string (the brand name exactly as the site writes it), "summary": string (max 60 words), "audience": string, "valueProps": string[], "tone": string, "angles": string[] (5-6 distinct ad angles), "sources": string[]}`,
   );
   return {
     data: { ...data, sources: data.sources?.length ? data.sources : [brandUrl], styleRef: site.styleRef, colors: site.colors },
@@ -213,12 +213,12 @@ export async function render(
   return { url: img.url, type: "image", model: opts.imageModel, cost: img.usage.costUsd };
 }
 
-export async function qa(model: string, mediaUrl: string, mediaType: "image" | "video", b: Brief, hook: string): Promise<{ data: QAResult; cost: number }> {
+export async function qa(model: string, mediaUrl: string, mediaType: "image" | "video", b: Brief, hook: string, captions?: string): Promise<{ data: QAResult; cost: number }> {
   if (!aiConfigured()) {
     const score = 8 + (hook.length % 2);
     return { cost: 0, data: { score, pass: score >= QA_PASS_SCORE, notes: ["Demo score – add OPENROUTER_API_KEY for live vision QA"] } };
   }
-  if (mediaType === "video") return videoQA(model, mediaUrl, b, hook);
+  if (mediaType === "video") return videoQA(model, mediaUrl, b, hook, captions);
   const { data, usage } = await chatJSON<{ score: number; notes: string[] }>(
     model,
     `${QA_RUBRIC} Also fail any misspelled word, made-up social handle or URL, wordmark that doesn't match the brand, or copied third-party logo.`,
@@ -232,7 +232,7 @@ export async function qa(model: string, mediaUrl: string, mediaType: "image" | "
 }
 
 const QA_RUBRIC =
-  "You are a strict creative director grading a paid-social ad. Score 1-10 on: hook clarity in the first second, text legibility at phone size, brand fit, visual quality and AI artifacts, CTA clarity, and policy risk.";
+  "You are a strict creative director grading a paid-social ad. Score 1-10 on: hook clarity in the first second, text legibility at phone size, brand fit, visual quality and AI artifacts, CTA clarity, and policy risk. Anchors: 9-10 = standout, publish as is; 8 = ready to publish, only minor polish notes; 6-7 = a visible defect most viewers would notice; 4-5 = several defects or a weak hook; 1-3 = broken (garbled text, morphing, wrong product). Taste-level suggestions alone never pull a score below 8.";
 
 const run = promisify(execFile);
 const FFMPEG = ffmpegPath || "ffmpeg";
@@ -272,7 +272,7 @@ export async function filmstrip(video: string): Promise<{ sheet: string; frames:
   }
 }
 
-async function videoQA(model: string, video: string, b: Brief, hook: string): Promise<{ data: QAResult; cost: number }> {
+async function videoQA(model: string, video: string, b: Brief, hook: string, captions?: string): Promise<{ data: QAResult; cost: number }> {
   let strip: { sheet: string; frames: number[] };
   try {
     strip = await filmstrip(video);
@@ -283,7 +283,7 @@ async function videoQA(model: string, video: string, b: Brief, hook: string): Pr
     model,
     `${QA_RUBRIC} You are reviewing a filmstrip of a vertical video ad: frames left-to-right, top-to-bottom at ${strip.frames.map((t) => `${t.toFixed(1)}s`).join(", ")}. Judge it frame by frame: the first frame must show a meaningful focal point (not black, a fade or a logo wait); the hook and product must be clear within ~2 seconds with sound off; on-screen text must be readable and spelled correctly; check for AI artifacts (morphing hands, faces, warped product or text), continuity breaks, and whether the ending gives the CTA or product enough hold. You only see frames, not audio: never comment on voiceover or sound.`,
     [
-      { type: "text", text: `Brief: ${JSON.stringify(b)}\nIntended hook: ${hook}\nReturn JSON: {"score": number, "notes": string[] (max 4, concrete fixes, cite the frame time)}` },
+      { type: "text", text: `Brief: ${JSON.stringify(b)}\nIntended hook: ${hook}${captions ? `\nBurned-in captions (also the voiceover), in order: ${captions}\nThe last 1.5s is a typeset end card with the brand, offer line and CTA.` : ""}\nReturn JSON: {"score": number, "notes": string[] (max 4, concrete fixes, cite the frame time)}` },
       { type: "image_url", image_url: { url: strip.sheet } },
     ],
   );
