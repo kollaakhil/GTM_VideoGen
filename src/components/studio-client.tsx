@@ -133,7 +133,7 @@ type Pricing = { credits: number | null; prices: Record<string, { draft: number 
 const FlowCtx = createContext<Ctx | null>(null);
 const useFlow = () => useContext(FlowCtx)!;
 
-const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 10, draftModel: "google/veo-3.1-lite", finalModel: "google/veo-3.1-fast", voice: "Rachel", music: true, budgetUsd: 3 };
+const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 10, draftModel: "bytedance/seedance-2.0-fast", finalModel: "google/veo-3.1-fast", voice: "Rachel", music: true, budgetUsd: 3 };
 const money = (n: number | null | undefined) => (n == null ? "?" : `$${n.toFixed(2)}`);
 const VOICE_OPTIONS = ["Rachel", "Aria", "Sarah", "Charlotte", "Jessica", "Lily", "Roger", "George", "Liam", "Will", "Eric", "Brian", "Daniel"];
 const SB_SHIFT = 430;
