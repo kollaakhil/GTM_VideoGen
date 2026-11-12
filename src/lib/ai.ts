@@ -187,13 +187,20 @@ async function openrouterVideo(model: string, prompt: string, o: VideoOpts = {})
 
 const HIGGSFIELD_ASPECTS: Record<string, string[]> = { kling: ["9:16", "1:1"], default: ["9:16", "3:4", "1:1"] };
 
+/** "KEY_ID:KEY_SECRET" from either a single HF_API_KEY or the ID/secret pair. */
+export function higgsfieldCredential(): string | null {
+  const id = process.env.HF_API_KEY_ID?.trim();
+  const secret = process.env.HF_API_KEY_SECRET?.trim();
+  if (id && secret) return `${id}:${secret}`;
+  return process.env.HF_API_KEY?.trim() || null;
+}
+
 async function higgsfieldVideo(model: string, prompt: string): Promise<{ url: string; usage: Usage }> {
-  const id = process.env.HF_API_KEY_ID;
-  const secret = process.env.HF_API_KEY_SECRET;
-  if (!id || !secret) throw new Error("Higgsfield is not connected (set HF_API_KEY_ID and HF_API_KEY_SECRET)");
+  const cred = higgsfieldCredential();
+  if (!cred) throw new Error("Higgsfield is not connected (set HF_API_KEY, or HF_API_KEY_ID and HF_API_KEY_SECRET)");
   const endpoint = model.replace(/^higgsfield:/, "");
   if (!/^[a-z0-9][a-z0-9./-]+$/.test(endpoint)) throw new Error("Invalid Higgsfield model");
-  const auth = { Authorization: `Key ${id}:${secret}` };
+  const auth = { Authorization: `Key ${cred}` };
   const kling = endpoint.startsWith("kling-video/");
   const body: Record<string, unknown> = { prompt: prompt.slice(0, kling ? 2500 : 4000), duration: 5, aspect_ratio: (kling ? HIGGSFIELD_ASPECTS.kling : HIGGSFIELD_ASPECTS.default)[0] };
   if (kling) body.sound = "on";

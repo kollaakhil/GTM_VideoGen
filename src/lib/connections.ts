@@ -9,7 +9,7 @@ export interface ConnectionDef {
 export const CONNECTIONS: ConnectionDef[] = [
   { id: "openrouter", name: "OpenRouter", group: "AI & Media", envs: ["OPENROUTER_API_KEY"], note: "Text, vision QA, image models and Gemini Omni video" },
   { id: "fal", name: "fal.ai", group: "AI & Media", envs: ["FAL_KEY"], note: "Seedance, Kling and other premium video models" },
-  { id: "higgsfield", name: "Higgsfield", group: "AI & Media", envs: ["HF_API_KEY_ID", "HF_API_KEY_SECRET"], note: "Seedance, Kling and other video models via Higgsfield" },
+  { id: "higgsfield", name: "Higgsfield", group: "AI & Media", envs: ["HF_API_KEY"], note: "Image and video models via Higgsfield (HF_API_KEY, or HF_API_KEY_ID + HF_API_KEY_SECRET)" },
   { id: "supabase", name: "Supabase", group: "Infrastructure", envs: ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"], note: "Database, storage and auth (in-memory demo store until set)" },
   { id: "meta_ads", name: "Meta Marketing API", group: "Publishing", envs: ["META_ACCESS_TOKEN", "META_AD_ACCOUNT_ID", "META_PAGE_ID"], note: "Read insights + create PAUSED ads (needs ads_management and the Facebook Page the ads run from)" },
   { id: "google_ads", name: "Google Ads API", group: "Publishing", envs: ["GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_REFRESH_TOKEN"], note: "Read metrics + create paused campaigns" },
@@ -23,7 +23,7 @@ export const CONNECTIONS: ConnectionDef[] = [
 
 export function connectionStatus() {
   return CONNECTIONS.map((c) => {
-    const set = c.envs.filter((e) => !!process.env[e]);
+    const set = c.id === "higgsfield" && process.env.HF_API_KEY_ID && process.env.HF_API_KEY_SECRET ? c.envs : c.envs.filter((e) => !!process.env[e]);
     return { ...c, configured: set.length === c.envs.length, partial: set.length > 0 && set.length < c.envs.length };
   });
 }

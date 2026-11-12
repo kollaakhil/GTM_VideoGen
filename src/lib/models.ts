@@ -48,5 +48,5 @@ export function providerOf(modelId: string): Provider {
 export function providerConfigured(p: Provider): boolean {
   if (p === "openrouter") return !!process.env.OPENROUTER_API_KEY;
   if (p === "fal") return !!process.env.FAL_KEY;
-  return !!(process.env.HF_API_KEY_ID && process.env.HF_API_KEY_SECRET);
+  return !!((process.env.HF_API_KEY_ID && process.env.HF_API_KEY_SECRET) || process.env.HF_API_KEY);
 }
