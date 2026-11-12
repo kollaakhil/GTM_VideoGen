@@ -32,6 +32,40 @@ export interface Research {
   colors?: string[];
 }
 
+export interface VoiceOfCustomer {
+  phrases: string[];
+  pains: string[];
+  desires: string[];
+  objections: string[];
+  sources: string[];
+}
+
+export interface Swipe {
+  id: string;
+  brandUrl: string | null;
+  url: string | null;
+  image: string | null;
+  note: string;
+  structure: { hook: string; beats: string[]; format: string; whyItWorks: string } | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface Concept {
+  id: string;
+  persona: string;
+  awareness: "unaware" | "problem" | "solution" | "product" | "most";
+  angle: string;
+  format: string;
+  hook: string;
+  visualWorld: string;
+  talent: string;
+  setting: string;
+  why: string;
+  diversity?: number;
+  selected?: boolean;
+}
+
 export interface StyleDNA {
   referenceUrl: string;
   brand: string;
@@ -202,6 +236,9 @@ export interface StudioRun {
   createdBy: string;
   updatedAt: string;
   research: Research | null;
+  voc?: VoiceOfCustomer | null;
+  concepts?: Concept[];
+  swipeIds?: string[];
   referenceUrl?: string | null;
   offer?: string | null;
   styleDNA?: StyleDNA | null;

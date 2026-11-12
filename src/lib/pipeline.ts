@@ -1,3 +1,4 @@
+import { principlesBlock } from "./ad-wisdom";
 import { chatJSON, generateImage, generateVideo, aiConfigured } from "./ai";
 import { placeholderImage } from "./placeholder";
 import { execFile } from "node:child_process";
@@ -8,7 +9,7 @@ import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import { safeFetchText } from "./safe-fetch";
 import { captionVariants, spokenScript } from "./video-post";
-import type { OrganicPack, StyleDNA, Brief, Direction, QAResult, Research } from "./types";
+import type { Concept, OrganicPack, StyleDNA, Brief, Direction, QAResult, Research } from "./types";
 
 type Site = { text: string; error: string | null; styleRef: string | null; colors: string[] };
 
@@ -147,7 +148,7 @@ export async function brief(model: string, r: Research, goal: string, style?: St
   return { data, cost: usage.costUsd };
 }
 
-export async function directions(model: string, b: Brief, r: Research, format: "static" | "video", style?: StyleDNA | null, rules = ""): Promise<{ data: Direction[]; cost: number }> {
+export async function directions(model: string, b: Brief, r: Research, format: "static" | "video", style?: StyleDNA | null, rules = "", picked: Concept[] = []): Promise<{ data: Direction[]; cost: number }> {
   if (!aiConfigured()) {
     const demo = [
       { title: "Before / after", hook: "From 3 hours to 3 minutes", angle: "Time saved" },
@@ -175,7 +176,7 @@ export async function directions(model: string, b: Brief, r: Research, format: "
   const { data, usage } = await chatJSON<{ directions: Omit<Direction, "id" | "format">[] }>(
     model,
     "You are a creative director. Pitch three genuinely different ad directions. Each must use a different angle, visual world and hook so ad platforms treat them as distinct creatives.",
-    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}${styleBlock(style)}${rules}\nReturn JSON: {"directions":[{"title","hook","angle","script" (only the words spoken aloud, no speaker labels, stage directions, brackets or notes${format === "video" ? "; max 14 words, it must fit a 6-second clip" : ""}),"visualPrompt" (${format === "video" ? "shot-by-shot scene description for a video model: subject, setting, camera moves, lighting. The product is clearly visible in the first second and in the final shot. No text, signs, labels, price tags, logos or packaging copy anywhere in frame; captions are added in post" : "detailed prompt for an image model, include on-image headline text"}),"copy":{"metaPrimaryText" (max 125 chars),"metaHeadline" (max 40 chars),"metaCta" (one of SHOP_NOW, LEARN_MORE, SIGN_UP, GET_OFFER, ORDER_NOW),"googleHeadlines" (5 items, max 30 chars each),"googleDescriptions" (2 items, max 90 chars each)}}]} with exactly 3 items. Ad copy must use only facts from the brief.\n${format === "video" ? "" : "Visual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once."} Each direction must look visibly different (setting, composition, palette).`,
+    `Brief: ${JSON.stringify(b)}\nAvailable angles: ${r.angles.join(", ")}\nFormat: ${format}${styleBlock(style)}${rules}${principlesBlock()}${picked.length ? `\nApproved concepts (build exactly one direction per concept, in this order; keep each concept's persona, angle, format, talent, setting and hook): ${JSON.stringify(picked.map(({ persona, awareness, angle, format: f, hook, visualWorld, talent, setting }) => ({ persona, awareness, angle, format: f, hook, visualWorld, talent, setting })))}` : ""}\nReturn JSON: {"directions":[{"title","hook","angle","script" (only the words spoken aloud, no speaker labels, stage directions, brackets or notes${format === "video" ? "; max 14 words, it must fit a 6-second clip" : ""}),"visualPrompt" (${format === "video" ? "shot-by-shot scene description for a video model: subject, setting, camera moves, lighting. The product is clearly visible in the first second and in the final shot. No text, signs, labels, price tags, logos or packaging copy anywhere in frame; captions are added in post" : "detailed prompt for an image model, include on-image headline text"}),"copy":{"metaPrimaryText" (max 125 chars),"metaHeadline" (max 40 chars),"metaCta" (one of SHOP_NOW, LEARN_MORE, SIGN_UP, GET_OFFER, ORDER_NOW),"googleHeadlines" (5 items, max 30 chars each),"googleDescriptions" (2 items, max 90 chars each)}}]} with exactly 3 items. Ad copy must use only facts from the brief.\n${format === "video" ? "" : "Visual prompt rules: on-image text is limited to the headline, at most one price/offer line and a short CTA. No fine print, legal disclaimers, placeholders like [date] or [brand], or invented facts. Show the brand name or wordmark once."} Each direction must look visibly different (setting, composition, palette).`,
   );
   return { data: data.directions.slice(0, 3).map((d, i) => ({ ...d, id: `dir_${i}`, format })), cost: usage.costUsd };
 }

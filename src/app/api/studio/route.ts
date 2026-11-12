@@ -5,6 +5,8 @@ import { brief, directions, diversityScores, filmstrip, organic, qa, render, res
 import { audioConfigured, generateVideo, musicBed, nearest, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
 import { CATEGORIES, keyframe, planShots, QA_PASS, shotQA } from "@/lib/video-plan";
 import { brandRules } from "@/lib/brand-rules";
+import { STATIC_FORMATS, vocBlock, voiceOfCustomer } from "@/lib/ad-wisdom";
+import { concepts, diversityIssues, selectDiverse } from "@/lib/concepts";
 import { learnings } from "@/lib/learnings";
 import { captionVariants, meanVolume, mediaDuration, spokenScript, stitchShots } from "@/lib/video-post";
 import { get, list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
@@ -46,6 +48,8 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("directions"), runId: z.string().max(64), format: z.enum(["static", "video"]).optional() }),
   z.object({ action: z.literal("generate"), runId: z.string().max(64), refs: Refs }),
   z.object({ action: z.literal("organic"), runId: z.string().max(64) }),
+  z.object({ action: z.literal("concepts"), runId: z.string().max(64), format: z.enum(["static", "video"]).optional() }),
+  z.object({ action: z.literal("pick_concepts"), runId: z.string().max(64), ids: z.array(z.string().max(16)).min(1).max(5) }),
   z.object({ action: z.literal("cancel"), runId: z.string().max(64) }),
   z.object({ action: z.literal("storyboard"), runId: z.string().max(64), directionId: z.string().max(32).optional(), plan: Plan, refs: Refs }),
   z.object({ action: z.literal("redo_shot"), runId: z.string().max(64), directionId: z.string().max(32), shotId: z.string().max(8), visual: z.string().trim().min(5).max(800).optional(), refs: Refs }),
@@ -178,6 +182,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ run });
   }
 
+  if (body.action === "pick_concepts") {
+    if (!run.concepts?.length) return NextResponse.json({ error: "Build the concept matrix first" }, { status: 400 });
+    const ids = new Set(body.ids);
+    const chosen = selectDiverse(run.concepts.map((c) => ({ ...c, selected: false })).filter((c) => ids.has(c.id)), ids.size);
+    run.concepts = run.concepts.map((c) => ({ ...c, selected: ids.has(c.id), diversity: chosen.find((x) => x.id === c.id)?.diversity ?? c.diversity }));
+    run.directions = [];
+    const issues = diversityIssues(run.concepts.filter((c) => c.selected));
+    say(run, issues.length ? "error" : "agent", issues.length ? `Diversity gate: ${issues.join("; ")}.` : `Picked ${ids.size} concept${ids.size === 1 ? "" : "s"}. They pass the diversity gate.`);
+    run.updatedAt = now();
+    await put("studio_runs", run);
+    return NextResponse.json({ run });
+  }
+
   const job = plan(run, body);
   if ("error" in job) return NextResponse.json({ error: job.error }, { status: 400 });
   const jobId = newId("job");
@@ -212,7 +229,7 @@ const brandName = (url: string) => {
 
 type Parsed = z.infer<typeof Body>;
 
-function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "cancel" }>): { activity: string; work: () => Promise<void> } | { error: string } {
+function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "cancel" | "pick_concepts" }>): { activity: string; work: () => Promise<void> } | { error: string } {
   const m = run.models;
   switch (body.action) {
     case "research":
@@ -220,7 +237,9 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
         activity: "Researching the brand…",
         work: async () => {
           const [r, dna] = await Promise.all([research(m.text, run.brandUrl, goalCtx(run, brandRules(await brandFor(run)))), run.referenceUrl ? styleDNA(m.text, run.referenceUrl) : null]);
-          Object.assign(run, { research: r.data, styleDNA: dna?.data ?? null, stage: "brief", costUsd: run.costUsd + r.cost + (dna?.cost ?? 0) });
+          const voc = await voiceOfCustomer(m.text, run.brandUrl, r.data).catch(() => null);
+          if (!voc) say(run, "error", "Couldn't gather customer language from Reddit or reviews; continuing with site research only.");
+          Object.assign(run, { research: r.data, voc: voc?.data ?? null, styleDNA: dna?.data ?? null, stage: "brief", costUsd: run.costUsd + r.cost + (dna?.cost ?? 0) + (voc?.cost ?? 0) });
           say(run, "agent", dna ? `Research is done, and I mapped ${dna.data.brand}'s creative style. Next: write the creative brief.` : "Research is done. Next: write the creative brief.");
         },
       };
@@ -229,9 +248,9 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       return {
         activity: "Writing the brief…",
         work: async () => {
-          const b = await brief(m.text, run.research!, goalCtx(run, await guidance(run)), run.styleDNA);
-          Object.assign(run, { brief: b.data, stage: "directions", directions: [], costUsd: run.costUsd + b.cost });
-          say(run, "agent", "Brief is ready. Edit it if you like, then approve it to get three directions.");
+          const b = await brief(m.text, run.research!, goalCtx(run, (await guidance(run)) + vocBlock(run.voc)), run.styleDNA);
+          Object.assign(run, { brief: b.data, stage: "directions", directions: [], concepts: [], costUsd: run.costUsd + b.cost });
+          say(run, "agent", "Brief is ready. Edit it if you like, then approve it to build the concept matrix.");
         },
       };
     case "directions":
@@ -240,7 +259,9 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       return {
         activity: "Pitching three directions…",
         work: async () => {
-          const d = await directions(m.text, run.brief!, run.research!, run.format, run.styleDNA, await guidance(run));
+          const picked = (run.concepts ?? []).filter((c) => c.selected);
+          const d = await directions(m.text, run.brief!, run.research!, run.format, run.styleDNA, (await guidance(run)) + vocBlock(run.voc), picked);
+          if (picked.length) d.data = d.data.slice(0, picked.length);
           Object.assign(run, { directions: d.data, stage: "generate", progress: {}, costUsd: run.costUsd + d.cost });
           say(run, "agent", "Here are three directions. Generate creatives when you're happy, or re-pitch.");
         },
@@ -260,6 +281,20 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
           }
           run.stage = "qa";
           say(run, "agent", `Generated ${made} creative${made === 1 ? "" : "s"}. Ones that pass QA can be sent to the Inbox for publishing.`);
+        },
+      };
+    case "concepts":
+      if (!run.brief || !run.research) return { error: "Write the brief first" };
+      if (body.format) run.format = body.format;
+      return {
+        activity: "Building the concept matrix…",
+        work: async () => {
+          const swipes = (await list("swipes")).filter((s) => !s.brandUrl || hostOf(s.brandUrl) === hostOf(run.brandUrl)).slice(0, 8);
+          const formats = run.format === "video" ? Object.values(CATEGORIES).map((c) => c.label) : STATIC_FORMATS;
+          const c = await concepts(m.text, { research: run.research!, brief: run.brief!, voc: run.voc, style: run.styleDNA, swipes, formats, rules: await guidance(run) });
+          Object.assign(run, { concepts: c.data, directions: [], stage: "directions", costUsd: run.costUsd + c.cost });
+          const issues = diversityIssues(c.data.filter((x) => x.selected));
+          say(run, issues.length ? "error" : "agent", issues.length ? `Diversity gate: ${issues.join("; ")}. Pick different concepts or rebuild the matrix.` : `Built ${c.data.length} concepts and picked the 3 most distinct. Swap any, then turn them into directions.`);
         },
       };
     case "organic":

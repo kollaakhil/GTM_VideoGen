@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import pg from "pg";
 import { seed } from "./seed";
-import type { Campaign, Creative, InboxItem, MetricDay, SignalEvent, StudioRun, Brand, PromptEntry } from "./types";
+import type { Campaign, Creative, InboxItem, MetricDay, SignalEvent, StudioRun, Brand, PromptEntry, Swipe } from "./types";
 
 export interface Tables {
   brands: Brand;
@@ -14,6 +14,7 @@ export interface Tables {
   campaigns: Campaign;
   signal_events: SignalEvent;
   prompt_library: PromptEntry;
+  swipes: Swipe;
 }
 export type TableName = keyof Tables;
 
@@ -44,7 +45,7 @@ export function usingDatabase() {
 type Mem = { [K in TableName]: Map<string, Tables[K]> } & { metrics: MetricDay[] };
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
-const TABLES: TableName[] = ["brands", "studio_runs", "creatives", "inbox_items", "campaigns", "signal_events", "prompt_library"];
+const TABLES: TableName[] = ["brands", "studio_runs", "creatives", "inbox_items", "campaigns", "signal_events", "prompt_library", "swipes"];
 // Serverless filesystems are read-only/ephemeral: there the local store is memory-only and Supabase is required.
 const canPersist = !process.env.VERCEL;
 
@@ -65,6 +66,7 @@ function mem(): Mem {
       campaigns: new Map(s.campaigns.map((c) => [c.id, c])),
       signal_events: new Map(s.signals.map((e) => [e.id, e])),
       prompt_library: new Map(),
+      swipes: new Map(),
       metrics: s.metrics,
     };
     persist();
@@ -118,6 +120,16 @@ export async function get<K extends TableName>(table: K, id: string): Promise<Ta
   }
   const row = (mem()[table] as Map<string, Tables[K]>).get(id);
   return row ? structuredClone(row) : null;
+}
+
+export async function remove<K extends TableName>(table: K, id: string): Promise<void> {
+  const pool = db();
+  if (pool) {
+    await pool.query(`delete from ${tbl(table)} where id = $1`, [id]);
+    return;
+  }
+  (mem()[table] as Map<string, Tables[K]>).delete(id);
+  persist();
 }
 
 export async function put<K extends TableName>(table: K, row: Tables[K] & { id: string }): Promise<Tables[K]> {
