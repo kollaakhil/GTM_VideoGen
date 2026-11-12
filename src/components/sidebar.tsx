@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Inbox, LayoutGrid, LogOut, Megaphone, Plug, Sparkles, Zap } from "lucide-react";
+import { BarChart3, Inbox, LayoutGrid, LogOut, Megaphone, Palette, Plug, Sparkles, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/studio", label: "Studio", icon: Sparkles },
   { href: "/library", label: "Library", icon: LayoutGrid },
+  { href: "/brands", label: "Brand kits", icon: Palette },
   { href: "/campaigns", label: "Campaigns", icon: Megaphone },
   { href: "/performance", label: "Performance", icon: BarChart3 },
   { href: "/inbox", label: "Inbox", icon: Inbox },
