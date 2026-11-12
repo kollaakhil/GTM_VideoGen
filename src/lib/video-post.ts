@@ -294,7 +294,7 @@ export async function captionVariants(
   }
 }
 
-export type StaticKit = { brand: string; headline: string; offer?: string | null; cta?: string | null; primary?: string | null; logo?: string | null; fontFile?: string | null; fontFamily?: string | null };
+export type StaticKit = { brand: string; headline: string; offer?: string | null; footer?: string | null; cta?: string | null; primary?: string | null; logo?: string | null; fontFile?: string | null; fontFamily?: string | null };
 
 /** Greedy word wrap to a max characters per line. */
 export function wrapLines(text: string, max: number, maxLines = 3) {
@@ -328,7 +328,8 @@ export async function typesetStatic(background: string, kit: StaticKit): Promise
     const ink = inkFor(primary);
     const font = kit.fontFamily || "DejaVu Sans";
     const offer = kit.offer ? clean(kit.offer).slice(0, 60) : "";
-    const ctaY = H - 110;
+    const footer = kit.footer ? clean(kit.footer).slice(0, 80) : "";
+    const ctaY = H - (footer ? 150 : 110);
     const offerY = ctaY - 100;
     const headBottom = offer ? offerY - 60 : ctaY - 90;
     const ev = (style: string, an: number, x: number, y: number, text: string, extra = "") => `Dialogue: 0,0:00:00.00,0:00:05.00,${style},{\\an${an}\\pos(${x},${y})${extra}}${text}`;
@@ -339,11 +340,13 @@ export async function typesetStatic(background: string, kit: StaticKit): Promise
       `Style: Head,${font},${size},&H00FFFFFF,&H00000000,&H64000000,1,1,0,3,1,0,0,0`,
       `Style: Offer,${font},44,&H00FFFFFF,&H00000000,&H64000000,1,1,0,2,1,0,0,0`,
       `Style: Cta,${font},44,${ink === "white" ? "&H00FFFFFF" : "&H00000000"},${assColor(primary)},${assColor(primary)},1,3,22,0,1,0,0,0`,
+      `Style: Foot,${font},30,&H00E6E6E6,&H00000000,&H64000000,0,1,0,2,1,0,0,0`,
       `Style: Brand,${font},48,&H00FFFFFF,&H00000000,&H64000000,1,1,0,3,7,0,0,0`,
       "", "[Events]", "Format: Layer, Start, End, Style, Text",
       ev("Head", 1, 70, headBottom, lines.join("\\N")),
       ...(offer ? [ev("Offer", 1, 70, offerY, offer)] : []),
       ...(kit.cta ? [ev("Cta", 1, 92, ctaY, CTA_LABEL[kit.cta] ?? clean(kit.cta))] : []),
+      ...(footer ? [ev("Foot", 1, 70, H - 50, footer)] : []),
       ...(!kit.logo ? [ev("Brand", 7, 70, 60, clean(kit.brand))] : []),
     ].join("\n");
     await fs.writeFile(path.join(dir, "t.ass"), ass);
@@ -355,7 +358,7 @@ export async function typesetStatic(background: string, kit: StaticKit): Promise
       await fs.copyFile(path.join(FONTS, "DejaVuSans-Bold.ttf"), path.join(fontsDir, "DejaVuSans-Bold.ttf"));
     }
     const logo = kit.logo ? await toFile(dir, "logo.png", kit.logo) : null;
-    const scrim = `color=c=black:s=${W}x${H}:d=1,format=rgba,geq=r='0':g='0':b='0':a='if(lt(Y,H*0.38),0,200*pow((Y-H*0.38)/(H*0.62),1.1))'[sc]`;
+    const scrim = `color=c=black:s=${W}x${H}:d=1,format=rgba,geq=r='0':g='0':b='0':a='if(lt(Y,H*0.16),120*(1-Y/(H*0.16)),if(lt(Y,H*0.38),0,200*pow((Y-H*0.38)/(H*0.62),1.1)))'[sc]`;
     const base = `${scrim};[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,format=rgba[bg0];[bg0][sc]overlay=0:0,format=rgb24,subtitles=${path.join(dir, "t.ass")}:fontsdir=${fontsDir}`;
     const fc = logo ? `${base}[b];[1:v]scale=260:-1[lg];[b][lg]overlay=70:60` : base;
     const out = path.join(dir, "out.png");

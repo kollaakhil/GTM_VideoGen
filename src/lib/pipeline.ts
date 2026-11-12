@@ -231,7 +231,7 @@ export async function qa(model: string, mediaUrl: string, mediaType: "image" | "
   if (mediaType === "video") return videoQA(model, mediaUrl, b, hook, captions);
   const { data, usage } = await chatJSON<{ score: number; notes: string[] }>(
     model,
-    `${QA_RUBRIC} Also fail any misspelled word, made-up social handle or URL, wordmark that doesn't match the brand, or copied third-party logo.`,
+    `${QA_RUBRIC} This is ONE static ad with ONE idea: judge it on that idea. Do not lower the score for leaving out secondary facts from the brief (other prices, every service area, terms, timelines); a separate checker enforces mandatory copy. Also fail any misspelled word, made-up social handle or URL, wordmark that doesn't match the brand, or copied third-party logo.`,
     [
       { type: "text", text: `Brief: ${JSON.stringify(b)}\nIntended hook: ${hook}\nReturn JSON: {"score": number, "notes": string[] (max 4, concrete fixes)}` },
       { type: "image_url", image_url: { url: mediaUrl } },

@@ -34,6 +34,8 @@ export async function PATCH(req: Request) {
   }
   if (action === "request_publish") {
     if (!creative.qa?.pass) return NextResponse.json({ error: "Creative must pass the QA gate first" }, { status: 400 });
+    const blocking = (creative.gate?.reasons ?? []).filter((r) => !(creative.qaOverride && r.startsWith("QA ")));
+    if (blocking.length) return NextResponse.json({ error: `Creative Director Gate: ${blocking.join("; ")}` }, { status: 400 });
     const ch = channel ?? "meta";
     await put("inbox_items", {
       id: newId("ibx"),

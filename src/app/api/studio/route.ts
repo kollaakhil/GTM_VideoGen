@@ -216,10 +216,12 @@ export async function POST(req: Request) {
       run.status = "error";
       say(run, "error", `${job.activity.replace("…", "")} failed: ${(e as Error).message}`);
     } finally {
-      if (jobs.delete(jobId)) {
+      // Persist before releasing the job so a poll never sees "working" with no live job (would be healed as orphaned).
+      if (jobs.has(jobId)) {
         Object.assign(run, { activity: null, jobId: null, job: null, updatedAt: now() });
         await put("studio_runs", run);
       }
+      jobs.delete(jobId);
     }
   });
   return NextResponse.json({ run });
@@ -419,7 +421,8 @@ async function saveCreative(
   );
   const kit = await brandFor(run);
   const claims = await claimsCheck(run.models.text, {
-    texts: [d.hook, d.script, d.copy?.metaPrimaryText ?? "", d.copy?.metaHeadline ?? "", ...(d.copy?.googleHeadlines ?? []), ...(d.copy?.googleDescriptions ?? [])],
+    texts: [
+      ...(d.format === "static" && process.env.STATIC_TYPESET !== "off" ? [`On-image text: ${d.copy?.metaHeadline || d.hook} / ${(kit?.offer || run.offer || run.brief?.offer || "").split(/[.;\n]/)[0].slice(0, 60)} / ${kit?.mustSay?.join(" · ") ?? ""}`] : []),d.hook, d.script, d.copy?.metaPrimaryText ?? "", d.copy?.metaHeadline ?? "", ...(d.copy?.googleHeadlines ?? []), ...(d.copy?.googleDescriptions ?? [])],
     research: run.research!, brief: run.brief!, offer: run.offer, mustSay: kit?.mustSay,
   }).catch(() => null);
   const gate = gateVerdict({ qa: q.score, diversity, unsupported: claims?.data.unsupported ?? [], missing: claims?.data.missing ?? [] });
@@ -654,6 +657,7 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
     brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
     offer: (kit?.offer || run.offer || run.brief?.offer || "").split(/[.;\n]/)[0].slice(0, 60) || null,
     primary: kit?.colorRoles?.primary || run.research?.colors?.[0] || null,
+    footer: kit?.mustSay?.length ? kit.mustSay.join(" · ") : null,
     logo: kit?.logo ? await mediaDataUrl(kit.logo).catch(() => null) : null,
     fontFile: kit?.font?.file ? await mediaFile(kit.font.file).catch(() => null) : null,
     fontFamily: kit?.font?.family ?? null,
