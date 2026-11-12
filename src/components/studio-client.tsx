@@ -30,6 +30,13 @@ import { CATEGORIES, estimateCost, LENGTHS, shotCount } from "@/lib/video-catego
 
 type Model = ModelOption & { ready: boolean };
 type Modality = "text" | "vision" | "image" | "video";
+/** Accepts "allbirds.com", "www.x.com", or a URL pasted after the prefilled "https://" ("https://https://x.com"). */
+const fullUrl = (u: string) => {
+  const t = u.trim().replace(/^(https?:\/\/)+(?=https?:\/\/)/i, "");
+  return !t || /^https?:\/\/$/i.test(t) ? "" : /^https?:\/\//i.test(t) ? t : `https://${t}`;
+};
+const urlOk = (u: string) => /^https?:\/\/[^/\s]+\.[^/\s]+/.test(fullUrl(u));
+
 type RunSummary = Pick<StudioRun, "id" | "brandUrl" | "goal" | "stage" | "status" | "costUsd" | "createdAt" | "format" | "updatedAt"> & {
   thumb: { url: string; type: "image" | "video" } | null;
   creatives: number;
@@ -290,8 +297,14 @@ function BrandNode() {
     );
   }
   const pick = (m: Modality) => models.filter((x) => x.modality === m);
-  const urlOk = (u: string) => /^https?:\/\/[^/\s]+\.[^/\s]+/.test(u);
-  const canStart = !sending && form.goal.trim().length >= 3 && urlOk(form.brandUrl) && (!form.referenceUrl.trim() || urlOk(form.referenceUrl.trim()));
+  const missing = !urlOk(form.brandUrl)
+    ? "Enter your website, e.g. allbirds.com"
+    : form.goal.trim().length < 3
+      ? "Add a goal to start"
+      : form.referenceUrl.trim() && !urlOk(form.referenceUrl)
+        ? "Check the Inspired by link"
+        : "";
+  const canStart = !sending && !missing;
   return (
     <Shell step={1} label="Brand & goal" icon={Globe} state="active" width={380}>
       <div className="space-y-3">
@@ -428,6 +441,7 @@ function BrandNode() {
         <Button className="w-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90" disabled={!canStart} onClick={start}>
           {sending ? <Loader2 className="animate-spin" /> : <Sparkles />} Start research
         </Button>
+        {missing && !sending && <p className="-mt-1 text-center text-[11px] text-amber-300/90">{missing}</p>}
       </div>
     </Shell>
   );
@@ -1590,15 +1604,15 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
   );
 
   const start = () => {
-    if (form.saveKit && form.brandUrl.trim().length > 10)
+    if (form.saveKit && urlOk(form.brandUrl))
       void fetch("/api/brands", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: form.brandUrl.trim(), offer: form.offer.trim() || undefined, photos: form.refs.length ? form.refs : undefined }),
+        body: JSON.stringify({ url: fullUrl(form.brandUrl), offer: form.offer.trim() || undefined, photos: form.refs.length ? form.refs : undefined }),
       }).then(loadKits);
     return startRun();
   };
-  const startRun = () => act("research", { offer: form.offer.trim() || undefined, brandUrl: form.brandUrl.trim(), referenceUrl: form.referenceUrl.trim(), goal: form.goal.trim(), format: form.format, models: form.sel });
+  const startRun = () => act("research", { offer: form.offer.trim() || undefined, brandUrl: fullUrl(form.brandUrl), referenceUrl: fullUrl(form.referenceUrl), goal: form.goal.trim(), format: form.format, models: form.sel });
 
   const creativeAction = async (c: Creative, a: CreativeAction, ch?: "meta" | "google", reason?: string) => {
     try {
