@@ -2,7 +2,7 @@ import { providerOf } from "./models";
 
 const OR_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-type Part = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+export type Part = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
 type Msg = { role: "system" | "user" | "assistant"; content: string | Part[] };
 
 export interface Usage {

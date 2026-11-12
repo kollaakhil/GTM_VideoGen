@@ -63,6 +63,46 @@ export interface AdCopy {
   googleDescriptions: string[];
 }
 
+export type VideoCategory =
+  | "product_demo"
+  | "ugc_testimonial"
+  | "cinematic_lifestyle"
+  | "motion_graphics"
+  | "unboxing"
+  | "before_after"
+  | "problem_solution"
+  | "founder_story";
+
+export interface VideoPlan {
+  category: VideoCategory;
+  lengthSec: number;
+  draftModel: string;
+  finalModel: string;
+  voice: string;
+  music: boolean;
+  budgetUsd: number;
+}
+
+export interface ShotQA {
+  score: number;
+  notes: string[];
+}
+
+export interface Shot {
+  id: string;
+  beat: string;
+  seconds: number;
+  visual: string;
+  camera: string;
+  vo: string;
+  keyframe?: string | null;
+  keyframeQa?: ShotQA | null;
+  clip?: string | null;
+  clipQa?: ShotQA | null;
+  attempts?: number;
+  status: "planned" | "keyframe" | "rendering" | "done" | "failed";
+}
+
 export interface Direction {
   id: string;
   title: string;
@@ -72,6 +112,7 @@ export interface Direction {
   script: string;
   visualPrompt: string;
   copy?: AdCopy;
+  shots?: Shot[];
 }
 
 export interface QAResult {
@@ -131,6 +172,7 @@ export interface StudioRun {
   status: "idle" | "working" | "error";
   activity: string | null;
   jobId?: string | null;
+  videoPlan?: VideoPlan | null;
   events: RunEvent[];
   progress: Record<string, CreativeProgress>;
   createdBy: string;
