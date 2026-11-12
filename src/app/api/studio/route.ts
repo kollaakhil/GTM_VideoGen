@@ -266,7 +266,6 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
           const res = await Promise.allSettled(targets.map((d) => storyboard(run, d, body.refs ?? [])));
           res.forEach((r, k) => {
             if (r.status === "rejected") {
-              run.progress[targets[k].id] = "failed";
               say(run, "error", `Storyboard for “${targets[k].title}” failed: ${String(r.reason?.message ?? r.reason).slice(0, 300)}`);
             }
           });
@@ -388,15 +387,11 @@ async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: string[
 }
 
 async function storyboard(run: StudioRun, d: Direction, refs: string[]) {
-  run.progress[d.id] = "rendering";
-  await saveRun(run);
   const p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA);
   d.shots = p.shots;
   run.costUsd += p.cost;
   await saveRun(run);
   await Promise.all(d.shots.map((s) => makeKeyframe(run, d, s, refs)));
-  run.progress[d.id] = "done";
-  await saveRun(run);
 }
 
 async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final", refs: string[]) {

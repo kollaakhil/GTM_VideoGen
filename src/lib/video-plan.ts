@@ -1,19 +1,10 @@
 import { chatJSON, generateImage, type Part } from "./ai";
+import { CATEGORIES } from "./video-categories";
 import type { Brief, Direction, Research, Shot, ShotQA, StyleDNA, VideoCategory, VideoPlan } from "./types";
 
-export const QA_PASS = 8;
+export { CATEGORIES, estimateCost } from "./video-categories";
 
-/** Shot recipes per ad category: the beat order and the look each category is known for. */
-export const CATEGORIES: Record<VideoCategory, { label: string; beats: string[]; look: string; voice: string }> = {
-  product_demo: { label: "Product demo", beats: ["hook", "feature", "feature", "result", "cta"], look: "clean studio or real-use setting, macro detail shots, hands using the product, smooth gimbal moves", voice: "confident, clear" },
-  ugc_testimonial: { label: "UGC testimonial", beats: ["hook", "problem", "discovery", "proof", "cta"], look: "handheld phone selfie footage, natural window light, real home setting, person talking to camera", voice: "casual, first-person, authentic" },
-  cinematic_lifestyle: { label: "Cinematic lifestyle", beats: ["hook", "world", "product moment", "payoff", "cta"], look: "cinematic 35mm look, shallow depth of field, golden-hour light, slow dolly and push-ins", voice: "warm, aspirational" },
-  motion_graphics: { label: "Motion graphics", beats: ["hook", "point", "point", "proof", "cta"], look: "bold flat color fields, product cutouts on solid backgrounds, kinetic camera moves, graphic shapes, no people", voice: "punchy, upbeat" },
-  unboxing: { label: "Unboxing", beats: ["hook", "unbox", "reveal", "detail", "cta"], look: "top-down and 45-degree tabletop, hands opening packaging, satisfying reveal, soft daylight", voice: "excited, conversational" },
-  before_after: { label: "Before / after", beats: ["hook", "before", "switch", "after", "cta"], look: "same framing for before and after, desaturated before, vibrant after, match-cut transition", voice: "matter-of-fact, relieved" },
-  problem_solution: { label: "Problem / solution", beats: ["hook", "problem", "agitate", "solution", "cta"], look: "relatable everyday frustration, then the product fixing it in one clear action", voice: "empathetic, then upbeat" },
-  founder_story: { label: "Founder story", beats: ["hook", "why", "how it's made", "proof", "cta"], look: "documentary style, founder at work, workshop or studio, natural light, intimate close-ups", voice: "personal, sincere" },
-};
+export const QA_PASS = 8;
 
 /** Shot lengths a clip model can render (clamped later to the model's supported durations). */
 const shotSeconds = (lengthSec: number, n: number) => Math.max(3, Math.min(8, Math.round(lengthSec / n)));
@@ -77,10 +68,3 @@ You only see frames, not audio. Return JSON: {"score": number, "notes": string[]
   return { qa: { score: Math.max(0, Math.min(10, Number(data.score) || 0)), notes: (data.notes ?? []).slice(0, 4) }, cost: usage.costUsd };
 }
 
-/** Rough pre-flight cost so the user sees the bill before spending. */
-export function estimateCost(plan: VideoPlan, shots: number, stage: "storyboard" | "video") {
-  if (stage === "storyboard") return +(shots * 0.06 + 0.02).toFixed(2);
-  const perSec = /veo-3\.1(?!-fast|-lite)|kling-v3\.0-pro|seedance-2\.0$|hailuo-3$/.test(plan.finalModel) ? 0.4 : 0.1;
-  const audio = 0.02 + (plan.music ? 0.6 : 0);
-  return +(plan.lengthSec * perSec * 1.5 + shots * 0.01 + audio).toFixed(2);
-}

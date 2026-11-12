@@ -19,6 +19,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   AlertTriangle,
+  Clapperboard,
   ArrowRight,
   Square,
   Check,
@@ -47,7 +48,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { CreativeCard } from "@/components/creative-card";
 import { cn } from "@/lib/utils";
 import type { ModelOption } from "@/lib/models";
-import type { Brand, Brief, Creative, CreativeProgress, StudioRun } from "@/lib/types";
+import type { Brand, Brief, Creative, CreativeProgress, Direction, Shot, StudioRun, VideoCategory, VideoPlan } from "@/lib/types";
+import { CATEGORIES, estimateCost, LENGTHS, shotCount } from "@/lib/video-categories";
 
 type Model = ModelOption & { ready: boolean };
 type Modality = "text" | "vision" | "image" | "video";
@@ -70,6 +72,7 @@ interface Ctx {
     format: "static" | "video";
     sel: Record<Modality, string>;
     refs: string[];
+    plan: VideoPlan;
     set: (patch: Partial<Omit<Ctx["form"], "set">>) => void;
   };
   start: () => void;
@@ -80,6 +83,10 @@ interface Ctx {
 }
 const FlowCtx = createContext<Ctx | null>(null);
 const useFlow = () => useContext(FlowCtx)!;
+
+const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 15, draftModel: "bytedance/seedance-2.0-fast", finalModel: "kwaivgi/kling-v3.0-pro", voice: "Rachel", music: true, budgetUsd: 10 };
+const VOICE_OPTIONS = ["Rachel", "Aria", "Sarah", "Charlotte", "Jessica", "Lily", "Roger", "George", "Liam", "Will", "Eric", "Brian", "Daniel"];
+const SB_SHIFT = 430;
 
 const SPINE = { brand: 0, research: 440, brief: 900 };
 const DIR_Y = 780;
@@ -540,8 +547,112 @@ function BriefNode() {
   );
 }
 
+function VideoPlanNode() {
+  const { run, form, models, act, sending } = useFlow();
+  if (!run) return null;
+  const p = form.plan;
+  const set = (patch: Partial<VideoPlan>) => form.set({ plan: { ...p, ...patch } });
+  const shots = shotCount(p.lengthSec, p.category);
+  const video = models.filter((m) => m.modality === "video" && !m.id.startsWith("higgsfield:"));
+  const sel = "w-full rounded-md border border-white/10 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200";
+  const has = run.directions.some((d) => d.shots?.length);
+  return (
+    <Shell label="Video plan" icon={Clapperboard} state={has ? "done" : "active"} width={360}>
+      <div className="space-y-2.5">
+        <label className="block space-y-1">
+          <span className="text-[10px] uppercase tracking-wider text-zinc-500">Category</span>
+          <select className={sel} value={p.category} onChange={(e) => set({ category: e.target.value as VideoCategory })}>
+            {Object.entries(CATEGORIES).map(([k, c]) => (
+              <option key={k} value={k}>{c.label}</option>
+            ))}
+          </select>
+          <span className="block text-[11px] leading-snug text-zinc-500">{CATEGORIES[p.category].beats.join(" → ")}</span>
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Length</span>
+            <select className={sel} value={p.lengthSec} onChange={(e) => set({ lengthSec: Number(e.target.value) })}>
+              {LENGTHS.map((l) => (
+                <option key={l} value={l}>{l}s · {shotCount(l, p.category)} shots</option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Voice</span>
+            <select className={sel} value={p.voice} onChange={(e) => set({ voice: e.target.value })}>
+              {VOICE_OPTIONS.map((v) => (
+                <option key={v}>{v}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Draft model</span>
+            <select className={sel} value={p.draftModel} onChange={(e) => set({ draftModel: e.target.value })}>
+              {video.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Final model</span>
+            <select className={sel} value={p.finalModel} onChange={(e) => set({ finalModel: e.target.value })}>
+              {video.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Budget cap / video</span>
+            <input type="number" min={1} max={500} step={1} className={sel} value={p.budgetUsd} onChange={(e) => set({ budgetUsd: Math.max(1, Number(e.target.value) || 1) })} />
+          </label>
+          <label className="flex items-end gap-2 pb-1.5 text-xs text-zinc-300">
+            <input type="checkbox" checked={p.music} onChange={(e) => set({ music: e.target.checked })} /> Music bed
+          </label>
+        </div>
+        <p className="text-[11px] leading-snug text-zinc-500">
+          Storyboards ≈ ${estimateCost("storyboard", { lengthSec: p.lengthSec, shots: shots * run.directions.length })}. Per video: draft ≈ ${estimateCost("video", { model: p.draftModel, lengthSec: p.lengthSec, shots, music: p.music })}, final ≈ $
+          {estimateCost("video", { model: p.finalModel, lengthSec: p.lengthSec, shots, music: p.music })}.
+        </p>
+        <Button size="sm" className="w-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90" disabled={sending || run.status === "working"} onClick={() => act("storyboard", { runId: run.id, plan: p, refs: form.refs })}>
+          <Clapperboard /> {has ? "Rebuild storyboards" : "Build storyboards"}
+        </Button>
+      </div>
+    </Shell>
+  );
+}
+
+function ShotThumb({ d, s }: { d: Direction; s: Shot }) {
+  const { run, act, sending, form } = useFlow();
+  const score = s.clipQa?.score ?? s.keyframeQa?.score;
+  const notes = (s.clipQa ?? s.keyframeQa)?.notes ?? [];
+  // eslint-disable-next-line @next/next/no-img-element
+  const img = s.keyframe ? <img src={s.keyframe} alt={s.beat} className="aspect-[9/16] w-full rounded-md object-cover ring-1 ring-white/10" /> : <div className="aspect-[9/16] w-full animate-pulse rounded-md bg-white/5" />;
+  return (
+    <div className="group relative w-[58px] shrink-0" title={`${s.beat.toUpperCase()}: ${s.visual}\nVO: ${s.vo}${notes.length ? `\nQA: ${notes.join(" ")}` : ""}`}>
+      {s.clip ? (
+        <a href={s.clip} target="_blank" rel="noreferrer">
+          {img}
+        </a>
+      ) : (
+        img
+      )}
+      {score != null && <span className={cn("absolute left-1 top-1 rounded px-1 text-[9px] font-semibold text-black", score >= 8 ? "bg-emerald-400" : "bg-amber-300")}>{score}</span>}
+      {s.clip && <Film className="absolute bottom-5 left-1 size-3 text-white drop-shadow" />}
+      <button
+        aria-label="Redraw shot"
+        disabled={sending || run?.status === "working"}
+        onClick={() => act("redo_shot", { runId: run!.id, directionId: d.id, shotId: s.id, refs: form.refs })}
+        className="absolute right-1 top-1 hidden rounded bg-black/70 p-0.5 text-white group-hover:block disabled:opacity-40"
+      >
+        <RefreshCw className="size-3" />
+      </button>
+      <div className="mt-0.5 truncate text-[9px] uppercase tracking-wide text-zinc-500">{s.beat}</div>
+    </div>
+  );
+}
+
 function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
-  const { run } = useFlow();
+  const { run, act, sending, form } = useFlow();
   if (!run) return null;
   const d = run.directions[data.index];
   if (!d) {
@@ -561,6 +672,30 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
         </div>
         <p className="line-clamp-2 text-[11px] text-zinc-500" title={d.angle}>{d.angle}</p>
         <p className="line-clamp-3 text-[12px] leading-relaxed text-zinc-400">{d.script}</p>
+        {d.shots?.length ? (
+          <div className="space-y-2 border-t border-white/5 pt-2.5">
+            <div className="nowheel flex gap-1.5 overflow-x-auto pb-1">
+              {d.shots.map((s) => (
+                <ShotThumb key={s.id} d={d} s={s} />
+              ))}
+            </div>
+            <div className="flex gap-1.5">
+              {(["draft", "final"] as const).map((tier) => (
+                <Button
+                  key={tier}
+                  size="sm"
+                  variant={tier === "final" ? "default" : "outline"}
+                  className={cn("flex-1", tier === "final" && "bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90")}
+                  disabled={sending || run.status === "working" || d.shots!.some((s) => !s.keyframe)}
+                  onClick={() => act("render_video", { runId: run.id, directionId: d.id, tier, refs: form.refs })}
+                >
+                  <Film /> {tier === "draft" ? "Draft" : "Final"} ~$
+                  {estimateCost("video", { model: tier === "draft" ? (run.videoPlan ?? form.plan).draftModel : (run.videoPlan ?? form.plan).finalModel, lengthSec: d.shots!.reduce((t, s) => t + s.seconds, 0), shots: d.shots!.length, music: (run.videoPlan ?? form.plan).music })}
+                </Button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </Shell>
   );
@@ -736,7 +871,7 @@ const GHOSTS = [
 ] as const;
 
 const noop = () => {};
-const nodeTypes = { ghost: GhostNode, style: StyleNode, organic: OrganicNode, brand: BrandNode, research: ResearchNode, brief: BriefNode, direction: DirectionNode, creative: CreativeNode, publish: PublishNode };
+const nodeTypes = { ghost: GhostNode, style: StyleNode, organic: OrganicNode, videoplan: VideoPlanNode, brand: BrandNode, research: ResearchNode, brief: BriefNode, direction: DirectionNode, creative: CreativeNode, publish: PublishNode };
 
 /* ------------------------------------------------------------------ */
 /* Graph                                                               */
@@ -799,21 +934,26 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>) {
       order = 3;
     }
 
+    const sb = run.directions.some((d) => d.shots?.length) ? SB_SHIFT : 0;
+    if (run.format === "video" && run.directions.length > 0) {
+      nodes.push({ id: "videoplan", type: "videoplan", position: { x: 140, y: DIR_Y }, data: {} });
+      edges.push(edge("brief", "videoplan", true, {}));
+    }
     let anyCreative = false;
     run.directions.forEach((d, i) => {
       const c = byDir[d.id];
       const p = run.progress[d.id];
       if (!c && !p) return;
       anyCreative = true;
-      nodes.push({ id: `cr-${i}`, type: "creative", position: { x: DIR_X[i] + 20, y: CR_Y }, data: { index: i, order: 4 } });
+      nodes.push({ id: `cr-${i}`, type: "creative", position: { x: DIR_X[i] + 20, y: CR_Y + sb }, data: { index: i, order: 4 } });
       edges.push(edge(`dir-${i}`, `cr-${i}`, true, { active: !!p && WORKING.includes(p) }));
     });
     if (anyCreative) order = 4;
 
     if (run.stage === "qa" || run.stage === "publish") {
-      nodes.push({ id: "publish", type: "publish", position: { x: 950, y: PUB_Y }, data: { order: 5 } });
+      nodes.push({ id: "publish", type: "publish", position: { x: 950, y: PUB_Y + sb }, data: { order: 5 } });
       if (run.organic) {
-        nodes.push({ id: "organic", type: "organic", position: { x: 1340, y: PUB_Y }, data: {} });
+        nodes.push({ id: "organic", type: "organic", position: { x: 1340, y: PUB_Y + sb }, data: {} });
         edges.push(edge("publish", "organic", false, {}));
       }
       run.directions.forEach((d, i) => {
@@ -887,7 +1027,16 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
         ];
         break;
       case "generate":
-        text = `Happy with the directions? Generate ${run.format === "video" ? "videos" : "images"} and run Vision QA.`;
+        if (run.format === "video") {
+          const hasSb = run.directions.some((d) => d.shots?.length);
+          text = hasSb ? "Review the storyboards. Redraw weak shots, then render a draft or final video on each direction." : "Pick a category and length on the Video plan card, then build storyboards before any video spend.";
+          buttons = [
+            btn("Re-pitch", () => act("directions", { runId: run.id, format: run.format }), false, <RefreshCw />),
+            btn(hasSb ? "Rebuild storyboards" : "Build storyboards", () => act("storyboard", { runId: run.id, plan: form.plan, refs: form.refs }), !hasSb),
+          ];
+          break;
+        }
+        text = "Happy with the directions? Generate images and run Vision QA.";
         buttons = [
           btn("Re-pitch", () => act("directions", { runId: run.id, format: run.format }), false, <RefreshCw />),
           btn("Generate creatives", () => act("generate", { runId: run.id, refs: form.refs }), true),
@@ -896,7 +1045,7 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
       default:
         text = "Send passing creatives to the Inbox, or redo the ones below the QA bar.";
         buttons = [
-          btn("Regenerate all", () => act("generate", { runId: run.id, refs: form.refs }), false, <RefreshCw />),
+          ...(run.format === "video" ? [] : [btn("Regenerate all", () => act("generate", { runId: run.id, refs: form.refs }), false, <RefreshCw />)]),
           btn("New run", () => router.push("/studio"), false, <Plus />),
         ];
     }
@@ -976,7 +1125,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
   const [notice, setNotice] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [form, setForm] = useState({ brandUrl: "https://", referenceUrl: "", offer: "", saveKit: true, kits: [] as Brand[], goal: "", format: "static" as "static" | "video", sel: defaults, refs: [] as string[] });
+  const [form, setForm] = useState({ brandUrl: "https://", referenceUrl: "", offer: "", saveKit: true, kits: [] as Brand[], goal: "", format: "static" as "static" | "video", sel: defaults, refs: [] as string[], plan: DEFAULT_PLAN });
 
   const flash = (msg: string) => {
     setNotice(msg);
