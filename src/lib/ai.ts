@@ -9,6 +9,47 @@ export interface Usage {
   costUsd: number;
 }
 
+const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
+const prices = new Map<string, [number, number]>();
+
+/** OpenRouter's public list prices (USD per token), used to cost direct OpenAI calls the same way. */
+async function listPrice(model: string): Promise<[number, number] | null> {
+  if (!prices.size) {
+    const r = await fetch("https://openrouter.ai/api/v1/models").then((x) => (x.ok ? x.json() : null)).catch(() => null);
+    for (const m of r?.data ?? []) prices.set(m.id, [Number(m.pricing?.prompt) || 0, Number(m.pricing?.completion) || 0]);
+  }
+  return prices.get(model) ?? null;
+}
+
+/** openai/* models go straight to OpenAI when OPENAI_API_KEY is set; everything else via OpenRouter. */
+export const viaOpenAI = (model: string) => model.startsWith("openai/") && !!process.env.OPENAI_API_KEY;
+
+async function chat(body: Record<string, unknown> & { model: string }) {
+  if (!viaOpenAI(body.model)) return openrouter(body);
+  const model = body.model.slice("openai/".length);
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(OPENAI_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, model }),
+    });
+    if ((res.status !== 429 && res.status < 500) || attempt >= 4) break;
+    const after = Number(res.headers.get("retry-after"));
+    await new Promise((r) => setTimeout(r, (after > 0 ? Math.min(after, 60) : 4 * 2 ** attempt) * 1000 + Math.random() * 1000));
+  }
+  if (!res.ok) {
+    const t = await res.text();
+    if (t.includes("insufficient_quota")) throw new Error("OpenAI API balance is empty. Add credit at platform.openai.com/settings/organization/billing, then retry.");
+    throw new Error(`OpenAI ${res.status}: ${t.slice(0, 300)}`);
+  }
+  const json = await res.json();
+  const p = await listPrice(body.model);
+  const u = json.usage ?? {};
+  json.usage = { ...u, cost: p ? (u.prompt_tokens ?? 0) * p[0] + (u.completion_tokens ?? 0) * p[1] : 0 };
+  return json;
+}
+
 async function openrouter(body: Record<string, unknown>) {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
@@ -46,7 +87,7 @@ export async function chatJSON<T>(model: string, system: string, user: string | 
   ];
   let cost = 0;
   for (let attempt = 0; ; attempt++) {
-    const json = await openrouter({ model, messages, response_format: { type: "json_object" } });
+    const json = await chat({ model, messages, response_format: { type: "json_object" } });
     cost += json.usage?.cost ?? 0;
     const text: string = json.choices?.[0]?.message?.content ?? "";
     try {

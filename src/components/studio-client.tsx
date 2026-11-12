@@ -783,11 +783,11 @@ function JobBar({ job }: { job: NonNullable<StudioRun["job"]> }) {
 
 const scoreTone = (n: number) => (n >= 8 ? "bg-emerald-500/15 text-emerald-300" : n >= 6 ? "bg-amber-500/15 text-amber-300" : "bg-red-500/15 text-red-300");
 
-const WRITERS: Record<string, string> = { "openai/gpt-6.1-sol": "Sol", "anthropic/claude-opus-5.5": "Opus 5.5", "google/gemini-4-carbon": "Carbon" };
+const WRITERS: Record<string, string> = { "": "Auto", "openai/gpt-6-astra": "Astra", "openai/gpt-6.1-sol": "Sol", "anthropic/claude-opus-5.5": "Opus 5.5", "google/gemini-4-carbon": "Carbon" };
 const JUDGE_MODEL = "google/gemini-4-carbon";
 const savedWriter = () => {
   const w = typeof window === "undefined" ? null : localStorage.getItem("gtm.writer");
-  return w && w in WRITERS ? w : "anthropic/claude-opus-5.5";
+  return w && w in WRITERS ? w : "";
 };
 
 function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove }: {
@@ -797,7 +797,7 @@ function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove
   edits: Record<string, string[]>;
   setEdits: (e: Record<string, string[]>) => void;
   busy: boolean;
-  onWrite: (writer: string) => void;
+  onWrite: (writer?: string) => void;
   onApprove: (sc: AdScript, lines?: string[]) => void;
 }) {
   const ap = d.approvedScript;
@@ -806,7 +806,7 @@ function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove
     setWriter(w);
     localStorage.setItem("gtm.writer", w);
   };
-  const write = () => onWrite(writer);
+  const write = () => onWrite(writer || undefined);
   return (
     <div className="nodrag space-y-1.5 rounded-lg border border-white/5 bg-white/[0.02] p-2">
       <div className="flex items-center justify-between">
@@ -1370,7 +1370,7 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
           if (!approved) {
             const written = run.directions.some((d) => d.scripts?.length);
             text = written ? "Open a script on each direction, edit any line, and approve one. Storyboards, voice and video only use approved scripts." : "Script first: Sol writes 5 scripts per direction and Carbon grades them before anything is drawn or rendered.";
-            buttons = [btn(written ? "Rewrite scripts" : "Write scripts", () => act("write_scripts", { runId: run.id, lengthSec: form.plan.lengthSec, writer: savedWriter() }), !written, <Pencil />)];
+            buttons = [btn(written ? "Rewrite scripts" : "Write scripts", () => act("write_scripts", { runId: run.id, lengthSec: form.plan.lengthSec, writer: savedWriter() || undefined }), !written, <Pencil />)];
             break;
           }
           text = hasSb ? "Review the storyboards. Redraw weak shots, then render a draft or final video on each direction." : "Pick a category and length on the Video plan card, then build storyboards before any video spend.";
