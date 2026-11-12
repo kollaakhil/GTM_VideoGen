@@ -283,7 +283,7 @@ async function videoQA(model: string, video: string, b: Brief, hook: string, cap
     model,
     `${QA_RUBRIC} You are reviewing a filmstrip of a vertical video ad: frames left-to-right, top-to-bottom at ${strip.frames.map((t) => `${t.toFixed(1)}s`).join(", ")}. Judge it frame by frame: the first frame must show a meaningful focal point (not black, a fade or a logo wait); the hook and product must be clear within ~2 seconds with sound off; on-screen text must be readable and spelled correctly; check for AI artifacts (morphing hands, faces, warped product or text), continuity breaks, and whether the ending gives the CTA or product enough hold. You only see frames, not audio: never comment on voiceover or sound.`,
     [
-      { type: "text", text: `Brief: ${JSON.stringify(b)}\nIntended hook: ${hook}${captions ? `\nBurned-in captions (also the voiceover), in order: ${captions}\nThe last 1.5s is a typeset end card with the brand, offer line and CTA.` : ""}\nReturn JSON: {"score": number, "notes": string[] (max 4, concrete fixes, cite the frame time)}` },
+      { type: "text", text: `Brief: ${JSON.stringify(b)}\nIntended hook: ${hook}${captions ? `\nBurned-in captions (also the voiceover), in order: ${captions}\nThe last 1.5s is a typeset end card with the brand, offer line and CTA. Mandatories and fine print live in the ad copy and landing page, so don't expect them all on screen; only flag on-screen claims that contradict the brief.` : ""}\nReturn JSON: {"score": number, "notes": string[] (max 4, concrete fixes, cite the frame time)}` },
       { type: "image_url", image_url: { url: strip.sheet } },
     ],
   );

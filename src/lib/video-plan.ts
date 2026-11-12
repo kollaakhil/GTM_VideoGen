@@ -34,7 +34,7 @@ Rules:
 - Shot 1 must stop the scroll in the first second and show the product or the core tension immediately.
 - "visual": one concrete, filmable scene (subject, action, setting, light, palette). Same product appearance and same people across shots for continuity.
 - Never put text, signs, captions, labels, price tags, logos or UI in frame; all text is added in post.
-- "camera": one camera move (e.g. slow push-in, handheld follow, top-down static, orbit).
+- "camera": one gentle camera move (e.g. slow push-in, slow pan, top-down static, slight orbit). Keep every person and the product fully in frame for the whole shot; never push in so far that anyone is cropped out.
 - "vo": the words spoken over this shot only, at most ${Math.round(secs * 2.3)} words, natural speech, only facts from the brief. The last shot ends on the call to action.
 Return JSON: {"shots":[{"beat","visual","camera","vo"}]}`,
   );
