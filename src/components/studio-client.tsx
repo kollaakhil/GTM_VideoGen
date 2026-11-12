@@ -944,10 +944,10 @@ function PublishNode() {
   const { run, byDir, act, sending } = useFlow();
   if (!run) return null;
   const list = run.directions.map((d) => byDir[d.id]).filter(Boolean);
-  const passed = list.filter((c) => c.qa?.pass).length;
+  const passed = list.filter((c) => (c.gate ? c.gate.pass || (!!c.qaOverride && c.gate.reasons.every((r) => r.startsWith("QA "))) : c.qa?.pass)).length;
   const sent = list.filter((c) => c.status === "approved" || c.status === "paused" || c.status === "live").length;
   return (
-    <Shell step={6} label="Publish" icon={Rocket} state={sent > 0 ? "done" : passed > 0 ? "active" : "idle"} width={300}>
+    <Shell step={6} label="Gate · Live & learning" icon={Rocket} state={sent > 0 ? "done" : passed > 0 ? "active" : "idle"} width={300}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-xl bg-white/[0.04] p-3">
@@ -955,16 +955,17 @@ function PublishNode() {
               {passed}
               <span className="text-sm text-zinc-500">/{list.length}</span>
             </div>
-            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Passed QA</div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Passed gate</div>
           </div>
           <div className="rounded-xl bg-white/[0.04] p-3">
             <div className="text-xl font-semibold tabular-nums text-white">{sent}</div>
             <div className="text-[10px] uppercase tracking-wider text-zinc-500">In approval</div>
           </div>
         </div>
+        <LiveResults list={list} />
         <p className="text-[12px] leading-relaxed text-zinc-400">
           {passed === 0
-            ? "Nothing has passed QA yet. Redo a creative, or edit the brief and generate again."
+            ? "Nothing has passed the Creative Director Gate yet. Redo a creative, or edit the brief and generate again."
             : "Send passing creatives to Meta or Google from their cards. Ads are created paused and wait for you in the Inbox."}
         </p>
         <Link href="/inbox" className={cn(buttonVariants({ size: "sm", variant: "outline" }), "w-full")}>
@@ -977,6 +978,39 @@ function PublishNode() {
         )}
       </div>
     </Shell>
+  );
+}
+
+function LiveResults({ list }: { list: Creative[] }) {
+  const [syncing, setSyncing] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const live = list.filter((c) => c.external?.meta || c.metrics);
+  const failed = list.filter((c) => c.publishError);
+  const t = live.reduce((a, c) => ({ spend: a.spend + (c.metrics?.spend ?? 0), revenue: a.revenue + (c.metrics?.revenue ?? 0), clicks: a.clicks + (c.metrics?.clicks ?? 0) }), { spend: 0, revenue: 0, clicks: 0 });
+  if (!live.length && !failed.length) return null;
+  const sync = async () => {
+    setSyncing(true);
+    const res = await fetch("/api/metrics/sync", { method: "POST" });
+    const j = await res.json().catch(() => ({}));
+    setNote(res.ok ? `Synced ${j.synced}/${j.total} ads${j.errors?.length ? ` · ${j.errors[0]}` : ""}` : j.error || "Sync failed");
+    setSyncing(false);
+  };
+  return (
+    <div className="space-y-2 rounded-xl bg-white/[0.04] p-3 text-[12px]">
+      <div className="grid grid-cols-3 gap-1 tabular-nums text-white">
+        <div><div className="font-semibold">${t.spend.toFixed(0)}</div><div className="text-[10px] uppercase text-zinc-500">Spend</div></div>
+        <div><div className="font-semibold">{t.clicks}</div><div className="text-[10px] uppercase text-zinc-500">Clicks</div></div>
+        <div><div className="font-semibold">{t.spend ? `${(t.revenue / t.spend).toFixed(1)}x` : "–"}</div><div className="text-[10px] uppercase text-zinc-500">ROAS</div></div>
+      </div>
+      {failed.map((c) => <p key={c.id} className="text-red-400">{c.title}: {c.publishError}</p>)}
+      {live.length > 0 && (
+        <Button size="sm" variant="outline" className="w-full" disabled={syncing} onClick={sync}>
+          {syncing ? <Loader2 className="animate-spin" /> : <Rocket />} Sync results from Meta
+        </Button>
+      )}
+      {note && <p className="text-zinc-400">{note}</p>}
+      <p className="text-zinc-500">Results feed the learning loop for this brand&apos;s next batch.</p>
+    </div>
   );
 }
 
@@ -1004,7 +1038,7 @@ const GHOSTS = [
   { key: "brief", step: 3, label: "Creative brief", hint: "A 20-second brief you can edit and approve", x: SPINE.brief, y: 160, order: 2 },
   { key: "dir", step: 4, label: "Directions", hint: "Three distinct hooks and visual worlds", x: 960, y: DIR_Y, order: 3 },
   { key: "creative", step: 5, label: "Creatives", hint: "Images or video, scored by the Vision QA gate", x: 960, y: CR_Y, order: 4 },
-  { key: "publish", step: 6, label: "Publish", hint: "Paused ads, approved by you in the Inbox", x: 960, y: PUB_Y, order: 5 },
+  { key: "publish", step: 6, label: "Gate · Live & learning", hint: "Gate-passed ads go out paused after your approval; results feed the next batch", x: 960, y: PUB_Y, order: 5 },
 ] as const;
 
 const noop = () => {};
