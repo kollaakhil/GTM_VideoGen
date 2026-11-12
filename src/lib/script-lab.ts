@@ -17,7 +17,8 @@ export const FRAMEWORKS = [
   { id: "three_reasons", label: "Three reasons why", guide: "A bold claim, three fast numbered reasons with one visual each, then the CTA." },
 ] as const;
 
-export const HOOK_TYPES = "callout (name the viewer), contrarian, question, POV, proof/result, pattern interrupt";
+export const HOOK_LIST = ["callout (name the viewer and their situation)", "contrarian (challenge a belief they hold)", "question (one they'd answer yes to)", "POV (first-person moment they recognise)", "proof/result (show the outcome first)", "pattern interrupt (an unexpected visual or line)"];
+export const HOOK_TYPES = HOOK_LIST.map((h) => h.split(" (")[0]).join(", ");
 
 export type ScriptCtx = {
   direction: Pick<Direction, "title" | "hook" | "angle">;
@@ -142,6 +143,7 @@ const SCRIPT_SHAPE = `{"framework","hook":{"visual","spoken","onScreen"},"beats"
 const SCRIPT_RULES = (len: number) => `Rules:
 - Vertical 9:16 performance ad, ${len}s total, 3–5 beats, each 2–6s; the sum of beat seconds equals ${len}.
 - Beat 1 IS the hook: it stops the scroll in the first 1.5s, the product or the core tension is on screen immediately. Hook types: ${HOOK_TYPES}.
+- The spoken hook is a human line in the buyer's words (a pain, a desire, a surprising truth), never a promo or discount line. Even when the brief says to "lead with" an offer, show that offer as beat 1 "onScreen" text and say it in a later beat.
 - "vo": only the words spoken aloud, natural speech, max ${WORDS_PER_SEC} words per second of the beat. No speaker labels or stage directions.
 - "onScreen": max 6 words of caption-style text that works with sound off.
 - "visual": one concrete filmable scene an AI video model can render; same people and product across beats; never text, logos or signs in frame.
@@ -161,12 +163,13 @@ const clean = (r: Raw, id: string): AdScript => ({
 export async function writeScripts(writer: string, c: ScriptCtx, count = 5): Promise<{ scripts: AdScript[]; cost: number }> {
   const fws = FRAMEWORKS.slice(0, Math.min(count, FRAMEWORKS.length));
   const res = await Promise.allSettled(
-    fws.map((f) =>
+    fws.map((f, i) =>
       chatJSON<Raw>(
         writer,
         "You are a top direct-response video ad scriptwriter. You write scripts that stop the scroll, sound like real people and sell with specifics.",
         `${ctxBlock(c)}
 Write one script for this concept using the framework "${f.label}": ${f.guide}
+Open with a ${HOOK_LIST[i % HOOK_LIST.length]} hook.
 ${SCRIPT_RULES(c.lengthSec)}
 Return JSON: ${SCRIPT_SHAPE} with "framework" set to "${f.label}".`,
       ),
@@ -194,6 +197,7 @@ Scripts:
 ${JSON.stringify(scripts.map(({ id, framework, hook, beats, cta }) => ({ id, framework, hook, beats, cta })))}
 Score each script 1–10 on: hook (stops the scroll in 1.5s), clarity (one idea, instantly understood), specificity (concrete details, not generic ad-speak), customerLanguage (sounds like the buyer), emotion, productEarly (product or result visible by 3s), cta (clear, motivating, matches the offer), pacing (fits ${c.lengthSec}s, cuts every 2–4s), claims (10 = every claim supported by the product facts).
 "overall" is your honest weighted verdict (hook and specificity weigh most); any unsupported claim caps it at 6.
+A spoken hook that is just a discount or promo line scores at most 5 on hook; offers belong on screen in beat 1 and in later VO. Never tell the writer to move a promo line into the spoken hook.
 "notes": up to 4 concrete rewrite instructions ("Replace X with Y"), not praise.
 "unsupported": each claim not backed by the product facts, quoted.
 "panel": simulate 10 buyers from the target audience seeing only the first 1.5s (hook visual + spoken + on-screen); "stopRate" = how many of 10 keep watching (0–10); "quotes" = 2 short honest reactions.
