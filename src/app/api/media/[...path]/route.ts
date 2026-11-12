@@ -1,6 +1,5 @@
-import fs from "node:fs/promises";
 import { NextResponse } from "next/server";
-import { mediaPath } from "@/lib/store";
+import { readMedia } from "@/lib/store";
 
 const TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", wav: "audio/wav" };
 
@@ -9,12 +8,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ path: st
   const rel = (await params).path.join("/");
   const ext = rel.split(".").pop()?.toLowerCase() ?? "";
   if (!TYPES[ext]) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  let buf: Buffer;
+  let buf: Buffer | null;
   try {
-    buf = await fs.readFile(mediaPath(rel));
+    buf = await readMedia(rel);
   } catch {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    buf = null;
   }
+  if (!buf) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const headers: Record<string, string> = {
     "Content-Type": TYPES[ext],
     "Accept-Ranges": "bytes",

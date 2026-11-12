@@ -14,7 +14,7 @@ pnpm dev
 Without keys the app runs in **demo mode**: an in-memory store with sample data and placeholder creatives.
 
 ## Supabase
-Apply `supabase/migrations/0001_init.sql` (SQL editor or `supabase db push`), then set `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+Set `DATABASE_URL` (Supabase Postgres connection string), `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, then run `node scripts/db-migrate.mjs` to create the private `gtm` schema and `gtm-media` bucket. `node scripts/import-local.mjs` copies an existing local `.data` store (rows and media) into Supabase.
 
 ## Pages
 - **Studio**: chat + canvas pipeline with approve/redo at each step

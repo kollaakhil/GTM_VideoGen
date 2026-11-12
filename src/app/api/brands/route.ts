@@ -54,7 +54,7 @@ export async function POST(req: Request) {
     dos: dos ?? existing?.dos ?? [],
     donts: donts ?? existing?.donts ?? [],
     winners: winners ? await Promise.all(winners.map(async (w, i) => ({ note: w.note, image: w.image ? await save(w.image, `winner${i}`) : null }))) : (existing?.winners ?? []),
-    createdAt: new Date().toISOString(),
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
   });
   return NextResponse.json({ brand });
 }

@@ -7,7 +7,7 @@ import { CATEGORIES, keyframe, planShots, QA_PASS, shotQA } from "@/lib/video-pl
 import { brandRules } from "@/lib/brand-rules";
 import { learnings } from "@/lib/learnings";
 import { captionVariants, meanVolume, mediaDuration, spokenScript, stitchShots } from "@/lib/video-post";
-import { get, list, mediaDataUrl, mediaPath, newId, put, storeMedia } from "@/lib/store";
+import { get, list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
 import { rateLimit } from "@/lib/rate-limit";
 import type { Brief, Creative, Direction, QAResult, RunEvent, Shot, ShotQA, StudioRun } from "@/lib/types";
@@ -581,7 +581,7 @@ Start exactly from the given first frame and keep the product, people and settin
     cta: d.copy?.metaCta,
     color: kit?.colorRoles?.primary || run.research?.colors?.[0],
     logo: kit?.logo ? await mediaDataUrl(kit.logo).catch(() => null) : null,
-    fontFile: kit?.font?.file?.startsWith("/api/media/") ? mediaPath(decodeURIComponent(kit.font.file.slice("/api/media/".length))) : null,
+    fontFile: kit?.font?.file ? await mediaFile(kit.font.file).catch(() => null) : null,
     fontFamily: kit?.font?.family ?? null,
   };
   const variants = await captionVariants(st.url, "", end, segments).catch((e) => {
