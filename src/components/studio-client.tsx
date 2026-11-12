@@ -17,31 +17,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import {
-  AlertTriangle,
-  Clapperboard,
-  ArrowRight,
-  Square,
-  Check,
-  ChevronDown,
-  Film,
-  Globe,
-  History,
-  ImageIcon,
-  Inbox,
-  Lightbulb,
-  Loader2,
-  MessageSquare,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Rocket,
-  Search,
-  Sparkles,
-  Upload,
-  Wand2,
-  X,
-} from "lucide-react";
+import { AlertTriangle, Clapperboard, ArrowRight, Square, Check, ChevronDown, Film, Globe, History, ImageIcon, Inbox, Lightbulb, Loader2, MessageSquare, Pencil, Plus, RefreshCw, Rocket, Search, Sparkles, Upload, Wand2, X, LayoutGrid, ShieldCheck } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -492,7 +468,60 @@ function ResearchNode() {
               {!more && r.angles.length > 4 && <span className="px-1 py-0.5 text-[11px] text-zinc-500">+{r.angles.length - 4}</span>}
             </div>
           </div>
+          {run.voc && (
+            <div className="space-y-1.5">
+              <Label>Customer language{run.voc.sources.length ? ` · ${run.voc.sources.length} source${run.voc.sources.length === 1 ? "" : "s"}` : ""}</Label>
+              <div className="flex flex-wrap gap-1">
+                {(more ? run.voc.phrases : run.voc.phrases.slice(0, 3)).map((ph) => (
+                  <span key={ph} className="max-w-full truncate rounded-md bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">“{ph}”</span>
+                ))}
+              </div>
+              {more && <Row label="Objections"><span>{run.voc.objections.join("; ")}</span></Row>}
+            </div>
+          )}
           <button onClick={() => setMore(!more)} className="text-[11px] text-indigo-300 hover:text-indigo-200">{more ? "Show less" : "Show more"}</button>
+        </div>
+      )}
+    </Shell>
+  );
+}
+
+function ConceptsNode() {
+  const { run, act, sending } = useFlow();
+  const [pick, setPick] = useState<string[] | null>(null);
+  if (!run) return null;
+  const list = run.concepts ?? [];
+  const working = run.status === "working" && run.stage === "directions" && !list.length;
+  const chosen = pick ?? list.filter((c) => c.selected).map((c) => c.id);
+  const dirty = pick !== null && pick.join() !== list.filter((c) => c.selected).map((c) => c.id).join();
+  const toggle = (id: string) => setPick(chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id].slice(-5));
+  return (
+    <Shell step={3} label="Concept matrix" icon={LayoutGrid} state={!list.length ? "working" : run.directions.length ? "done" : "active"} width={420}>
+      {!list.length ? (
+        <Skeleton text={working ? "Mapping buyers × angles × formats…" : "Waiting…"} />
+      ) : (
+        <div className="nodrag nowheel space-y-2">
+          <p className="text-[11px] text-zinc-500">Pick distinct concepts. Look-alikes are merged by ad platforms, so the gate requires ≥55% difference.</p>
+          <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
+            {list.map((c) => {
+              const on = chosen.includes(c.id);
+              return (
+                <button key={c.id} onClick={() => toggle(c.id)} className={cn("w-full rounded-lg border px-2.5 py-2 text-left transition", on ? "border-indigo-400/60 bg-indigo-500/10" : "border-white/[0.06] bg-white/[0.02] hover:border-white/15")}>
+                  <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wide text-zinc-500">
+                    <span className="truncate">{c.format} · {c.awareness}-aware</span>
+                    {c.diversity !== undefined && <span className={cn(c.diversity >= 0.55 ? "text-emerald-400" : "text-amber-400")}>{Math.round(c.diversity * 100)}% distinct</span>}
+                  </div>
+                  <div className="mt-0.5 text-[13px] font-medium text-zinc-100">“{c.hook}”</div>
+                  <div className="mt-0.5 line-clamp-2 text-[11px] text-zinc-400">{c.persona} · {c.angle} · {c.setting}</div>
+                </button>
+              );
+            })}
+          </div>
+          {dirty && (
+            <Button size="sm" disabled={sending || run.status === "working" || !chosen.length} onClick={() => act("pick_concepts", { runId: run.id, ids: chosen }).then(() => setPick(null))}>
+              Use {chosen.length} selected
+            </Button>
+          )}
         </div>
       )}
     </Shell>
@@ -843,8 +872,15 @@ function CreativeNode({ data }: NodeProps<Node<{ index: number }>>) {
         <span>
           <span className="text-zinc-600">05</span> Creative {data.index + 1}
         </span>
-        {c.qa?.pass ? <span className="text-emerald-400">Passed QA</span> : <span className="text-red-400">Below QA bar</span>}
+        {c.gate ? (
+          c.gate.pass ? <span className="flex items-center gap-1 text-emerald-400"><ShieldCheck className="size-3" /> Passed gate</span> : <span className="text-red-400" title={c.gate.reasons.join("\n")}>Gate: {c.gate.reasons.length} issue{c.gate.reasons.length === 1 ? "" : "s"}</span>
+        ) : c.qa?.pass ? <span className="text-emerald-400">Passed QA</span> : <span className="text-red-400">Below QA bar</span>}
       </div>
+      {c.gate && !c.gate.pass && (
+        <ul className="mb-2 space-y-0.5 rounded-lg border border-red-500/20 bg-red-500/5 px-2.5 py-1.5 text-[11px] text-red-200">
+          {c.gate.reasons.slice(0, 4).map((r) => <li key={r}>• {r}</li>)}
+        </ul>
+      )}
       <div className="nodrag nowheel">
         <CreativeCard
           creative={c}
@@ -972,7 +1008,7 @@ const GHOSTS = [
 ] as const;
 
 const noop = () => {};
-const nodeTypes = { ghost: GhostNode, style: StyleNode, organic: OrganicNode, videoplan: VideoPlanNode, brand: BrandNode, research: ResearchNode, brief: BriefNode, direction: DirectionNode, creative: CreativeNode, publish: PublishNode };
+const nodeTypes = { concepts: ConceptsNode, ghost: GhostNode, style: StyleNode, organic: OrganicNode, videoplan: VideoPlanNode, brand: BrandNode, research: ResearchNode, brief: BriefNode, direction: DirectionNode, creative: CreativeNode, publish: PublishNode };
 
 /* ------------------------------------------------------------------ */
 /* Graph                                                               */
@@ -1027,10 +1063,16 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>) {
       order = 2;
     }
 
-    if (run.directions.length > 0 || (run.stage === "directions" && run.status !== "idle")) {
-      [0, 1, 2].forEach((i) => {
+    const hasConcepts = !!run.concepts?.length;
+    if (hasConcepts) {
+      nodes.push({ id: "concepts", type: "concepts", position: { x: SPINE.brief + 460, y: 0 }, data: { order: 3 } });
+      edges.push(edge("brief", "concepts", false, { active: working && run.stage === "directions" && !run.directions.length }));
+    }
+    if (run.directions.length > 0 || (run.stage === "directions" && run.status !== "idle" && hasConcepts)) {
+      const n = Math.max(1, Math.min(3, run.directions.length || 3));
+      Array.from({ length: n }, (_, i) => i).forEach((i) => {
         nodes.push({ id: `dir-${i}`, type: "direction", position: { x: DIR_X[i], y: DIR_Y }, data: { index: i, order: 3 } });
-        edges.push(edge("brief", `dir-${i}`, true, { active: working && run.stage === "directions" }));
+        edges.push(edge(hasConcepts ? "concepts" : "brief", `dir-${i}`, true, { active: working && run.stage === "directions" }));
       });
       order = 3;
     }
@@ -1128,11 +1170,20 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
         buttons = [btn("Write the brief", () => act("brief", { runId: run.id }), true)];
         break;
       case "directions":
-        text = "Approve the brief to get three creative directions.";
+        if (run.concepts?.length) {
+          text = "Pick the most distinct concepts on the Concept matrix, then turn them into directions.";
+          buttons = [
+            btn("Rebuild concepts", () => act("concepts", { runId: run.id, format: run.format }), false, <RefreshCw />),
+            btn("Turn into directions", () => act("directions", { runId: run.id, format: run.format }), true),
+          ];
+          break;
+        }
+        text = "Approve the brief to build a concept matrix: buyers × angles × formats, checked for diversity.";
         buttons = [
           btn("Edit", () => setEditing(true), false, <Pencil />),
           btn("Rewrite", () => act("brief", { runId: run.id }), false, <RefreshCw />),
-          btn("Approve brief", () => act("directions", { runId: run.id, format: run.format }), true),
+          btn("Skip to directions", () => act("directions", { runId: run.id, format: run.format }), false),
+          btn("Approve brief", () => act("concepts", { runId: run.id, format: run.format }), true),
         ];
         break;
       case "generate":
