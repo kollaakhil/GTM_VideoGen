@@ -355,8 +355,8 @@ export async function typesetStatic(background: string, kit: StaticKit): Promise
       await fs.copyFile(path.join(FONTS, "DejaVuSans-Bold.ttf"), path.join(fontsDir, "DejaVuSans-Bold.ttf"));
     }
     const logo = kit.logo ? await toFile(dir, "logo.png", kit.logo) : null;
-    const scrim = `drawbox=x=0:y=ih*0.42:w=iw:h=ih*0.58:color=black@0.18:t=fill,drawbox=x=0:y=ih*0.56:w=iw:h=ih*0.44:color=black@0.22:t=fill,drawbox=x=0:y=ih*0.70:w=iw:h=ih*0.30:color=black@0.2:t=fill`;
-    const base = `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,${scrim},subtitles=${path.join(dir, "t.ass")}:fontsdir=${fontsDir}`;
+    const scrim = `color=c=black:s=${W}x${H}:d=1,format=rgba,geq=r='0':g='0':b='0':a='if(lt(Y,H*0.38),0,200*pow((Y-H*0.38)/(H*0.62),1.1))'[sc]`;
+    const base = `${scrim};[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,format=rgba[bg0];[bg0][sc]overlay=0:0,format=rgb24,subtitles=${path.join(dir, "t.ass")}:fontsdir=${fontsDir}`;
     const fc = logo ? `${base}[b];[1:v]scale=260:-1[lg];[b][lg]overlay=70:60` : base;
     const out = path.join(dir, "out.png");
     await run(FFMPEG, ["-hide_banner", "-loglevel", "error", "-i", bg, ...(logo ? ["-i", logo] : []), "-filter_complex", fc, "-frames:v", "1", "-y", out], { timeout: 60_000 });
