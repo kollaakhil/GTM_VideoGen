@@ -102,6 +102,7 @@ export const nearest = (options: number[] | null | undefined, want: number) => (
 
 /** USD per output second from OpenRouter's pricing SKUs (null when unknown or not an OpenRouter model). */
 export async function videoPricePerSec(model: string, resolution = "720p", audio = false): Promise<number | null> {
+  if (providerOf(model) === "higgsfield") return pickRate(await higgsfieldRates(model), resolution)?.rate ?? null;
   if (providerOf(model) !== "openrouter") return null;
   const p = (await openrouterVideoSpec(model)).pricing;
   if (!p) return null;
@@ -135,7 +136,9 @@ export async function openrouterCredits(): Promise<number | null> {
 
 /** Durations a video model accepts (from OpenRouter's catalog), for planning shot lengths. */
 export async function videoDurations(model: string): Promise<number[] | null> {
-  return providerOf(model) === "openrouter" ? ((await openrouterVideoSpec(model)).durations ?? null) : null;
+  const p = providerOf(model);
+  if (p === "higgsfield") return higgsfieldDurations(model);
+  return p === "openrouter" ? ((await openrouterVideoSpec(model)).durations ?? null) : null;
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const VIDEO_TIMEOUT_MS = 12 * 60_000;
@@ -195,44 +198,144 @@ export function higgsfieldCredential(): string | null {
   return process.env.HF_API_KEY?.trim() || null;
 }
 
-async function higgsfieldVideo(model: string, prompt: string): Promise<{ url: string; usage: Usage }> {
+const hfEndpoint = (model: string) => {
+  const e = model.replace(/^higgsfield:/, "");
+  if (!/^[a-z0-9][a-z0-9./-]+$/.test(e)) throw new Error("Invalid Higgsfield model");
+  return e;
+};
+const hfAuth = () => {
   const cred = higgsfieldCredential();
   if (!cred) throw new Error("Higgsfield is not connected (set HF_API_KEY, or HF_API_KEY_ID and HF_API_KEY_SECRET)");
-  const endpoint = model.replace(/^higgsfield:/, "");
-  if (!/^[a-z0-9][a-z0-9./-]+$/.test(endpoint)) throw new Error("Invalid Higgsfield model");
-  const auth = { Authorization: `Key ${cred}` };
-  const kling = endpoint.startsWith("kling-video/");
-  const body: Record<string, unknown> = { prompt: prompt.slice(0, kling ? 2500 : 4000), duration: 5, aspect_ratio: (kling ? HIGGSFIELD_ASPECTS.kling : HIGGSFIELD_ASPECTS.default)[0] };
-  if (kling) body.sound = "on";
-  else Object.assign(body, { resolution: "720p", generate_audio: true });
+  return { Authorization: `Key ${cred}` };
+};
+const isKling = (e: string) => e.startsWith("kling-video/");
+
+/** Clip lengths each Higgsfield family accepts. */
+export function higgsfieldDurations(model: string): number[] {
+  const e = model.replace(/^higgsfield:/, "");
+  return isKling(e) ? [3, 4, 5, 6, 7, 8, 9, 10] : [4, 5, 6, 7, 8, 9, 10, 11, 12];
+}
+
+/** Turns Higgsfield error bodies into a message a Studio user can act on. */
+export function higgsfieldError(status: number, body: string): string {
+  if (/not_enough_credits/.test(body)) return "Higgsfield balance is empty. Add funds at console.higgsfield.ai (Billing), then retry. Nothing was charged.";
+  if (status === 401) return "Higgsfield rejected the API key (401). Check HF_API_KEY on the Connections page.";
+  if ([404, 423, 503].includes(status)) return `This Higgsfield model isn't available to your account right now (${status}). Pick another video model.`;
+  return `Higgsfield ${status}: ${body.slice(0, 300)}`;
+}
+
+/** "480p: $0.0804; 720p: $0.1735." -> { "480p": 0.0804, "720p": 0.1735 } */
+export function parseHiggsfieldRates(text: string): Record<string, number> {
+  return Object.fromEntries([...text.matchAll(/(\d+p|4K): \$(\d+(?:\.\d+)?)/g)].map((m) => [m[1], Number(m[2])]));
+}
+
+const hfPriceCache = new Map<string, Promise<Record<string, number> | null>>();
+/** Per-second USD rates by resolution, from Higgsfield's estimate endpoint (no charge). */
+export function higgsfieldRates(model: string): Promise<Record<string, number> | null> {
+  const e = model.replace(/^higgsfield:/, "").replace("/text-to-video", "/image-to-video");
+  if (!hfPriceCache.has(e)) {
+    hfPriceCache.set(
+      e,
+      (async () => {
+        try {
+          let res: Response | null = null;
+          for (let i = 0; i < 3 && (!res || res.status === 429); i++) {
+            if (i) await sleep(1500 * i);
+            res = await fetch(`https://api.higgsfield.ai/estimate/${hfEndpoint(e)}`, {
+            method: "POST",
+            headers: { ...hfAuth(), "Content-Type": "application/json" },
+              body: JSON.stringify({ prompt: "estimate", image_url: "https://example.com/a.jpg", duration: 5 }),
+            });
+          }
+          const j = await res!.json();
+          const text = String(j.pricing_description ?? "");
+          const rates = parseHiggsfieldRates(text);
+          if (j.usd && !Object.keys(rates).length) rates.any = Number(j.usd) / 5;
+          if (!Object.keys(rates).length) throw new Error("no rates");
+          return rates;
+        } catch {
+          hfPriceCache.delete(e);
+          return null;
+        }
+      })(),
+    );
+  }
+  return hfPriceCache.get(e)!;
+}
+
+export function pickRate(rates: Record<string, number> | null, resolution: string): { rate: number; resolution: string } | null {
+  if (!rates) return null;
+  if (rates[resolution] != null) return { rate: rates[resolution], resolution };
+  const order = ["480p", "720p", "1080p", "4K", "any"];
+  const want = order.indexOf(resolution);
+  const avail = order.filter((r) => rates[r] != null);
+  const up = avail.find((r) => order.indexOf(r) >= want) ?? avail[avail.length - 1];
+  return up ? { rate: rates[up], resolution: up } : null;
+}
+
+async function higgsfieldUpload(dataUrl: string, auth: Record<string, string>): Promise<string> {
+  if (/^https:\/\//.test(dataUrl)) return dataUrl;
+  const m = /^data:([^;]+);base64,([\s\S]*)$/.exec(dataUrl);
+  if (!m) throw new Error("Higgsfield needs the first frame as an image");
+  const type = m[1] === "image/jpg" ? "image/jpeg" : m[1];
+  const res = await fetch("https://api.higgsfield.ai/files/generate-upload-url", { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({ content_type: type }) });
+  if (!res.ok) throw new Error(higgsfieldError(res.status, await res.text()));
+  const u: { public_url: string; upload_url: string; upload_headers?: Record<string, string> } = await res.json();
+  const put = await fetch(u.upload_url, { method: "PUT", headers: u.upload_headers ?? { "Content-Type": type }, body: Buffer.from(m[2], "base64") });
+  if (!put.ok) throw new Error(`Higgsfield upload failed (${put.status})`);
+  return u.public_url;
+}
+
+/** Request body for a Higgsfield video model; exported for tests. */
+export function higgsfieldBody(endpoint: string, prompt: string, o: VideoOpts, imageUrl?: string) {
+  const kling = isKling(endpoint);
+  const durs = higgsfieldDurations(endpoint);
+  const body: Record<string, unknown> = {
+    prompt: prompt.slice(0, kling ? 2500 : 4000),
+    duration: nearest(durs, o.seconds ?? 5),
+    aspect_ratio: (kling ? HIGGSFIELD_ASPECTS.kling : HIGGSFIELD_ASPECTS.default)[0],
+  };
+  if (imageUrl) body.image_url = imageUrl;
+  if (kling) body.sound = o.audio === false ? "off" : "on";
+  else Object.assign(body, { resolution: ["480p", "720p", "1080p"].includes(o.resolution ?? "") ? o.resolution : "480p", generate_audio: o.audio ?? true });
+  return body;
+}
+
+async function higgsfieldVideo(model: string, prompt: string, o: VideoOpts = {}): Promise<{ url: string; usage: Usage }> {
+  const auth = hfAuth();
+  let endpoint = hfEndpoint(model);
+  if (o.firstFrame) endpoint = endpoint.replace("/text-to-video", "/image-to-video");
+  const imageUrl = o.firstFrame ? await higgsfieldUpload(o.firstFrame, auth) : undefined;
+  const body = higgsfieldBody(endpoint, prompt, o, imageUrl);
   const submit = await fetch(`https://api.higgsfield.ai/${endpoint}`, {
     method: "POST",
     headers: { ...auth, "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify(body),
   });
-  if (!submit.ok) throw new Error(`Higgsfield ${submit.status}: ${(await submit.text()).slice(0, 300)}`);
+  if (!submit.ok) throw new Error(higgsfieldError(submit.status, await submit.text()));
   let job = await submit.json();
   const statusUrl: string = job.status_url ?? `https://api.higgsfield.ai/requests/${job.request_id}/status`;
   if (!statusUrl.startsWith("https://api.higgsfield.ai/")) throw new Error("Unexpected Higgsfield status URL");
   const started = Date.now();
   while (job.status !== "completed") {
-    if (["failed", "nsfw", "canceled", "cancelled"].includes(job.status)) throw new Error(`Higgsfield ${job.status}${job.error ? `: ${String(job.error).slice(0, 200)}` : ""}`);
+    if (["failed", "nsfw", "canceled", "cancelled"].includes(job.status)) throw new Error(`Higgsfield ${job.status}${job.error ? `: ${String(job.error).slice(0, 200)}` : ""} (not charged)`);
     if (Date.now() - started > VIDEO_TIMEOUT_MS) throw new Error("Higgsfield video timed out");
     await sleep(8000);
     const poll = await fetch(statusUrl, { headers: auth });
     if (poll.ok) job = await poll.json();
-    else if (poll.status < 500) throw new Error(`Higgsfield status ${poll.status}: ${(await poll.text()).slice(0, 200)}`);
+    else if (poll.status < 500) throw new Error(higgsfieldError(poll.status, await poll.text()));
   }
   const out: string | undefined = job.video?.url ?? job.videos?.[0]?.url;
   if (!out) throw new Error("Higgsfield returned no video");
-  return { url: await downloadAsDataUrl(out), usage: { costUsd: 0 } };
+  const r = pickRate(await higgsfieldRates(endpoint), String(body.resolution ?? (isKling(endpoint) ? "720p" : "480p")));
+  return { url: await downloadAsDataUrl(out), usage: { costUsd: r ? r.rate * Number(body.duration) : 0 } };
 }
 
 export async function generateVideo(model: string, prompt: string, opts?: string | VideoOpts): Promise<{ url: string; usage: Usage }> {
   const o: VideoOpts = typeof opts === "string" ? { firstFrame: opts } : (opts ?? {});
   const provider = providerOf(model);
   if (provider === "fal") return { url: await falVideo(model, prompt), usage: { costUsd: 0 } };
-  if (provider === "higgsfield") return higgsfieldVideo(model, prompt);
+  if (provider === "higgsfield") return higgsfieldVideo(model, prompt, o);
   return openrouterVideo(model, prompt, o);
 }
 

@@ -1,6 +1,6 @@
 import { after, NextResponse } from "next/server";
 import { z } from "zod";
-import { DEFAULTS } from "@/lib/models";
+import { DEFAULTS, providerOf } from "@/lib/models";
 import { brief, directions, diversityScores, filmstrip, organic, qa, render, research, styleDNA } from "@/lib/pipeline";
 import { audioConfigured, generateVideo, musicBed, nearest, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
 import { CATEGORIES, keyframe, planShots, QA_PASS, shotQA } from "@/lib/video-plan";
@@ -546,7 +546,7 @@ async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final"
   const perSec = (await videoPricePerSec(model, resolution, !withAudio)) ?? 0.12;
   const expected = seconds * perSec + shots.length * 0.01 + (withAudio ? 0.02 + (plan.music ? 0.6 : 0) : 0);
   if (expected > plan.budgetUsd) throw new Error(`Preflight: this ${tier} video is estimated at $${expected.toFixed(2)} (${seconds}s on ${model}), above your $${plan.budgetUsd} cap. Shorten it, pick a cheaper model or raise the cap. ${noSpend}`);
-  const credits = await openrouterCredits();
+  const credits = providerOf(model) === "openrouter" ? await openrouterCredits() : null;
   if (credits != null && credits < expected * 1.2) throw new Error(`Preflight: your OpenRouter balance is $${credits.toFixed(2)}, below this video's estimate of $${expected.toFixed(2)}. Add credits at openrouter.ai/settings/credits or pick a cheaper model. ${noSpend}`);
 
   const starts = shots.map((_, i) => shots.slice(0, i).reduce((t, s) => t + s.seconds, 0));

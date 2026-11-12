@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { openrouterCredits, videoPricePerSec } from "@/lib/ai";
-import { MODELS } from "@/lib/models";
+import { MODELS, providerConfigured } from "@/lib/models";
 import { currentUser } from "@/lib/session";
 
 export async function GET() {
@@ -9,7 +9,7 @@ export async function GET() {
   } catch {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-  const video = MODELS.filter((m) => m.modality === "video" && m.provider === "openrouter");
+  const video = MODELS.filter((m) => m.modality === "video" && (m.provider === "openrouter" || (m.provider === "higgsfield" && providerConfigured("higgsfield"))));
   const [credits, rows] = await Promise.all([
     openrouterCredits(),
     Promise.all(video.map(async (m) => [m.id, { draft: await videoPricePerSec(m.id, "480p", false), final: await videoPricePerSec(m.id, "1080p", false) }] as const)),
