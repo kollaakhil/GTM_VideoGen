@@ -20,11 +20,12 @@ type Draft = {
   toneExamples: string;
   dos: string;
   donts: string;
+  mustSay: string;
   winners: { image: string | null; note: string }[];
   photos: string[];
 };
 
-const blank: Draft = { url: "https://", name: "", offer: "", voice: "", audience: "", logo: null, fontFamily: "", fontFile: null, colors: { primary: "#111111", accent: "#6366f1", background: "#ffffff", text: "#111111" }, toneExamples: "", dos: "", donts: "", winners: [], photos: [] };
+const blank: Draft = { url: "https://", name: "", offer: "", voice: "", audience: "", logo: null, fontFamily: "", fontFile: null, colors: { primary: "#111111", accent: "#6366f1", background: "#ffffff", text: "#111111" }, toneExamples: "", dos: "", donts: "", mustSay: "", winners: [], photos: [] };
 
 const toDraft = (b: Brand): Draft => ({
   id: b.id,
@@ -40,6 +41,7 @@ const toDraft = (b: Brand): Draft => ({
   toneExamples: (b.toneExamples ?? []).join("\n"),
   dos: (b.dos ?? []).join("\n"),
   donts: (b.donts ?? []).join("\n"),
+  mustSay: (b.mustSay ?? []).join("\n"),
   winners: (b.winners ?? []).map((w) => ({ image: w.image ?? null, note: w.note })),
   photos: b.photos ?? [],
 });
@@ -81,6 +83,7 @@ export function BrandsClient({ initial, learned = {} }: { initial: Brand[]; lear
           toneExamples: lines(d.toneExamples),
           dos: lines(d.dos),
           donts: lines(d.donts),
+          mustSay: lines(d.mustSay),
           winners: d.winners.filter((w) => w.note.trim()).map((w) => ({ image: w.image, note: w.note.trim() })),
           photos: d.photos,
         }),
@@ -178,6 +181,10 @@ export function BrandsClient({ initial, learned = {} }: { initial: Brand[]; lear
           <div><span className={label}>Tone examples (one per line)</span><textarea rows={5} className={field} value={d.toneExamples} onChange={(e) => set({ toneExamples: e.target.value })} placeholder="Real lines from your ads or site" /></div>
           <div><span className={label}>Always (one per line)</span><textarea rows={5} className={field} value={d.dos} onChange={(e) => set({ dos: e.target.value })} placeholder="Show the product in use" /></div>
           <div><span className={label}>Never (one per line)</span><textarea rows={5} className={field} value={d.donts} onChange={(e) => set({ donts: e.target.value })} placeholder="No discounts above 30%" /></div>
+        </section>
+        <section>
+          <span className={label}>Must-say in every ad (one per line, checked by the Creative Director Gate)</span>
+          <textarea rows={3} className={field} value={d.mustSay} onChange={(e) => set({ mustSay: e.target.value })} placeholder={"Serving Austin, Dallas and Houston\nPay after approval"} />
         </section>
 
         <section className="space-y-2">

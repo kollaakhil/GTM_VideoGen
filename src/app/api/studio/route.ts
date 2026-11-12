@@ -7,6 +7,7 @@ import { CATEGORIES, keyframe, planShots, QA_PASS, shotQA } from "@/lib/video-pl
 import { brandRules } from "@/lib/brand-rules";
 import { STATIC_FORMATS, vocBlock, voiceOfCustomer } from "@/lib/ad-wisdom";
 import { concepts, diversityIssues, selectDiverse } from "@/lib/concepts";
+import { claimsCheck, gateVerdict } from "@/lib/gate";
 import { learnings } from "@/lib/learnings";
 import { captionVariants, meanVolume, mediaDuration, spokenScript, stitchShots } from "@/lib/video-post";
 import { get, list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
@@ -15,7 +16,9 @@ import { rateLimit } from "@/lib/rate-limit";
 import type { Brief, Creative, Direction, QAResult, RunEvent, Shot, ShotQA, StudioRun } from "@/lib/types";
 
 export const maxDuration = 300;
-const AUTO_FIX_ATTEMPTS = 1;
+const AUTO_FIX_ATTEMPTS = 2;
+/** Static ads render this many takes per direction; vision QA keeps the best (cheap images, big quality gain). */
+const TOURNAMENT_SIZE = Math.max(1, Math.min(4, Number(process.env.TOURNAMENT_SIZE) || 2));
 
 const ModelId = z.string().max(120).regex(/^[\w./:-]+$/);
 const Models = z.object({ text: ModelId, vision: ModelId, image: ModelId, video: ModelId }).partial().optional();
@@ -408,12 +411,20 @@ async function saveCreative(
   q: QAResult,
   spent: number,
   diversity: number | null,
-) {
+): Promise<void> {
   const stamp = Date.now();
   const mediaUrl = await storeMedia(out.url, `${run.id}/${d.id}-${stamp}`);
   const variants = await Promise.all(
     (out.variants ?? []).filter((v) => v.aspect !== "9:16").map(async (v) => ({ aspect: v.aspect, url: await storeMedia(v.url, `${run.id}/${d.id}-${stamp}-${v.aspect.replace(":", "x")}`) })),
   );
+  const kit = await brandFor(run);
+  const claims = await claimsCheck(run.models.text, {
+    texts: [d.hook, d.script, d.copy?.metaPrimaryText ?? "", d.copy?.metaHeadline ?? "", ...(d.copy?.googleHeadlines ?? []), ...(d.copy?.googleDescriptions ?? [])],
+    research: run.research!, brief: run.brief!, offer: run.offer, mustSay: kit?.mustSay,
+  }).catch(() => null);
+  const gate = gateVerdict({ qa: q.score, diversity, unsupported: claims?.data.unsupported ?? [], missing: claims?.data.missing ?? [] });
+  spent += claims?.cost ?? 0;
+  run.costUsd += claims?.cost ?? 0;
   const creative: Creative = {
     id: newId("cr"),
     runId: run.id,
@@ -434,6 +445,8 @@ async function saveCreative(
     channel: null,
     metrics: null,
     costUsd: spent,
+    gate,
+    conceptId: (run.concepts ?? []).filter((c) => c.selected)[run.directions.indexOf(d)]?.id ?? null,
     createdAt: now(),
   };
   if (!live(run)) return;
@@ -636,6 +649,15 @@ Start exactly from the given first frame and keep the product, people and settin
 async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
   const m = run.models;
   const div = diversityScores(run.directions.map((d) => `${d.angle} ${d.visualPrompt}`));
+  const kit = await brandFor(run);
+  const staticKit = process.env.STATIC_TYPESET === "off" ? null : {
+    brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
+    offer: (kit?.offer || run.offer || run.brief?.offer || "").split(/[.;\n]/)[0].slice(0, 60) || null,
+    primary: kit?.colorRoles?.primary || run.research?.colors?.[0] || null,
+    logo: kit?.logo ? await mediaDataUrl(kit.logo).catch(() => null) : null,
+    fontFile: kit?.font?.file ? await mediaFile(kit.font.file).catch(() => null) : null,
+    fontFamily: kit?.font?.family ?? null,
+  };
   const save = async () => {
     if (!live(run)) throw new Error("Stopped");
     await put("studio_runs", { ...run, updatedAt: now() });
@@ -643,18 +665,22 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
   const results = await Promise.allSettled(
     dirs.map(async (d) => {
       const i = run.directions.indexOf(d);
-      const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i, brand: run.research?.brand || brandName(run.brandUrl), style: { styleRef: run.research?.styleRef, colors: run.research?.colors } };
+      const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i, brand: run.research?.brand || brandName(run.brandUrl), style: { styleRef: run.research?.styleRef, colors: run.research?.colors }, kit: staticKit };
       run.progress[d.id] = "rendering";
       await save();
-      let out = await render(d, opts);
+      const takes = d.format === "static" ? TOURNAMENT_SIZE : 1;
+      const candidates = await Promise.all(Array.from({ length: takes }, (_, t) => render(d, { ...opts, seed: i * 10 + t })));
       run.progress[d.id] = "qa";
       await save();
-      let q = await qa(m.vision, out.url, out.type, run.brief!, d.hook);
-      let spent = out.cost + q.cost;
+      const graded = await Promise.all(candidates.map(async (c) => ({ out: c, q: await qa(m.vision, c.url, c.type, run.brief!, d.hook) })));
+      graded.sort((a, b) => b.q.data.score - a.q.data.score);
+      let { out, q } = graded[0];
+      let spent = graded.reduce((n, g) => n + g.out.cost + g.q.cost, 0);
+      if (takes > 1) q = { ...q, data: { ...q.data, notes: [`Best of ${takes} takes (scores ${graded.map((g) => g.q.data.score).join(", ")})`, ...q.data.notes] } };
       for (let a = 0; a < AUTO_FIX_ATTEMPTS && !q.data.pass && out.type === "image"; a++) {
         run.progress[d.id] = "fixing";
         await save();
-        const retry = await render(d, { ...opts, fixes: q.data.notes });
+        const retry = await render(d, { ...opts, seed: i * 10 + takes + a, fixes: q.data.notes });
         const rq = await qa(m.vision, retry.url, retry.type, run.brief!, d.hook);
         spent += retry.cost + rq.cost;
         if (rq.data.score >= q.data.score) {

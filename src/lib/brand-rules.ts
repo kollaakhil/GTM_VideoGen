@@ -11,6 +11,7 @@ export function brandRules(b?: Brand | null) {
   if (c && Object.values(c).some(Boolean)) lines.push(`Colors: ${Object.entries(c).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   if (b.dos?.length) lines.push(`Always: ${b.dos.join("; ")}`);
   if (b.donts?.length) lines.push(`Never: ${b.donts.join("; ")}`);
+  if (b.mustSay?.length) lines.push(`Must say in every ad (in script, captions or copy): ${b.mustSay.join("; ")}`);
   if (b.winners?.length) lines.push(`Past winning ads and why they worked: ${b.winners.map((w) => w.note).join(" | ")}`);
   return lines.length ? `\nBrand kit rules for ${b.name} (mandatory):\n- ${lines.join("\n- ")}` : "";
 }

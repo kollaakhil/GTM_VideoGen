@@ -293,3 +293,75 @@ export async function captionVariants(
     await fs.rm(dir, { recursive: true, force: true });
   }
 }
+
+export type StaticKit = { brand: string; headline: string; offer?: string | null; cta?: string | null; primary?: string | null; logo?: string | null; fontFile?: string | null; fontFamily?: string | null };
+
+/** Greedy word wrap to a max characters per line. */
+export function wrapLines(text: string, max: number, maxLines = 3) {
+  const lines: string[] = [];
+  for (const w of text.replace(/\s+/g, " ").trim().split(" ")) {
+    const last = lines[lines.length - 1];
+    if (last && (last + " " + w).length <= max) lines[lines.length - 1] = `${last} ${w}`;
+    else lines.push(w);
+  }
+  if (lines.length > maxLines) lines.splice(maxLines - 1, lines.length, lines.slice(maxLines - 1).join(" "));
+  return lines;
+}
+
+const assColor = (hex: string) => `&H00${hex.slice(5, 7)}${hex.slice(3, 5)}${hex.slice(1, 3)}`.toUpperCase();
+
+/**
+ * Typesets a static ad in code: the image model only paints the scene; headline, offer, CTA and logo are laid out
+ * with the brand font so text is always spelled right and on-brand. Output 1080x1350 (4:5) PNG data URL.
+ */
+export async function typesetStatic(background: string, kit: StaticKit): Promise<string> {
+  const W = 1080;
+  const H = 1350;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-static-"));
+  try {
+    const bg = await toFile(dir, "bg.img", background);
+    const clean = (t: string) => t.replace(/[{}\\\n]/g, " ").trim();
+    const headline = clean(kit.headline);
+    const size = headline.length > 48 ? 70 : headline.length > 30 ? 82 : 96;
+    const lines = wrapLines(headline, Math.floor((W - 140) / (size * 0.56)));
+    const primary = /^#[0-9a-f]{6}$/i.test(kit.primary ?? "") ? kit.primary! : "#111111";
+    const ink = inkFor(primary);
+    const font = kit.fontFamily || "DejaVu Sans";
+    const offer = kit.offer ? clean(kit.offer).slice(0, 60) : "";
+    const ctaY = H - 110;
+    const offerY = ctaY - 100;
+    const headBottom = offer ? offerY - 60 : ctaY - 90;
+    const ev = (style: string, an: number, x: number, y: number, text: string, extra = "") => `Dialogue: 0,0:00:00.00,0:00:05.00,${style},{\\an${an}\\pos(${x},${y})${extra}}${text}`;
+    const ass = [
+      "[Script Info]", "ScriptType: v4.00+", `PlayResX: ${W}`, `PlayResY: ${H}`, "WrapStyle: 2", "",
+      "[V4+ Styles]",
+      "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
+      `Style: Head,${font},${size},&H00FFFFFF,&H00000000,&H64000000,1,1,0,3,1,0,0,0`,
+      `Style: Offer,${font},44,&H00FFFFFF,&H00000000,&H64000000,1,1,0,2,1,0,0,0`,
+      `Style: Cta,${font},44,${ink === "white" ? "&H00FFFFFF" : "&H00000000"},${assColor(primary)},${assColor(primary)},1,3,22,0,1,0,0,0`,
+      `Style: Brand,${font},48,&H00FFFFFF,&H00000000,&H64000000,1,1,0,3,7,0,0,0`,
+      "", "[Events]", "Format: Layer, Start, End, Style, Text",
+      ev("Head", 1, 70, headBottom, lines.join("\\N")),
+      ...(offer ? [ev("Offer", 1, 70, offerY, offer)] : []),
+      ...(kit.cta ? [ev("Cta", 1, 92, ctaY, CTA_LABEL[kit.cta] ?? clean(kit.cta))] : []),
+      ...(!kit.logo ? [ev("Brand", 7, 70, 60, clean(kit.brand))] : []),
+    ].join("\n");
+    await fs.writeFile(path.join(dir, "t.ass"), ass);
+    let fontsDir = FONTS;
+    if (kit.fontFile) {
+      fontsDir = path.join(dir, "fonts");
+      await fs.mkdir(fontsDir, { recursive: true });
+      await fs.copyFile(kit.fontFile, path.join(fontsDir, path.basename(kit.fontFile)));
+      await fs.copyFile(path.join(FONTS, "DejaVuSans-Bold.ttf"), path.join(fontsDir, "DejaVuSans-Bold.ttf"));
+    }
+    const logo = kit.logo ? await toFile(dir, "logo.png", kit.logo) : null;
+    const scrim = `drawbox=x=0:y=ih*0.42:w=iw:h=ih*0.58:color=black@0.18:t=fill,drawbox=x=0:y=ih*0.56:w=iw:h=ih*0.44:color=black@0.22:t=fill,drawbox=x=0:y=ih*0.70:w=iw:h=ih*0.30:color=black@0.2:t=fill`;
+    const base = `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,${scrim},subtitles=${path.join(dir, "t.ass")}:fontsdir=${fontsDir}`;
+    const fc = logo ? `${base}[b];[1:v]scale=260:-1[lg];[b][lg]overlay=70:60` : base;
+    const out = path.join(dir, "out.png");
+    await run(FFMPEG, ["-hide_banner", "-loglevel", "error", "-i", bg, ...(logo ? ["-i", logo] : []), "-filter_complex", fc, "-frames:v", "1", "-y", out], { timeout: 60_000 });
+    return `data:image/png;base64,${(await fs.readFile(out)).toString("base64")}`;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}

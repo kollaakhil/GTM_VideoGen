@@ -25,3 +25,16 @@ describe("entity diversity gate", () => {
     expect(diversityIssues(dupes.filter((x) => x.selected)).length).toBeGreaterThan(0);
   });
 });
+
+import { gateVerdict } from "../src/lib/gate";
+
+describe("Creative Director Gate", () => {
+  it("passes a distinct 8/10 ad with clean claims", () => {
+    expect(gateVerdict({ qa: 8, diversity: 0.8, unsupported: [], missing: [] }).pass).toBe(true);
+  });
+  it("blocks low QA, look-alikes, invented claims and missing must-says", () => {
+    const g = gateVerdict({ qa: 7, diversity: 0.3, unsupported: ["50% off"], missing: ["Pay after approval"] });
+    expect(g.pass).toBe(false);
+    expect(g.reasons).toHaveLength(4);
+  });
+});

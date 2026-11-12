@@ -17,6 +17,7 @@ export interface Brand {
   dos?: string[];
   donts?: string[];
   winners?: { image?: string | null; note: string }[];
+  mustSay?: string[];
   createdAt: string;
 }
 
@@ -184,6 +185,15 @@ export interface Metrics {
   revenue: number;
 }
 
+export interface GateResult {
+  pass: boolean;
+  reasons: string[];
+  qa: number;
+  diversity: number | null;
+  unsupported: string[];
+  missing: string[];
+}
+
 export interface Creative {
   id: string;
   runId: string;
@@ -206,6 +216,8 @@ export interface Creative {
   variants?: { aspect: string; url: string }[];
   qaOverride?: { by: string; at: string } | null;
   feedback?: { decision: "approve" | "reject"; reason?: string; by: string; at: string } | null;
+  gate?: GateResult | null;
+  conceptId?: string | null;
 }
 
 export type Stage = "research" | "brief" | "directions" | "generate" | "qa" | "publish";

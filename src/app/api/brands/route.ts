@@ -25,6 +25,7 @@ const Kit = z.object({
   toneExamples: Lines,
   dos: Lines,
   donts: Lines,
+  mustSay: z.array(z.string().trim().min(1).max(120)).max(6).optional(),
   winners: z.array(z.object({ image: Img.nullable().optional(), note: z.string().trim().min(1).max(300) })).max(6).optional(),
 });
 
@@ -32,7 +33,7 @@ export async function POST(req: Request) {
   if (!(await currentUser().catch(() => null))) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   const parsed = Kit.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid brand kit" }, { status: 400 });
-  const { url, name, offer, photos, logo, font, colorRoles, voice, audience, toneExamples, dos, donts, winners } = parsed.data;
+  const { url, name, offer, photos, logo, font, colorRoles, voice, audience, toneExamples, dos, donts, mustSay, winners } = parsed.data;
   const host = new URL(url).hostname.replace(/^www\./, "");
   const existing = (await list("brands")).find((b) => new URL(b.url).hostname.replace(/^www\./, "") === host);
   const id = existing?.id ?? newId("brand");
@@ -53,6 +54,7 @@ export async function POST(req: Request) {
     toneExamples: toneExamples ?? existing?.toneExamples ?? [],
     dos: dos ?? existing?.dos ?? [],
     donts: donts ?? existing?.donts ?? [],
+    mustSay: mustSay ?? existing?.mustSay ?? [],
     winners: winners ? await Promise.all(winners.map(async (w, i) => ({ note: w.note, image: w.image ? await save(w.image, `winner${i}`) : null }))) : (existing?.winners ?? []),
     createdAt: existing?.createdAt ?? new Date().toISOString(),
   });
