@@ -53,7 +53,77 @@ import { CATEGORIES, estimateCost, LENGTHS, shotCount } from "@/lib/video-catego
 
 type Model = ModelOption & { ready: boolean };
 type Modality = "text" | "vision" | "image" | "video";
-type RunSummary = Pick<StudioRun, "id" | "brandUrl" | "goal" | "stage" | "status" | "costUsd" | "createdAt">;
+type RunSummary = Pick<StudioRun, "id" | "brandUrl" | "goal" | "stage" | "status" | "costUsd" | "createdAt" | "format" | "updatedAt"> & {
+  thumb: { url: string; type: "image" | "video" } | null;
+  creatives: number;
+  passed: number;
+};
+
+const hostName = (u: string) => {
+  try {
+    return new URL(u).hostname.replace(/^www\./, "");
+  } catch {
+    return u;
+  }
+};
+
+function HistoryPanel({ runs, current, onOpen, onClose }: { runs: RunSummary[]; current?: string; onOpen: (id: string) => void; onClose: () => void }) {
+  const [q, setQ] = useState("");
+  const [fmt, setFmt] = useState<"all" | "static" | "video">("all");
+  const shown = runs.filter((r) => (fmt === "all" || r.format === fmt) && `${r.brandUrl} ${r.goal}`.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="absolute inset-y-0 right-0 z-20 flex w-[400px] flex-col border-l border-white/[0.06] bg-zinc-950/95 backdrop-blur-xl animate-in slide-in-from-right-8 duration-300">
+      <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-3">
+        <History className="size-4 text-zinc-400" />
+        <div className="text-sm font-semibold">History</div>
+        <span className="text-xs text-zinc-500">{runs.length} runs</span>
+        <button onClick={onClose} className="ml-auto text-zinc-500 hover:text-zinc-200" aria-label="Close history">
+          ✕
+        </button>
+      </div>
+      <div className="space-y-2 border-b border-white/[0.06] p-3">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search brand or goal…" className="h-8 w-full rounded-lg border border-white/10 bg-zinc-900 px-3 text-xs text-zinc-200 outline-none focus:border-indigo-400/50" />
+        <div className="flex gap-1">
+          {(["all", "static", "video"] as const).map((f) => (
+            <button key={f} onClick={() => setFmt(f)} className={cn("rounded-md px-2 py-0.5 text-[11px] capitalize", fmt === f ? "bg-white/10 text-white" : "text-zinc-400 hover:text-zinc-200")}>
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-2">
+        {shown.map((r) => (
+          <button key={r.id} onClick={() => onOpen(r.id)} className={cn("flex w-full gap-3 rounded-xl p-2 text-left transition hover:bg-white/[0.05]", r.id === current && "bg-white/[0.07] ring-1 ring-indigo-400/40")}>
+            <div className="relative h-16 w-12 shrink-0 overflow-hidden rounded-md bg-white/[0.04]">
+              {r.thumb?.type === "video" ? (
+                <video src={r.thumb.url} muted preload="metadata" className="h-full w-full object-cover" />
+              ) : r.thumb ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={r.thumb.url} alt="" className="h-full w-full object-cover" />
+              ) : null}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="truncate text-[13px] font-medium text-zinc-100">{hostName(r.brandUrl)}</span>
+                <span className={cn("rounded px-1 text-[9px] uppercase tracking-wide", r.status === "error" ? "bg-red-500/15 text-red-300" : r.status === "working" ? "bg-indigo-500/15 text-indigo-300" : "bg-white/5 text-zinc-400")}>
+                  {r.status === "idle" ? r.stage : r.status}
+                </span>
+              </div>
+              <div className="line-clamp-2 text-[11px] leading-snug text-zinc-400">{r.goal}</div>
+              <div className="mt-0.5 flex gap-2 text-[10px] text-zinc-500">
+                <span>{new Date(r.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                <span>{r.format}</span>
+                <span>{r.creatives ? `${r.passed}/${r.creatives} passed` : "no creatives"}</span>
+                <span>${r.costUsd.toFixed(2)}</span>
+              </div>
+            </div>
+          </button>
+        ))}
+        {!shown.length && <p className="p-6 text-center text-xs text-zinc-500">No runs match.</p>}
+      </div>
+    </div>
+  );
+}
 type NodeState = "done" | "active" | "working" | "error" | "idle";
 type CreativeAction = "approve" | "reject" | "request_publish" | "override_qa";
 
@@ -1164,6 +1234,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
   const runId = params.get("run");
 
   const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [run, setRun] = useState<StudioRun | null>(null);
   const [creatives, setCreatives] = useState<Creative[]>([]);
   const [sending, setSending] = useState(false);
@@ -1308,28 +1379,9 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
           <div className="h-4 w-px bg-white/10" />
           <div className="min-w-0 truncate text-[13px] text-zinc-400">{run ? run.goal : "New run"}</div>
           <div className="ml-auto flex items-center gap-2">
-            <div className="relative">
-              <History className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-zinc-500" />
-              <select
-                aria-label="Run history"
-                className="h-8 max-w-56 appearance-none rounded-lg border border-white/10 bg-zinc-900 pl-8 pr-3 text-xs text-zinc-300"
-                value={run?.id ?? ""}
-                onChange={(e) => router.push(e.target.value ? `/studio?run=${e.target.value}` : "/studio")}
-              >
-                <option value="">History ({runs.length})</option>
-                {runs.map((r) => {
-                  let host = r.brandUrl;
-                  try {
-                    host = new URL(r.brandUrl).hostname.replace(/^www\./, "");
-                  } catch {}
-                  return (
-                    <option key={r.id} value={r.id}>
-                      {host} · {new Date(r.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {r.goal.slice(0, 40)}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
+            <Button size="sm" variant="outline" className="h-8" onClick={() => setShowHistory((v) => !v)}>
+              <History /> History ({runs.length})
+            </Button>
             {run && (
               <Button size="sm" variant="outline" className="h-8" onClick={() => setShowLog(!showLog)}>
                 <MessageSquare /> Activity
@@ -1342,6 +1394,17 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
         </header>
         <div className="relative flex min-h-0 flex-1">
           <Canvas elapsed={elapsed} notice={notice} />
+          {showHistory && (
+            <HistoryPanel
+              runs={runs}
+              current={run?.id}
+              onClose={() => setShowHistory(false)}
+              onOpen={(id) => {
+                setShowHistory(false);
+                router.push(`/studio?run=${id}`);
+              }}
+            />
+          )}
           {showLog && run && (
             <aside className="absolute bottom-24 right-4 top-4 z-20 flex w-80 flex-col rounded-2xl border border-white/10 bg-zinc-900/95 shadow-2xl backdrop-blur-xl animate-in fade-in slide-in-from-right-4 duration-300">
               <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3 text-[13px] font-semibold">

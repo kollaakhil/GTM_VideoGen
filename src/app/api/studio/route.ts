@@ -82,7 +82,31 @@ export async function GET(req: Request) {
     const creatives = (await list("creatives")).filter((c) => c.runId === runId).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     return NextResponse.json({ run, creatives });
   }
-  const runs = (await list("studio_runs")).slice(0, 50).map((r) => ({ id: r.id, brandUrl: r.brandUrl, goal: r.goal, stage: r.stage, status: r.status, costUsd: r.costUsd, createdAt: r.createdAt }));
+  const creatives = await list("creatives");
+  const byRun = new Map<string, { url: string; type: "image" | "video"; n: number; passed: number }>();
+  for (const c of creatives) {
+    const t = byRun.get(c.runId);
+    if (!t) byRun.set(c.runId, { url: c.mediaUrl, type: c.mediaType, n: 1, passed: c.qa?.pass ? 1 : 0 });
+    else Object.assign(t, { n: t.n + 1, passed: t.passed + (c.qa?.pass ? 1 : 0) });
+  }
+  const runs = (await list("studio_runs")).slice(0, 200).map((r) => {
+    const t = byRun.get(r.id);
+    const kf = r.directions.flatMap((d) => d.shots ?? []).find((s) => s.keyframe)?.keyframe ?? null;
+    return {
+      id: r.id,
+      brandUrl: r.brandUrl,
+      goal: r.goal,
+      stage: r.stage,
+      status: r.status,
+      format: r.format,
+      costUsd: r.costUsd,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      thumb: t ? { url: t.url, type: t.type } : kf ? { url: kf, type: "image" as const } : null,
+      creatives: t?.n ?? 0,
+      passed: t?.passed ?? 0,
+    };
+  });
   return NextResponse.json({ runs });
 }
 
