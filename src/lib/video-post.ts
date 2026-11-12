@@ -114,13 +114,104 @@ function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) 
 }
 
 /** Burns captions, crops to each aspect and appends a typeset end card (brand, offer line, CTA) so the wordmark is always spelled right. */
-export async function captionVariants(video: string, script: string, end?: EndCard): Promise<{ aspect: string; url: string }[]> {
+/** Caption cues timed to each shot's window instead of spread evenly over the whole video. */
+export function timedCues(segments: { start: number; end: number; text: string }[], wordsPerCue = 4) {
+  return segments.flatMap((s) => captionCues(s.text, s.end - s.start, wordsPerCue).map((c) => ({ ...c, start: c.start + s.start, end: c.end + s.start })));
+}
+
+const toFile = async (dir: string, name: string, media: string) => {
+  const f = path.join(dir, name);
+  await fs.writeFile(f, media.startsWith("data:") ? Buffer.from(media.split(",")[1], "base64") : Buffer.from(await (await fetch(media)).arrayBuffer()));
+  return f;
+};
+
+/**
+ * Joins shot clips into one 720x1280 30fps video. With a voiceover and/or music bed the model audio is replaced
+ * by a mix (voice on top, music ducked under it); otherwise each clip's own audio is kept.
+ */
+export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null } = {}): Promise<{ url: string; starts: number[]; duration: number }> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-stitch-"));
+  try {
+    const norm: string[] = [];
+    const starts: number[] = [];
+    let t = 0;
+    for (const [i, c] of clips.entries()) {
+      const src = await toFile(dir, `c${i}.mp4`, c);
+      const info = await probe(src);
+      const out = path.join(dir, `n${i}.mp4`);
+      await run(
+        FFMPEG,
+        [
+          "-hide_banner", "-loglevel", "error", "-i", src,
+          ...(info.audio ? [] : ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]),
+          "-vf", "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p",
+          "-map", "0:v", "-map", info.audio ? "0:a" : "1:a", "-t", String(info.duration || 5),
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-ar", "44100", "-ac", "2", "-y", out,
+        ],
+        { timeout: 180_000 },
+      );
+      starts.push(t);
+      t += info.duration || 5;
+      norm.push(out);
+    }
+    const joined = path.join(dir, "joined.mp4");
+    const inputs = norm.flatMap((f) => ["-i", f]);
+    const fc = norm.map((_, i) => `[${i}:v][${i}:a]`).join("") + `concat=n=${norm.length}:v=1:a=1[v][a]`;
+    await run(FFMPEG, ["-hide_banner", "-loglevel", "error", ...inputs, "-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-y", joined], { timeout: 240_000 });
+    let final = joined;
+    if (audio.voices?.length || audio.music) {
+      final = path.join(dir, "mixed.mp4");
+      const extra: string[] = [];
+      const parts: string[] = [];
+      const labels: string[] = [];
+      let k = 1;
+      for (const [i, v] of (audio.voices ?? []).entries()) {
+        extra.push("-i", await toFile(dir, `vo${i}.mp3`, v.url));
+        const ms = Math.round(v.start * 1000);
+        const tempo = v.tempo && v.tempo > 1.01 ? `,atempo=${Math.min(v.tempo, 1.5).toFixed(3)}` : "";
+        parts.push(`[${k++}:a]aresample=44100,aformat=channel_layouts=stereo${tempo},adelay=${ms}|${ms}[vo${i}]`);
+        labels.push(`[vo${i}]`);
+      }
+      if (audio.music) {
+        extra.push("-stream_loop", "-1", "-i", await toFile(dir, "music.mp3", audio.music));
+        parts.push(`[${k++}:a]aresample=44100,aformat=channel_layouts=stereo,volume=${labels.length ? 0.18 : 0.6},afade=t=out:st=${Math.max(0, t - 1).toFixed(2)}:d=1[mu]`);
+        labels.push("[mu]");
+      }
+      const mix = labels.length > 1 ? `${labels.join("")}amix=inputs=${labels.length}:duration=longest:normalize=0[a]` : `${labels[0]}anull[a]`;
+      await run(
+        FFMPEG,
+        ["-hide_banner", "-loglevel", "error", "-i", joined, ...extra, "-filter_complex", `${parts.join(";")};${mix}`, "-map", "0:v", "-map", "[a]", "-t", t.toFixed(2), "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-y", final],
+        { timeout: 180_000 },
+      );
+    }
+    return { url: `data:video/mp4;base64,${(await fs.readFile(final)).toString("base64")}`, starts, duration: t };
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** Audio length in seconds (for fitting a voiceover to shots). */
+export async function mediaDuration(media: string) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-probe-"));
+  try {
+    return (await probe(await toFile(dir, "m", media))).duration;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+export async function captionVariants(
+  video: string,
+  script: string,
+  end?: EndCard,
+  segments?: { start: number; end: number; text: string }[],
+): Promise<{ aspect: string; url: string }[]> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));
   try {
     const input = path.join(dir, "in.mp4");
     await fs.writeFile(input, video.startsWith("data:") ? Buffer.from(video.split(",")[1], "base64") : await (await fetch(video)).arrayBuffer().then(Buffer.from));
     const src = await probe(input);
-    const cues = captionCues(script, src.duration);
+    const cues = segments?.length ? timedCues(segments) : captionCues(script, src.duration);
     const results: { aspect: string; url: string }[] = [];
     for (const a of ASPECTS) {
       let w = src.width;

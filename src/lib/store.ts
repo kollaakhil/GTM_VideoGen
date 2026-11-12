@@ -124,6 +124,23 @@ export async function metrics(): Promise<MetricDay[]> {
   return mem().metrics;
 }
 
+const MIME: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", mp4: "video/mp4", mp3: "audio/mpeg", mpeg: "audio/mpeg", wav: "audio/wav" };
+
+/** Loads stored media (local /api/media path, https URL or data URL) as a data URL for model inputs and ffmpeg. */
+export async function mediaDataUrl(url: string): Promise<string> {
+  if (url.startsWith("data:")) return url;
+  if (url.startsWith("/api/media/")) {
+    const rel = decodeURIComponent(url.slice("/api/media/".length));
+    if (rel.split("/").includes("..")) throw new Error("Invalid media path");
+    const ext = rel.split(".").pop()?.toLowerCase() ?? "";
+    return `data:${MIME[ext] ?? "application/octet-stream"};base64,${fs.readFileSync(mediaPath(rel)).toString("base64")}`;
+  }
+  if (!url.startsWith("https://")) throw new Error("Unsupported media URL");
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Media fetch failed (${res.status})`);
+  return `data:${res.headers.get("content-type")?.split(";")[0] ?? "application/octet-stream"};base64,${Buffer.from(await res.arrayBuffer()).toString("base64")}`;
+}
+
 export async function storeMedia(dataUrl: string, rel: string): Promise<string> {
   if (!dataUrl.startsWith("data:")) return dataUrl;
   const [meta, b64] = dataUrl.split(",");

@@ -68,7 +68,8 @@ async function falVideo(model: string, prompt: string): Promise<string> {
   throw new Error("fal job timed out");
 }
 
-type VideoSpec = { durations?: number[] | null; resolutions?: string[] | null; aspects?: string[] | null };
+type VideoSpec = { durations?: number[] | null; resolutions?: string[] | null; aspects?: string[] | null; frames?: string[] | null };
+export type VideoOpts = { firstFrame?: string; lastFrame?: string; seconds?: number; audio?: boolean; resolution?: string };
 let videoCatalog: { at: number; specs: Map<string, VideoSpec> } | null = null;
 
 async function openrouterVideoSpec(model: string): Promise<VideoSpec> {
@@ -78,9 +79,9 @@ async function openrouterVideoSpec(model: string): Promise<VideoSpec> {
     videoCatalog = {
       at: Date.now(),
       specs: new Map(
-        (json.data ?? []).map((m: { id: string; supported_durations?: number[]; supported_resolutions?: string[]; supported_aspect_ratios?: string[] }) => [
+        (json.data ?? []).map((m: { id: string; supported_durations?: number[]; supported_resolutions?: string[]; supported_aspect_ratios?: string[]; supported_frame_images?: string[] }) => [
           m.id,
-          { durations: m.supported_durations, resolutions: m.supported_resolutions, aspects: m.supported_aspect_ratios },
+          { durations: m.supported_durations, resolutions: m.supported_resolutions, aspects: m.supported_aspect_ratios, frames: m.supported_frame_images },
         ]),
       ),
     };
@@ -89,6 +90,12 @@ async function openrouterVideoSpec(model: string): Promise<VideoSpec> {
 }
 
 const prefer = <T,>(options: T[] | null | undefined, wanted: T[]): T | undefined => (options?.length ? (wanted.find((w) => options.includes(w)) ?? options[0]) : undefined);
+const nearest = (options: number[] | null | undefined, want: number) => (options?.length ? options.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a)) : want);
+
+/** Durations a video model accepts (from OpenRouter's catalog), for planning shot lengths. */
+export async function videoDurations(model: string): Promise<number[] | null> {
+  return providerOf(model) === "openrouter" ? ((await openrouterVideoSpec(model)).durations ?? null) : null;
+}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const VIDEO_TIMEOUT_MS = 12 * 60_000;
 
@@ -99,7 +106,7 @@ async function downloadAsDataUrl(url: string, headers: Record<string, string> = 
   return `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString("base64")}`;
 }
 
-async function openrouterVideo(model: string, prompt: string, firstFrame?: string): Promise<{ url: string; usage: Usage }> {
+async function openrouterVideo(model: string, prompt: string, o: VideoOpts = {}): Promise<{ url: string; usage: Usage }> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
   const auth = { Authorization: `Bearer ${key}` };
@@ -107,11 +114,18 @@ async function openrouterVideo(model: string, prompt: string, firstFrame?: strin
   const body = {
     model,
     prompt,
-    duration: prefer(spec.durations, [6, 5, 8, 4]),
-    resolution: prefer(spec.resolutions, ["720p", "768p", "1080p"]),
+    duration: o.seconds ? nearest(spec.durations, o.seconds) : prefer(spec.durations, [6, 5, 8, 4]),
+    resolution: o.resolution && spec.resolutions?.includes(o.resolution) ? o.resolution : prefer(spec.resolutions, ["720p", "768p", "1080p"]),
     aspect_ratio: prefer(spec.aspects, ["9:16", "3:4", "1:1"]),
-    generate_audio: true,
-    ...(firstFrame ? { frame_images: [{ type: "image_url", image_url: { url: firstFrame }, frame_type: "first_frame" }] } : {}),
+    generate_audio: o.audio ?? true,
+    ...(o.firstFrame
+      ? {
+          frame_images: [
+            { type: "image_url", image_url: { url: o.firstFrame }, frame_type: "first_frame" },
+            ...(o.lastFrame && spec.frames?.includes("last_frame") ? [{ type: "image_url", image_url: { url: o.lastFrame }, frame_type: "last_frame" }] : []),
+          ],
+        }
+      : {}),
   };
   const submit = await fetch("https://openrouter.ai/api/v1/videos", { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Title": "GTM Engine" }, body: JSON.stringify(body) });
   if (!submit.ok) throw new Error(`OpenRouter video ${submit.status}: ${(await submit.text()).slice(0, 300)}`);
@@ -166,11 +180,48 @@ async function higgsfieldVideo(model: string, prompt: string): Promise<{ url: st
   return { url: await downloadAsDataUrl(out), usage: { costUsd: 0 } };
 }
 
-export async function generateVideo(model: string, prompt: string, firstFrame?: string): Promise<{ url: string; usage: Usage }> {
+export async function generateVideo(model: string, prompt: string, opts?: string | VideoOpts): Promise<{ url: string; usage: Usage }> {
+  const o: VideoOpts = typeof opts === "string" ? { firstFrame: opts } : (opts ?? {});
   const provider = providerOf(model);
   if (provider === "fal") return { url: await falVideo(model, prompt), usage: { costUsd: 0 } };
   if (provider === "higgsfield") return higgsfieldVideo(model, prompt);
-  return openrouterVideo(model, prompt, firstFrame);
+  return openrouterVideo(model, prompt, o);
+}
+
+async function falRun<T>(endpoint: string, input: Record<string, unknown>): Promise<T> {
+  const key = process.env.FAL_KEY;
+  if (!key) throw new Error("FAL_KEY is not set");
+  const headers = { Authorization: `Key ${key}`, "Content-Type": "application/json" };
+  const submit = await fetch(`https://queue.fal.run/${endpoint}`, { method: "POST", headers, body: JSON.stringify(input) });
+  if (!submit.ok) throw new Error(`fal ${submit.status}: ${(await submit.text()).slice(0, 300)}`);
+  const { status_url, response_url } = await submit.json();
+  if (!String(status_url).startsWith("https://queue.fal.run/")) throw new Error("Unexpected fal status URL");
+  const started = Date.now();
+  while (Date.now() - started < VIDEO_TIMEOUT_MS) {
+    await sleep(3000);
+    const s = await (await fetch(status_url, { headers })).json();
+    if (s.status === "COMPLETED") return (await fetch(response_url, { headers })).json();
+    if (s.status === "FAILED" || s.status === "ERROR") throw new Error(`fal ${endpoint} failed`);
+  }
+  throw new Error(`fal ${endpoint} timed out`);
+}
+
+export const audioConfigured = () => !!process.env.FAL_KEY;
+export const VOICES = ["Rachel", "Aria", "Sarah", "Laura", "Charlotte", "Jessica", "Lily", "Roger", "Charlie", "George", "Callum", "Liam", "Will", "Eric", "Chris", "Brian", "Daniel"];
+
+/** ElevenLabs voiceover via fal ($0.05 per 1k characters). */
+export async function voiceover(text: string, voice = "Rachel"): Promise<{ url: string; usage: Usage }> {
+  const out = await falRun<{ audio?: { url: string } }>("fal-ai/elevenlabs/tts/turbo-v2.5", { text, voice: VOICES.includes(voice) ? voice : "Rachel" });
+  if (!out.audio?.url) throw new Error("Voiceover returned no audio");
+  return { url: await downloadAsDataUrl(out.audio.url), usage: { costUsd: (text.length / 1000) * 0.05 } };
+}
+
+/** Instrumental music bed via fal ElevenLabs Music ($0.60 per started minute). */
+export async function musicBed(prompt: string, seconds: number): Promise<{ url: string; usage: Usage }> {
+  const ms = Math.max(3000, Math.min(120_000, Math.round(seconds * 1000)));
+  const out = await falRun<{ audio?: { url: string } }>("fal-ai/elevenlabs/music", { prompt, music_length_ms: ms, force_instrumental: true });
+  if (!out.audio?.url) throw new Error("Music returned no audio");
+  return { url: await downloadAsDataUrl(out.audio.url), usage: { costUsd: Math.ceil(ms / 60_000) * 0.6 } };
 }
 
 export function aiConfigured() {

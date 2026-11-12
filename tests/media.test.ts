@@ -68,3 +68,29 @@ describe("captionVariants end card", () => {
     fs.rmSync(v);
   }, 120_000);
 });
+
+describe("stitchShots", () => {
+  it("joins clips with and without audio, mixes voice + music, returns shot starts", async () => {
+    const { stitchShots, timedCues } = await import("@/lib/video-post");
+    const ff = ffmpegPath || "ffmpeg";
+    const tmp = (n: string) => path.join(os.tmpdir(), `st-${Date.now()}-${n}`);
+    const a = tmp("a.mp4"), b = tmp("b.mp4"), v = tmp("v.wav"), m = tmp("m.wav");
+    execFileSync(ff, ["-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=480x854:rate=24:duration=2", "-f", "lavfi", "-i", "sine=duration=2", "-pix_fmt", "yuv420p", "-shortest", "-y", a]);
+    execFileSync(ff, ["-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=3", "-pix_fmt", "yuv420p", "-y", b]);
+    execFileSync(ff, ["-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=4", "-y", v]);
+    execFileSync(ff, ["-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=600:duration=2", "-y", m]);
+    const d = (f: string, t: string) => `data:${t};base64,${fs.readFileSync(f).toString("base64")}`;
+    const out = await stitchShots([d(a, "video/mp4"), d(b, "video/mp4")], { voices: [{ url: d(v, "audio/wav"), start: 0 }, { url: d(v, "audio/wav"), start: 2, tempo: 1.2 }], music: d(m, "audio/wav") });
+    expect(out.starts[0]).toBe(0);
+    expect(out.starts[1]).toBeCloseTo(2, 0);
+    const o = tmp("o.mp4");
+    fs.writeFileSync(o, Buffer.from(out.url.split(",")[1], "base64"));
+    const info = execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration", "-of", "json", o]).toString();
+    const j = JSON.parse(info);
+    expect(Number(j.format.duration)).toBeGreaterThan(4.5);
+    expect(j.streams.find((s: { codec_type: string }) => s.codec_type === "video").width).toBe(720);
+    expect(j.streams.some((s: { codec_type: string }) => s.codec_type === "audio")).toBe(true);
+    expect(timedCues([{ start: 2, end: 4, text: "one two three four five" }])[0].start).toBe(2);
+    for (const f of [a, b, v, m, o]) fs.rmSync(f);
+  }, 180_000);
+});
