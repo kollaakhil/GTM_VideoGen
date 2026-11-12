@@ -36,8 +36,17 @@ export function spokenScript(script: string) {
 export function captionCues(script: string, duration: number, wordsPerCue = 4) {
   const words = spokenScript(script).split(" ").filter(Boolean);
   if (!words.length || duration <= 0) return [];
+  // Break at punctuation first so a cue never splits a short phrase; avoid leaving a lone trailing word.
   const chunks: string[] = [];
-  for (let i = 0; i < words.length; i += wordsPerCue) chunks.push(words.slice(i, i + wordsPerCue).join(" "));
+  let cur: string[] = [];
+  for (const [i, w] of words.entries()) {
+    cur.push(w);
+    if (/[.,!?;:]$/.test(w) || (cur.length >= wordsPerCue && words.length - i - 1 !== 1)) {
+      chunks.push(cur.join(" "));
+      cur = [];
+    }
+  }
+  if (cur.length) chunks.push(cur.join(" "));
   const step = duration / chunks.length;
   return chunks.map((text, i) => ({ start: i * step, end: Math.min(duration, (i + 1) * step), text }));
 }
