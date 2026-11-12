@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkScript, finalScore, sameHooks, textMatch, textRecall } from "@/lib/script-lab";
+import { checkScript, finalScore, judgeFor, sameHooks, textMatch, textRecall } from "@/lib/script-lab";
 import type { AdScript } from "@/lib/types";
 
 const base: AdScript = {
@@ -72,5 +72,13 @@ describe("sameHooks", () => {
   it("flags the weaker of two hooks that open the same way", () => {
     const d = sameHooks([mk("a", "Hands full and running late?", 8), mk("b", "Hands full, still fighting laces?", 7), mk("c", "Full price? I waited.", 7)]);
     expect([...d]).toEqual(["b"]);
+  });
+});
+
+describe("judgeFor", () => {
+  it("never lets a model grade its own scripts", () => {
+    expect(judgeFor("google/gemini-4-carbon", "anthropic/claude-sonnet-5.5")).toBe("anthropic/claude-sonnet-5.5");
+    expect(judgeFor("openai/gpt-6.1-sol", "openai/gpt-6.1-sol")).toBe("anthropic/claude-sonnet-5.5");
+    expect(judgeFor("anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5.5")).toBe("openai/gpt-6.1-sol");
   });
 });

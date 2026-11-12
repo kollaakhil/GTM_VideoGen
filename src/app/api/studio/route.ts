@@ -9,7 +9,7 @@ import { STATIC_FORMATS, vocBlock, voiceOfCustomer } from "@/lib/ad-wisdom";
 import { concepts, diversityIssues, selectDiverse } from "@/lib/concepts";
 import { claimsCheck, gateVerdict } from "@/lib/gate";
 import { learnings } from "@/lib/learnings";
-import { checkScript, judgeFor, SCRIPT_WRITERS, scriptLab, scriptSeconds, scriptText, textMatch, textRecall, writerLabel } from "@/lib/script-lab";
+import { checkScript, judgeFor, SCRIPT_JUDGES, SCRIPT_WRITERS, scriptLab, scriptSeconds, scriptText, textMatch, textRecall, writerLabel } from "@/lib/script-lab";
 import { captionVariants, meanVolume, mediaDuration, spokenScript, stitchShots } from "@/lib/video-post";
 import { get, list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
@@ -56,7 +56,7 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("pick_concepts"), runId: z.string().max(64), ids: z.array(z.string().max(16)).min(1).max(5) }),
   z.object({ action: z.literal("cancel"), runId: z.string().max(64) }),
   z.object({ action: z.literal("storyboard"), runId: z.string().max(64), directionId: z.string().max(32).optional(), plan: Plan, refs: Refs }),
-  z.object({ action: z.literal("write_scripts"), runId: z.string().max(64), directionId: z.string().max(32).optional(), lengthSec: z.number().int().min(6).max(30).optional(), writer: z.enum(SCRIPT_WRITERS).optional() }),
+  z.object({ action: z.literal("write_scripts"), runId: z.string().max(64), directionId: z.string().max(32).optional(), lengthSec: z.number().int().min(6).max(30).optional(), writer: z.enum(SCRIPT_WRITERS).optional(), judge: z.enum(SCRIPT_JUDGES).optional() }),
   z.object({
     action: z.literal("approve_script"),
     runId: z.string().max(64),
@@ -358,7 +358,7 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       if (!targets.length) return { error: "Direction not found" };
       const lengthSec = body.lengthSec ?? run.videoPlan?.lengthSec ?? 15;
       return {
-        activity: `Script Lab: ${writerLabel(body.writer)} is writing 5 scripts per direction, ${writerLabel(judgeFor(body.writer))} is grading them…`,
+        activity: `Script Lab: ${writerLabel(body.writer)} is writing 5 scripts per direction, ${writerLabel(judgeFor(body.writer, body.judge))} is grading them…`,
         work: async () => {
           run.job = { label: `Writing and grading scripts for ${targets.length} direction${targets.length === 1 ? "" : "s"}`, done: 0, total: targets.length };
           const [kit, rules] = await Promise.all([brandFor(run), guidance(run)]);
@@ -368,7 +368,7 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
           }
           const res = await Promise.allSettled(
             targets.map(async (d) => {
-              const r = await scriptLab({ direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, rules, mustSay: kit?.mustSay, lengthSec }, { writer: body.writer, judge: judgeFor(body.writer) });
+              const r = await scriptLab({ direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, rules, mustSay: kit?.mustSay, lengthSec }, { writer: body.writer, judge: judgeFor(body.writer, body.judge) });
               Object.assign(d, { scripts: r.scripts, approvedScript: null });
               run.costUsd += r.cost;
               if (run.job) run.job.done++;

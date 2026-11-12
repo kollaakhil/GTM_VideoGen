@@ -783,12 +783,16 @@ function JobBar({ job }: { job: NonNullable<StudioRun["job"]> }) {
 
 const scoreTone = (n: number) => (n >= 8 ? "bg-emerald-500/15 text-emerald-300" : n >= 6 ? "bg-amber-500/15 text-amber-300" : "bg-red-500/15 text-red-300");
 
-const WRITERS: Record<string, string> = { "": "Auto", "openai/gpt-6-astra": "Astra", "openai/gpt-6.1-sol": "Sol", "anthropic/claude-opus-5.5": "Opus 5.5", "google/gemini-4-carbon": "Carbon" };
-const JUDGE_MODEL = "google/gemini-4-carbon";
-const savedWriter = () => {
-  const w = typeof window === "undefined" ? null : localStorage.getItem("gtm.writer");
-  return w && w in WRITERS ? w : "";
+const WRITERS: Record<string, string> = { "google/gemini-4-carbon": "Carbon", "anthropic/claude-opus-5.5": "Opus 5.5", "openai/gpt-6.1-sol": "Sol", "openai/gpt-6-astra": "Astra" };
+const JUDGES: Record<string, string> = { "anthropic/claude-sonnet-5.5": "Sonnet 5.5", "openai/gpt-6.1-sol": "Sol" };
+const saved = (key: string, list: Record<string, string>) => {
+  const v = typeof window === "undefined" ? null : localStorage.getItem(key);
+  return v && v in list ? v : Object.keys(list)[0];
 };
+const savedWriter = () => saved("gtm.writer", WRITERS);
+const savedJudge = () => saved("gtm.judge", JUDGES);
+/** Mirrors judgeFor on the server: nobody grades their own scripts. */
+const judgeOf = (w: string, j: string) => (j !== w ? j : Object.keys(JUDGES).find((m) => m !== w)!);
 
 function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove }: {
   d: Direction;
@@ -797,16 +801,22 @@ function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove
   edits: Record<string, string[]>;
   setEdits: (e: Record<string, string[]>) => void;
   busy: boolean;
-  onWrite: (writer?: string) => void;
+  onWrite: (writer: string, judge: string) => void;
   onApprove: (sc: AdScript, lines?: string[]) => void;
 }) {
   const ap = d.approvedScript;
   const [writer, setWriter] = useState(savedWriter);
+  const [judge, setJudge] = useState(savedJudge);
   const pickWriter = (w: string) => {
     setWriter(w);
     localStorage.setItem("gtm.writer", w);
   };
-  const write = () => onWrite(writer || undefined);
+  const pickJudge = (j: string) => {
+    setJudge(j);
+    localStorage.setItem("gtm.judge", j);
+  };
+  const grader = judgeOf(writer, judge);
+  const write = () => onWrite(writer, grader);
   return (
     <div className="nodrag space-y-1.5 rounded-lg border border-white/5 bg-white/[0.02] p-2">
       <div className="flex items-center justify-between">
@@ -817,7 +827,13 @@ function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove
               <option key={id} value={id}>{label}</option>
             ))}
           </select>{" "}
-          writes, {WRITERS[writer === JUDGE_MODEL ? "anthropic/claude-opus-5.5" : JUDGE_MODEL]} grades
+          writes,{" "}
+          <select className="rounded bg-zinc-900 text-zinc-300" value={grader} onChange={(e) => pickJudge(e.target.value)} disabled={busy} aria-label="Script grader">
+            {Object.entries(JUDGES).map(([id, label]) => (
+              <option key={id} value={id} disabled={id === writer}>{label}</option>
+            ))}
+          </select>{" "}
+          grades
         </span>
         <button className="text-[10px] text-indigo-300 hover:underline disabled:opacity-40" disabled={busy} onClick={write}>
           {d.scripts?.length ? "Rewrite all" : ""}
@@ -925,7 +941,7 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
             edits={edits}
             setEdits={setEdits}
             busy={sending || run.status === "working"}
-            onWrite={(writer) => act("write_scripts", { runId: run.id, directionId: d.id, lengthSec: vplan.lengthSec, writer })}
+            onWrite={(writer, judge) => act("write_scripts", { runId: run.id, directionId: d.id, lengthSec: vplan.lengthSec, writer, judge })}
             onApprove={(sc, lines) => act("approve_script", { runId: run.id, directionId: d.id, scriptId: sc.id, ...(lines ? { edit: { beats: sc.beats.map((b, i) => ({ vo: lines[i] ?? b.vo, onScreen: b.onScreen })) } } : {}) })}
           />
         )}
@@ -1370,7 +1386,7 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
           if (!approved) {
             const written = run.directions.some((d) => d.scripts?.length);
             text = written ? "Open a script on each direction, edit any line, and approve one. Storyboards, voice and video only use approved scripts." : "Script first: Sol writes 5 scripts per direction and Carbon grades them before anything is drawn or rendered.";
-            buttons = [btn(written ? "Rewrite scripts" : "Write scripts", () => act("write_scripts", { runId: run.id, lengthSec: form.plan.lengthSec, writer: savedWriter() || undefined }), !written, <Pencil />)];
+            buttons = [btn(written ? "Rewrite scripts" : "Write scripts", () => act("write_scripts", { runId: run.id, lengthSec: form.plan.lengthSec, writer: savedWriter(), judge: judgeOf(savedWriter(), savedJudge()) }), !written, <Pencil />)];
             break;
           }
           text = hasSb ? "Review the storyboards. Redraw weak shots, then render a draft or final video on each direction." : "Pick a category and length on the Video plan card, then build storyboards before any video spend.";

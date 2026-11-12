@@ -3,13 +3,17 @@ import type { AdScript, Brief, Direction, Research, ScriptScore, StyleDNA, Voice
 import { vocBlock } from "./ad-wisdom";
 
 export const SCRIPT_PASS = 8;
-export const WRITER = process.env.SCRIPT_WRITER_MODEL || (process.env.OPENAI_API_KEY ? "openai/gpt-6-astra" : "anthropic/claude-opus-5.5");
-export const JUDGE = process.env.SCRIPT_JUDGE_MODEL || "google/gemini-4-carbon";
-export const SCRIPT_WRITERS = ["openai/gpt-6-astra", "openai/gpt-6.1-sol", "anthropic/claude-opus-5.5", "google/gemini-4-carbon"] as const;
-const LABELS: Record<string, string> = { "openai/gpt-6-astra": "Astra", "openai/gpt-6.1-sol": "Sol", "anthropic/claude-opus-5.5": "Opus 5.5", "google/gemini-4-carbon": "Carbon" };
+export const WRITER = process.env.SCRIPT_WRITER_MODEL || "google/gemini-4-carbon";
+export const JUDGE = process.env.SCRIPT_JUDGE_MODEL || "anthropic/claude-sonnet-5.5";
+export const SCRIPT_WRITERS = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6.1-sol", "openai/gpt-6-astra"] as const;
+export const SCRIPT_JUDGES = ["anthropic/claude-sonnet-5.5", "openai/gpt-6.1-sol"] as const;
+const LABELS: Record<string, string> = { "openai/gpt-6-astra": "Astra", "openai/gpt-6.1-sol": "Sol", "anthropic/claude-opus-5.5": "Opus 5.5", "anthropic/claude-sonnet-5.5": "Sonnet 5.5", "google/gemini-4-carbon": "Carbon" };
 export const writerLabel = (m?: string) => LABELS[m ?? WRITER] ?? (m ?? WRITER).split("/").pop()!;
 /** The judge is always a different model from the writer, so nobody grades their own work. */
-export const judgeFor = (writer?: string) => ((writer ?? WRITER) === JUDGE ? "anthropic/claude-opus-5.5" : JUDGE);
+export const judgeFor = (writer?: string, judge?: string) => {
+  const w = writer ?? WRITER, j = judge ?? JUDGE;
+  return j !== w ? j : [...SCRIPT_JUDGES, "google/gemini-4-carbon"].find((m) => m !== w)!;
+};
 const WORDS_PER_SEC = 2.5;
 const MAX_ROUNDS = 2;
 
@@ -265,7 +269,7 @@ export function sameHooks(list: AdScript[]): Set<string> {
 const SAME_HOOK = "This hook opens like another script in the set. Write a completely different spoken hook (different hook type, different first words, different moment).";
 const POLISH = 9;
 
-/** Sol writes, Carbon judges (with a simulated audience panel), weak scripts are rewritten up to twice. */
+/** One model writes, a different one judges (with a simulated audience panel), weak scripts are rewritten up to twice. */
 export async function scriptLab(c: ScriptCtx, o: { writer?: string; judge?: string; count?: number; keep?: number } = {}): Promise<{ scripts: AdScript[]; cost: number }> {
   const writer = o.writer ?? WRITER, judge = o.judge ?? JUDGE;
   const w = await writeScripts(writer, c, o.count ?? 5);
