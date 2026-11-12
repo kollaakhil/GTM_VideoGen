@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -90,6 +90,8 @@ describe("stitchShots", () => {
     expect(Number(j.format.duration)).toBeGreaterThan(4.5);
     expect(j.streams.find((s: { codec_type: string }) => s.codec_type === "video").width).toBe(720);
     expect(j.streams.some((s: { codec_type: string }) => s.codec_type === "audio")).toBe(true);
+    const mean = Number(String(spawnSync(ff, ["-hide_banner", "-i", o, "-vn", "-af", "volumedetect", "-f", "null", "-"]).stderr).match(/mean_volume: ([-\d.]+) dB/)?.[1]);
+    expect(mean).toBeGreaterThan(-60);
     expect(timedCues([{ start: 2, end: 4, text: "one two three four five" }])[0].start).toBe(2);
     for (const f of [a, b, v, m, o]) fs.rmSync(f);
   }, 180_000);

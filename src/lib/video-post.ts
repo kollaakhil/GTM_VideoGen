@@ -166,10 +166,14 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
       const labels: string[] = [];
       let k = 1;
       for (const [i, v] of (audio.voices ?? []).entries()) {
-        extra.push("-i", await toFile(dir, `vo${i}.mp3`, v.url));
+        // Speed-fit each line in its own pass: chaining atempo into adelay/amix yields silence in ffmpeg 7.
+        const raw = await toFile(dir, `vo${i}.mp3`, v.url);
+        const fitted = path.join(dir, `vo${i}.wav`);
+        const tempo = v.tempo && v.tempo > 1.01 ? ["-af", `atempo=${Math.min(v.tempo, 1.5).toFixed(3)}`] : [];
+        await run(FFMPEG, ["-hide_banner", "-loglevel", "error", "-i", raw, ...tempo, "-ar", "44100", "-ac", "2", "-y", fitted], { timeout: 60_000 });
+        extra.push("-i", fitted);
         const ms = Math.round(v.start * 1000);
-        const tempo = v.tempo && v.tempo > 1.01 ? `,atempo=${Math.min(v.tempo, 1.5).toFixed(3)}` : "";
-        parts.push(`[${k++}:a]aresample=44100,aformat=channel_layouts=stereo${tempo},adelay=${ms}|${ms}[vo${i}]`);
+        parts.push(`[${k++}:a]adelay=${ms}|${ms}[vo${i}]`);
         labels.push(`[vo${i}]`);
       }
       if (audio.music) {
