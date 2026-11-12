@@ -3,8 +3,13 @@ import type { AdScript, Brief, Direction, Research, ScriptScore, StyleDNA, Voice
 import { vocBlock } from "./ad-wisdom";
 
 export const SCRIPT_PASS = 8;
-export const WRITER = process.env.SCRIPT_WRITER_MODEL || "openai/gpt-6.1-sol";
+export const WRITER = process.env.SCRIPT_WRITER_MODEL || "anthropic/claude-opus-5.5";
 export const JUDGE = process.env.SCRIPT_JUDGE_MODEL || "google/gemini-4-carbon";
+export const SCRIPT_WRITERS = ["openai/gpt-6.1-sol", "anthropic/claude-opus-5.5", "google/gemini-4-carbon"] as const;
+const LABELS: Record<string, string> = { "openai/gpt-6.1-sol": "Sol", "anthropic/claude-opus-5.5": "Opus 5.5", "google/gemini-4-carbon": "Carbon" };
+export const writerLabel = (m?: string) => LABELS[m ?? WRITER] ?? (m ?? WRITER).split("/").pop()!;
+/** The judge is always a different model from the writer, so nobody grades their own work. */
+export const judgeFor = (writer?: string) => ((writer ?? WRITER) === JUDGE ? "anthropic/claude-opus-5.5" : JUDGE);
 const WORDS_PER_SEC = 2.5;
 const MAX_ROUNDS = 2;
 

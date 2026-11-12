@@ -15,6 +15,7 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  useStore,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { AlertTriangle, Clapperboard, ArrowRight, Square, Check, ChevronDown, Film, Globe, History, ImageIcon, Inbox, Lightbulb, Loader2, MessageSquare, Pencil, Plus, RefreshCw, Rocket, Search, Sparkles, Upload, Wand2, X, LayoutGrid, ShieldCheck } from "lucide-react";
@@ -782,6 +783,13 @@ function JobBar({ job }: { job: NonNullable<StudioRun["job"]> }) {
 
 const scoreTone = (n: number) => (n >= 8 ? "bg-emerald-500/15 text-emerald-300" : n >= 6 ? "bg-amber-500/15 text-amber-300" : "bg-red-500/15 text-red-300");
 
+const WRITERS: Record<string, string> = { "openai/gpt-6.1-sol": "Sol", "anthropic/claude-opus-5.5": "Opus 5.5", "google/gemini-4-carbon": "Carbon" };
+const JUDGE_MODEL = "google/gemini-4-carbon";
+const savedWriter = () => {
+  const w = typeof window === "undefined" ? null : localStorage.getItem("gtm.writer");
+  return w && w in WRITERS ? w : "anthropic/claude-opus-5.5";
+};
+
 function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove }: {
   d: Direction;
   open: string | null;
@@ -789,15 +797,29 @@ function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove
   edits: Record<string, string[]>;
   setEdits: (e: Record<string, string[]>) => void;
   busy: boolean;
-  onWrite: () => void;
+  onWrite: (writer: string) => void;
   onApprove: (sc: AdScript, lines?: string[]) => void;
 }) {
   const ap = d.approvedScript;
+  const [writer, setWriter] = useState(savedWriter);
+  const pickWriter = (w: string) => {
+    setWriter(w);
+    localStorage.setItem("gtm.writer", w);
+  };
+  const write = () => onWrite(writer);
   return (
     <div className="nodrag space-y-1.5 rounded-lg border border-white/5 bg-white/[0.02] p-2">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Script Lab · Sol writes, Carbon grades</span>
-        <button className="text-[10px] text-indigo-300 hover:underline disabled:opacity-40" disabled={busy} onClick={onWrite}>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+          Script Lab ·{" "}
+          <select className="rounded bg-zinc-900 text-zinc-300" value={writer} onChange={(e) => pickWriter(e.target.value)} disabled={busy} aria-label="Script writer">
+            {Object.entries(WRITERS).map(([id, label]) => (
+              <option key={id} value={id}>{label}</option>
+            ))}
+          </select>{" "}
+          writes, {WRITERS[writer === JUDGE_MODEL ? "anthropic/claude-opus-5.5" : JUDGE_MODEL]} grades
+        </span>
+        <button className="text-[10px] text-indigo-300 hover:underline disabled:opacity-40" disabled={busy} onClick={write}>
           {d.scripts?.length ? "Rewrite all" : ""}
         </button>
       </div>
@@ -808,7 +830,7 @@ function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove
         </div>
       )}
       {!d.scripts?.length ? (
-        <Button size="sm" variant="secondary" className="w-full" disabled={busy} onClick={onWrite}>
+        <Button size="sm" variant="secondary" className="w-full" disabled={busy} onClick={write}>
           <Pencil /> Write scripts
         </Button>
       ) : (
@@ -903,7 +925,7 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
             edits={edits}
             setEdits={setEdits}
             busy={sending || run.status === "working"}
-            onWrite={() => act("write_scripts", { runId: run.id, directionId: d.id, lengthSec: vplan.lengthSec })}
+            onWrite={(writer) => act("write_scripts", { runId: run.id, directionId: d.id, lengthSec: vplan.lengthSec, writer })}
             onApprove={(sc, lines) => act("approve_script", { runId: run.id, directionId: d.id, scriptId: sc.id, ...(lines ? { edit: { beats: sc.beats.map((b, i) => ({ vo: lines[i] ?? b.vo, onScreen: b.onScreen })) } } : {}) })}
           />
         )}
@@ -1169,7 +1191,7 @@ const nodeTypes = { concepts: ConceptsNode, ghost: GhostNode, style: StyleNode, 
 /* Graph                                                               */
 /* ------------------------------------------------------------------ */
 
-function useGraph(run: StudioRun | null, byDir: Record<string, Creative>) {
+function useGraph(run: StudioRun | null, byDir: Record<string, Creative>, dirH = 0) {
   return useMemo(() => {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
@@ -1232,7 +1254,7 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>) {
       order = 3;
     }
 
-    const sb = run.directions.some((d) => d.shots?.length) ? SB_SHIFT : 0;
+    const sb = Math.max(run.directions.some((d) => d.shots?.length) ? SB_SHIFT : 0, dirH ? DIR_Y + dirH + 90 - CR_Y : 0);
     if (run.format === "video" && run.directions.length > 0) {
       nodes.push({ id: "videoplan", type: "videoplan", position: { x: 140, y: DIR_Y }, data: {} });
       edges.push(edge("brief", "videoplan", true, {}));
@@ -1261,7 +1283,7 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>) {
       order = 5;
     }
     return withGhosts();
-  }, [run, byDir]);
+  }, [run, byDir, dirH]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1348,7 +1370,7 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
           if (!approved) {
             const written = run.directions.some((d) => d.scripts?.length);
             text = written ? "Open a script on each direction, edit any line, and approve one. Storyboards, voice and video only use approved scripts." : "Script first: Sol writes 5 scripts per direction and Carbon grades them before anything is drawn or rendered.";
-            buttons = [btn(written ? "Rewrite scripts" : "Write scripts", () => act("write_scripts", { runId: run.id, lengthSec: form.plan.lengthSec }), !written, <Pencil />)];
+            buttons = [btn(written ? "Rewrite scripts" : "Write scripts", () => act("write_scripts", { runId: run.id, lengthSec: form.plan.lengthSec, writer: savedWriter() }), !written, <Pencil />)];
             break;
           }
           text = hasSb ? "Review the storyboards. Redraw weak shots, then render a draft or final video on each direction." : "Pick a category and length on the Video plan card, then build storyboards before any video spend.";
@@ -1399,7 +1421,8 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
 
 function Canvas({ elapsed, notice }: { elapsed: number; notice: string | null }) {
   const { run, byDir } = useFlow();
-  const { nodes, edges } = useGraph(run, byDir);
+  const dirH = useStore((st) => Math.round(Math.max(0, ...st.nodes.filter((n) => n.type === "direction").map((n) => n.measured?.height ?? 0)) / 40) * 40);
+  const { nodes, edges } = useGraph(run, byDir, dirH);
   const flow = useReactFlow();
   const seen = useRef<string>("");
 
