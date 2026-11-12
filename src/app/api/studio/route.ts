@@ -4,6 +4,8 @@ import { DEFAULTS } from "@/lib/models";
 import { brief, directions, diversityScores, filmstrip, organic, qa, render, research, styleDNA } from "@/lib/pipeline";
 import { audioConfigured, generateVideo, musicBed, nearest, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
 import { CATEGORIES, keyframe, planShots, QA_PASS, shotQA } from "@/lib/video-plan";
+import { brandRules } from "@/lib/brand-rules";
+import { learnings } from "@/lib/learnings";
 import { captionVariants, meanVolume, mediaDuration, spokenScript, stitchShots } from "@/lib/video-post";
 import { get, list, mediaDataUrl, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
@@ -193,7 +195,7 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       return {
         activity: "Researching the brand…",
         work: async () => {
-          const [r, dna] = await Promise.all([research(m.text, run.brandUrl, goalCtx(run)), run.referenceUrl ? styleDNA(m.text, run.referenceUrl) : null]);
+          const [r, dna] = await Promise.all([research(m.text, run.brandUrl, goalCtx(run, brandRules(await brandFor(run)))), run.referenceUrl ? styleDNA(m.text, run.referenceUrl) : null]);
           Object.assign(run, { research: r.data, styleDNA: dna?.data ?? null, stage: "brief", costUsd: run.costUsd + r.cost + (dna?.cost ?? 0) });
           say(run, "agent", dna ? `Research is done, and I mapped ${dna.data.brand}'s creative style. Next: write the creative brief.` : "Research is done. Next: write the creative brief.");
         },
@@ -203,7 +205,7 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       return {
         activity: "Writing the brief…",
         work: async () => {
-          const b = await brief(m.text, run.research!, goalCtx(run), run.styleDNA);
+          const b = await brief(m.text, run.research!, goalCtx(run, await guidance(run)), run.styleDNA);
           Object.assign(run, { brief: b.data, stage: "directions", directions: [], costUsd: run.costUsd + b.cost });
           say(run, "agent", "Brief is ready. Edit it if you like, then approve it to get three directions.");
         },
@@ -214,7 +216,7 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       return {
         activity: "Pitching three directions…",
         work: async () => {
-          const d = await directions(m.text, run.brief!, run.research!, run.format, run.styleDNA);
+          const d = await directions(m.text, run.brief!, run.research!, run.format, run.styleDNA, await guidance(run));
           Object.assign(run, { directions: d.data, stage: "generate", progress: {}, costUsd: run.costUsd + d.cost });
           say(run, "agent", "Here are three directions. Generate creatives when you're happy, or re-pitch.");
         },
@@ -241,7 +243,7 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       return {
         activity: "Writing organic posts for Instagram, TikTok, LinkedIn and X…",
         work: async () => {
-          const o = await organic(m.text, run.brief!, run.research!, run.styleDNA);
+          const o = await organic(m.text, run.brief!, run.research!, run.styleDNA, await guidance(run));
           Object.assign(run, { organic: o.data, costUsd: run.costUsd + o.cost });
           say(run, "agent", "Organic posts are ready: Instagram, TikTok, LinkedIn, an X thread and a carousel.");
         },
@@ -316,8 +318,24 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
   }
 }
 
-const goalCtx = (run: StudioRun) =>
-  run.offer ? `${run.goal}\nReal offer terms (use exactly; never invent prices, discounts or shipping terms beyond these): ${run.offer}` : run.goal;
+const goalCtx = (run: StudioRun, extra = "") =>
+  (run.offer ? `${run.goal}\nReal offer terms (use exactly; never invent prices, discounts or shipping terms beyond these): ${run.offer}` : run.goal) + extra;
+
+const hostOf = (u: string) => new URL(u).hostname.replace(/^www\./, "");
+
+async function brandFor(run: StudioRun) {
+  if (run.brandId) {
+    const b = await get("brands", run.brandId);
+    if (b) return b;
+  }
+  return (await list("brands")).find((b) => hostOf(b.url) === hostOf(run.brandUrl)) ?? null;
+}
+
+/** Brand-kit rules plus what past approvals, rejections and results taught us, for every generation prompt. */
+async function guidance(run: StudioRun) {
+  const [b, l] = await Promise.all([brandFor(run), learnings(run.brandUrl)]);
+  return brandRules(b) + l.text;
+}
 
 const saveRun = async (run: StudioRun) => {
   if (!live(run)) throw new Error("Stopped");
@@ -408,7 +426,7 @@ async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: string[
 }
 
 async function storyboard(run: StudioRun, d: Direction, refs: string[]) {
-  const p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, await winningShots(run));
+  const p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, await winningShots(run), await guidance(run));
   const durs = await videoDurations(run.videoPlan!.draftModel);
   d.shots = p.shots.map((s) => ({ ...s, seconds: nearest(durs, s.seconds) }));
   run.costUsd += p.cost;

@@ -17,6 +17,7 @@ export async function planShots(
   plan: VideoPlan,
   style?: StyleDNA | null,
   examples: { beat: string; visual: string; camera: string; score: number }[] = [],
+  rules = "",
 ): Promise<{ shots: Shot[]; cost: number }> {
   const cat = CATEGORIES[plan.category];
   const n = Math.max(2, Math.min(cat.beats.length, Math.round(plan.lengthSec / 4)));
@@ -28,7 +29,7 @@ export async function planShots(
     `Direction: ${JSON.stringify({ title: d.title, hook: d.hook, angle: d.angle, script: d.script })}
 Brief: ${JSON.stringify(b)}
 Brand tone: ${r.tone}
-Category: ${cat.label}. Look: ${cat.look}. Voice: ${cat.voice}.${style ? `\nBorrowed style: ${style.tone}; ${style.visualLanguage}; pacing ${style.pacing}. Never use ${style.brand}'s name, logo or slogans.` : ""}
+Category: ${cat.label}. Look: ${cat.look}. Voice: ${cat.voice}.${rules}${style ? `\nBorrowed style: ${style.tone}; ${style.visualLanguage}; pacing ${style.pacing}. Never use ${style.brand}'s name, logo or slogans.` : ""}
 ${examples.length ? `Shots that scored 8+ in this category before (borrow what made them render well: framing, light, motion; never their content):\n${examples.map((e) => `- ${e.beat}: ${e.visual} (${e.camera}) [${e.score}/10]`).join("\n")}\n` : ""}Write exactly ${beats.length} shots, beats in order: ${beats.join(", ")}. Each shot is ${secs}s.
 Rules:
 - Shot 1 must stop the scroll in the first second and show the product or the core tension immediately.

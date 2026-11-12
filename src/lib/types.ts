@@ -10,6 +10,13 @@ export interface Brand {
   colors: string[];
   offer?: string;
   photos?: string[];
+  logo?: string | null;
+  font?: { family: string; file: string } | null;
+  colorRoles?: { primary?: string; accent?: string; background?: string; text?: string } | null;
+  toneExamples?: string[];
+  dos?: string[];
+  donts?: string[];
+  winners?: { image?: string | null; note: string }[];
   createdAt: string;
 }
 
@@ -164,6 +171,7 @@ export interface Creative {
   copy?: AdCopy | null;
   variants?: { aspect: string; url: string }[];
   qaOverride?: { by: string; at: string } | null;
+  feedback?: { decision: "approve" | "reject"; reason?: string; by: string; at: string } | null;
 }
 
 export type Stage = "research" | "brief" | "directions" | "generate" | "qa" | "publish";
@@ -188,6 +196,7 @@ export interface StudioRun {
   jobId?: string | null;
   job?: { label: string; done: number; total: number; directionId?: string } | null;
   videoPlan?: VideoPlan | null;
+  brandId?: string | null;
   events: RunEvent[];
   progress: Record<string, CreativeProgress>;
   createdBy: string;

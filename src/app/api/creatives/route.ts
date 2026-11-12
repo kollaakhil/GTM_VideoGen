@@ -11,6 +11,7 @@ const Patch = z.object({
   id: z.string(),
   action: z.enum(["approve", "reject", "request_publish", "override_qa"]),
   channel: z.enum(["meta", "google"]).optional(),
+  reason: z.string().trim().max(300).optional(),
 });
 
 export async function PATCH(req: Request) {
@@ -18,7 +19,7 @@ export async function PATCH(req: Request) {
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   const parsed = Patch.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
-  const { id, action, channel } = parsed.data;
+  const { id, action, channel, reason } = parsed.data;
   const creative = await get("creatives", id);
   if (!creative) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -27,8 +28,10 @@ export async function PATCH(req: Request) {
     creative.qa = { ...creative.qa, pass: true, notes: [`QA manually approved by ${user}`, ...creative.qa.notes] };
     creative.qaOverride = { by: user, at: new Date().toISOString() };
   }
-  if (action === "approve") creative.status = "approved";
-  if (action === "reject") creative.status = "rejected";
+  if (action === "approve" || action === "reject") {
+    creative.status = action === "approve" ? "approved" : "rejected";
+    creative.feedback = { decision: action, ...(reason ? { reason } : {}), by: user, at: new Date().toISOString() };
+  }
   if (action === "request_publish") {
     if (!creative.qa?.pass) return NextResponse.json({ error: "Creative must pass the QA gate first" }, { status: 400 });
     const ch = channel ?? "meta";
