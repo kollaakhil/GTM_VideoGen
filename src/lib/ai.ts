@@ -57,23 +57,103 @@ export async function generateImage(model: string, prompt: string, refs: string[
   return { url, usage: { costUsd: json.usage?.cost ?? 0 } };
 }
 
-async function falVideo(model: string, prompt: string): Promise<string> {
-  const key = process.env.FAL_KEY;
-  if (!key) throw new Error("FAL_KEY is not set");
-  const headers = { Authorization: `Key ${key}`, "Content-Type": "application/json" };
-  const submit = await fetch(`https://queue.fal.run/${model}`, { method: "POST", headers, body: JSON.stringify({ prompt }) });
-  if (!submit.ok) throw new Error(`fal ${submit.status}: ${(await submit.text()).slice(0, 300)}`);
-  const { status_url, response_url } = await submit.json();
-  for (let i = 0; i < 120; i++) {
-    await new Promise((r) => setTimeout(r, 5000));
-    const s = await (await fetch(status_url, { headers })).json();
-    if (s.status === "COMPLETED") {
-      const out = await (await fetch(response_url, { headers })).json();
-      return out.video?.url ?? out.videos?.[0]?.url;
-    }
-    if (s.status === "FAILED" || s.status === "ERROR") throw new Error("fal job failed");
+const FAL_QUEUE = "https://queue.fal.run/";
+const falFamily = (model: string) => (model.includes("/seedance/") ? "seedance" : model.includes("kling-video/") ? "kling" : model.includes("veo3") ? "veo" : "other");
+
+/** Clip lengths each fal video family accepts. */
+export function falDurations(model: string): number[] {
+  const f = falFamily(model);
+  return f === "seedance" ? [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : f === "kling" ? [5, 10] : f === "veo" ? [4, 6, 8] : [5];
+}
+
+/** Turns fal error bodies into a message a Studio user can act on. */
+export function falError(status: number, body: string): string {
+  if (/exhausted balance|insufficient|locked|top up|billing/i.test(body) || status === 402) return "fal.ai balance is empty. Add funds at fal.ai/dashboard/billing, then retry.";
+  if (status === 401 || status === 403) return `fal.ai rejected the key (${status}). Check FAL_KEY on the Connections page.`;
+  return `fal ${status}: ${body.slice(0, 300)}`;
+}
+
+/** Request body for a fal image-to-video model; exported for tests. */
+export function falVideoBody(model: string, prompt: string, o: VideoOpts) {
+  const f = falFamily(model);
+  const duration = String(nearest(falDurations(model), o.seconds ?? 5));
+  const body: Record<string, unknown> = { prompt: prompt.slice(0, 2500) };
+  if (o.firstFrame) body.image_url = o.firstFrame;
+  if (f === "seedance") {
+    Object.assign(body, { duration, resolution: ["480p", "720p", "1080p"].includes(o.resolution ?? "") ? o.resolution : "480p", aspect_ratio: "9:16" });
+    if (o.lastFrame && model.includes("/lite/")) body.end_image_url = o.lastFrame;
+  } else if (f === "kling") {
+    body.duration = duration;
+    if (o.lastFrame) body.tail_image_url = o.lastFrame;
+  } else if (f === "veo") {
+    Object.assign(body, { duration: `${duration}s`, aspect_ratio: "9:16", resolution: o.resolution === "1080p" ? "1080p" : "720p", generate_audio: o.audio ?? false });
+  } else body.duration = duration;
+  return body;
+}
+
+const falPriceCache = new Map<string, Promise<{ unit: string; price: number } | null>>();
+function falUnitPrice(model: string) {
+  if (!falPriceCache.has(model)) {
+    falPriceCache.set(
+      model,
+      (async () => {
+        try {
+          const res = await fetch(`https://api.fal.ai/v1/models/pricing?endpoint_id=${encodeURIComponent(model)}`, { headers: { Authorization: `Key ${process.env.FAL_KEY}` } });
+          const p = (await res.json()).prices?.[0];
+          if (!p) throw new Error("no price");
+          return { unit: String(p.unit), price: Number(p.unit_price) };
+        } catch {
+          falPriceCache.delete(model);
+          return null;
+        }
+      })(),
+    );
   }
-  throw new Error("fal job timed out");
+  return falPriceCache.get(model)!;
+}
+
+/** USD per output second at a resolution, from fal's pricing API (token-priced models use w*h*24fps/1024 tokens per second). */
+export async function falPricePerSec(model: string, resolution: string): Promise<number | null> {
+  const p = await falUnitPrice(model);
+  if (!p) return null;
+  if (p.unit === "seconds") return p.price;
+  const px = resolution === "480p" ? 480 * 864 : resolution === "1080p" ? 1080 * 1920 : 720 * 1280;
+  const tokensPerSec = (px * 24) / 1024;
+  const per = /1m/i.test(p.unit) ? 1_000_000 : /1000|1k/i.test(p.unit) ? 1000 : 1;
+  return (tokensPerSec / per) * p.price;
+}
+
+async function falVideo(model: string, prompt: string, o: VideoOpts = {}): Promise<{ url: string; usage: Usage }> {
+  const key = process.env.FAL_KEY;
+  if (!key) throw new Error("fal.ai is not connected (set FAL_KEY)");
+  if (!/^[a-z0-9][a-z0-9./-]+$/.test(model)) throw new Error("Invalid fal model");
+  const headers = { Authorization: `Key ${key}`, "Content-Type": "application/json" };
+  const body = falVideoBody(model, prompt, o);
+  const submit = await fetch(`${FAL_QUEUE}${model}`, { method: "POST", headers, body: JSON.stringify(body) });
+  if (!submit.ok) throw new Error(falError(submit.status, await submit.text()));
+  const { status_url, response_url } = await submit.json();
+  if (![status_url, response_url].every((u) => typeof u === "string" && u.startsWith(FAL_QUEUE))) throw new Error("Unexpected fal status URL");
+  const started = Date.now();
+  for (;;) {
+    if (Date.now() - started > VIDEO_TIMEOUT_MS) throw new Error("fal video timed out");
+    await sleep(5000);
+    const st = await fetch(status_url, { headers });
+    if (!st.ok) {
+      if (st.status < 500) throw new Error(falError(st.status, await st.text()));
+      continue;
+    }
+    const s = await st.json();
+    if (s.status === "COMPLETED") break;
+    if (!["IN_QUEUE", "IN_PROGRESS"].includes(s.status)) throw new Error(`fal video ${String(s.status).toLowerCase()}${s.error ? `: ${String(s.error).slice(0, 200)}` : ""}`);
+  }
+  const res = await fetch(response_url, { headers });
+  const out = await res.json();
+  if (!res.ok) throw new Error(falError(res.status, JSON.stringify(out?.detail ?? out)));
+  const url: string | undefined = out.video?.url ?? out.videos?.[0]?.url;
+  if (!url) throw new Error("fal returned no video");
+  const secs = Number(String(body.duration ?? "5").replace("s", ""));
+  const rate = await falPricePerSec(model, String(body.resolution ?? "720p"));
+  return { url: await downloadAsDataUrl(url), usage: { costUsd: rate ? rate * secs : 0 } };
 }
 
 type VideoSpec = { durations?: number[] | null; resolutions?: string[] | null; aspects?: string[] | null; frames?: string[] | null; pricing?: Record<string, string> | null };
@@ -103,6 +183,7 @@ export const nearest = (options: number[] | null | undefined, want: number) => (
 /** USD per output second from OpenRouter's pricing SKUs (null when unknown or not an OpenRouter model). */
 export async function videoPricePerSec(model: string, resolution = "720p", audio = false): Promise<number | null> {
   if (providerOf(model) === "higgsfield") return pickRate(await higgsfieldRates(model), resolution)?.rate ?? null;
+  if (providerOf(model) === "fal") return falPricePerSec(model, resolution);
   if (providerOf(model) !== "openrouter") return null;
   const p = (await openrouterVideoSpec(model)).pricing;
   if (!p) return null;
@@ -138,6 +219,7 @@ export async function openrouterCredits(): Promise<number | null> {
 export async function videoDurations(model: string): Promise<number[] | null> {
   const p = providerOf(model);
   if (p === "higgsfield") return higgsfieldDurations(model);
+  if (p === "fal") return falDurations(model);
   return p === "openrouter" ? ((await openrouterVideoSpec(model)).durations ?? null) : null;
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -334,7 +416,7 @@ async function higgsfieldVideo(model: string, prompt: string, o: VideoOpts = {})
 export async function generateVideo(model: string, prompt: string, opts?: string | VideoOpts): Promise<{ url: string; usage: Usage }> {
   const o: VideoOpts = typeof opts === "string" ? { firstFrame: opts } : (opts ?? {});
   const provider = providerOf(model);
-  if (provider === "fal") return { url: await falVideo(model, prompt), usage: { costUsd: 0 } };
+  if (provider === "fal") return falVideo(model, prompt, o);
   if (provider === "higgsfield") return higgsfieldVideo(model, prompt, o);
   return openrouterVideo(model, prompt, o);
 }

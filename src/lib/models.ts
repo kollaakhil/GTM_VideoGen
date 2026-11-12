@@ -30,7 +30,10 @@ export const MODELS: ModelOption[] = [
   { id: "higgsfield:bytedance/seedance-2.5/text-to-video", label: "Seedance 2.5 (Higgsfield)", provider: "higgsfield", modality: "video" },
   { id: "higgsfield:kling-video/v3.0/std/text-to-video", label: "Kling 3.0 Std (Higgsfield)", provider: "higgsfield", modality: "video" },
   { id: "higgsfield:kling-video/v3.0/pro/text-to-video", label: "Kling 3.0 Pro (Higgsfield)", provider: "higgsfield", modality: "video" },
-  { id: "fal-ai/kling-video/v2.1/master/text-to-video", label: "Kling 2.1 Master (fal)", provider: "fal", modality: "video" },
+  { id: "fal-ai/bytedance/seedance/v1/lite/image-to-video", label: "Seedance 1 Lite (fal)", provider: "fal", modality: "video" },
+  { id: "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video", label: "Seedance 1 Pro Fast (fal)", provider: "fal", modality: "video" },
+  { id: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video", label: "Kling 2.5 Turbo Pro (fal)", provider: "fal", modality: "video" },
+  { id: "fal-ai/veo3.1/fast/image-to-video", label: "Veo 3.1 Fast (fal)", provider: "fal", modality: "video" },
 ];
 
 export const DEFAULTS = {

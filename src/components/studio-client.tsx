@@ -133,7 +133,7 @@ type Pricing = { credits: number | null; prices: Record<string, { draft: number 
 const FlowCtx = createContext<Ctx | null>(null);
 const useFlow = () => useContext(FlowCtx)!;
 
-const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 10, draftModel: "higgsfield:kling-video/v3.0/std/text-to-video", finalModel: "higgsfield:kling-video/v3.0/pro/text-to-video", voice: "Rachel", music: true, budgetUsd: 3 };
+const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 10, draftModel: "fal-ai/bytedance/seedance/v1/lite/image-to-video", finalModel: "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video", voice: "Rachel", music: true, budgetUsd: 3 };
 const money = (n: number | null | undefined) => (n == null ? "?" : `$${n.toFixed(2)}`);
 const VOICE_OPTIONS = ["Rachel", "Aria", "Sarah", "Charlotte", "Jessica", "Lily", "Roger", "George", "Liam", "Will", "Eric", "Brian", "Daniel"];
 const SB_SHIFT = 430;
@@ -656,7 +656,7 @@ function VideoPlanNode() {
   const p = form.plan;
   const set = (patch: Partial<VideoPlan>) => form.set({ plan: { ...p, ...patch } });
   const shots = shotCount(p.lengthSec, p.category);
-  const video = models.filter((m) => m.modality === "video" && (!m.id.startsWith("higgsfield:") || m.id in pricing.prices));
+  const video = models.filter((m) => m.modality === "video" && (m.provider === "openrouter" || m.id in pricing.prices));
   const sel = "w-full rounded-md border border-white/10 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200";
   const has = run.directions.some((d) => d.shots?.length);
   return (
@@ -781,8 +781,12 @@ function JobBar({ job }: { job: NonNullable<StudioRun["job"]> }) {
 }
 
 function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
-  const { run, act, sending, form, pricing } = useFlow();
+  const { run, act, sending, form, pricing, models } = useFlow();
+  const [vm, setVm] = useState<{ draft?: string; final?: string }>({});
   if (!run) return null;
+  const vplan = run.videoPlan ?? form.plan;
+  const pickModel = { draft: vm.draft ?? vplan.draftModel, final: vm.final ?? vplan.finalModel };
+  const videoModels = models.filter((m) => m.modality === "video" && (m.provider === "openrouter" || m.id in pricing.prices));
   const d = run.directions[data.index];
   if (!d) {
     return (
@@ -809,6 +813,21 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
                 <ShotThumb key={s.id} d={d} s={s} />
               ))}
             </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(["draft", "final"] as const).map((tier) => (
+                <select
+                  key={tier}
+                  aria-label={tier === "draft" ? "Draft video model" : "HD video model"}
+                  className="nodrag w-full truncate rounded-md border border-white/10 bg-zinc-950 px-1.5 py-1 text-[10px] text-zinc-300"
+                  value={pickModel[tier]}
+                  onChange={(e) => setVm({ ...vm, [tier]: e.target.value })}
+                >
+                  {videoModels.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}{pricing.prices[m.id]?.[tier] != null ? ` · $${pricing.prices[m.id][tier]!.toFixed(3)}/s` : ""}</option>
+                  ))}
+                </select>
+              ))}
+            </div>
             <div className="flex gap-1.5">
               {(["draft", "final"] as const).map((tier) => (
                 <Button
@@ -817,10 +836,10 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
                   variant={tier === "final" ? "default" : "outline"}
                   className={cn("flex-1", tier === "final" && "bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90")}
                   disabled={sending || run.status === "working" || d.shots!.some((s) => !s.keyframe)}
-                  onClick={() => act("render_video", { runId: run.id, directionId: d.id, tier, refs: form.refs })}
+                  onClick={() => act("render_video", { runId: run.id, directionId: d.id, tier, refs: form.refs, draftModel: pickModel.draft, finalModel: pickModel.final })}
                 >
                   <Film /> {tier === "draft" ? "480p draft" : "Upgrade to HD"} ~$
-                  {estimateCost("video", { perSec: pricing.prices[tier === "draft" ? (run.videoPlan ?? form.plan).draftModel : (run.videoPlan ?? form.plan).finalModel]?.[tier], lengthSec: d.shots!.reduce((t, s) => t + s.seconds, 0), shots: d.shots!.length, music: (run.videoPlan ?? form.plan).music }).toFixed(2)}
+                  {estimateCost("video", { perSec: pricing.prices[pickModel[tier]]?.[tier], lengthSec: d.shots!.reduce((t, s) => t + s.seconds, 0), shots: d.shots!.length, music: vplan.music }).toFixed(2)}
                 </Button>
               ))}
             </div>

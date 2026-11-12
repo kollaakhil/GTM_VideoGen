@@ -1,6 +1,6 @@
 import { after, NextResponse } from "next/server";
 import { z } from "zod";
-import { DEFAULTS, providerOf } from "@/lib/models";
+import { DEFAULTS, MODELS, providerConfigured, providerOf } from "@/lib/models";
 import { brief, directions, diversityScores, filmstrip, organic, qa, render, research, styleDNA } from "@/lib/pipeline";
 import { audioConfigured, generateVideo, musicBed, nearest, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
 import { CATEGORIES, keyframe, planShots, QA_PASS, shotQA } from "@/lib/video-plan";
@@ -56,7 +56,7 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("cancel"), runId: z.string().max(64) }),
   z.object({ action: z.literal("storyboard"), runId: z.string().max(64), directionId: z.string().max(32).optional(), plan: Plan, refs: Refs }),
   z.object({ action: z.literal("redo_shot"), runId: z.string().max(64), directionId: z.string().max(32), shotId: z.string().max(8), visual: z.string().trim().min(5).max(800).optional(), refs: Refs }),
-  z.object({ action: z.literal("render_video"), runId: z.string().max(64), directionId: z.string().max(32), tier: z.enum(["draft", "final"]), refs: Refs }),
+  z.object({ action: z.literal("render_video"), runId: z.string().max(64), directionId: z.string().max(32), tier: z.enum(["draft", "final"]), refs: Refs, draftModel: z.string().max(120).optional(), finalModel: z.string().max(120).optional() }),
   z.object({ action: z.literal("regenerate"), runId: z.string().max(64), directionId: z.string().max(32), refs: Refs }),
 ]);
 
@@ -357,6 +357,11 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
     case "render_video": {
       const d = run.directions.find((x) => x.id === body.directionId);
       if (!d?.shots?.length || d.shots.some((s) => !s.keyframe) || !run.videoPlan) return { error: "Build the storyboard first" };
+      for (const m of [body.draftModel, body.finalModel]) {
+        if (m && !MODELS.some((x) => x.id === m && x.modality === "video" && providerConfigured(x.provider))) return { error: `Video model ${m} isn't available` };
+      }
+      if (body.draftModel) run.videoPlan.draftModel = body.draftModel;
+      if (body.finalModel) run.videoPlan.finalModel = body.finalModel;
       return {
         activity: `Rendering the ${body.tier} video for “${d.title}”: ${d.shots.length} shots, shot QA, voice, music and final QA…`,
         work: async () => {
