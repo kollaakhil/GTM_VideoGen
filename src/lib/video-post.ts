@@ -367,3 +367,15 @@ export async function typesetStatic(background: string, kit: StaticKit): Promise
     await fs.rm(dir, { recursive: true, force: true });
   }
 }
+
+/** First sharp frame of a video as a JPEG (thumbnails for ad platforms). */
+export async function posterFrame(video: string): Promise<Buffer> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "poster-"));
+  try {
+    const out = path.join(dir, "poster.jpg");
+    await run(FFMPEG, ["-y", "-ss", "0.5", "-i", video, "-frames:v", "1", "-q:v", "2", out]);
+    return await fs.readFile(out);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}

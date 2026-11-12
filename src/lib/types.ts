@@ -218,6 +218,9 @@ export interface Creative {
   feedback?: { decision: "approve" | "reject"; reason?: string; by: string; at: string } | null;
   gate?: GateResult | null;
   conceptId?: string | null;
+  external?: { meta?: { campaignId: string; adsetId: string; creativeId: string; adId: string } } | null;
+  publishError?: string | null;
+  metricsSyncedAt?: string | null;
 }
 
 export type Stage = "research" | "brief" | "directions" | "generate" | "qa" | "publish";
