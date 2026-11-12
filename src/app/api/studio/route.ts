@@ -2,13 +2,14 @@ import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { DEFAULTS, MODELS, providerConfigured, providerOf } from "@/lib/models";
 import { brief, directions, diversityScores, filmstrip, organic, qa, render, research, styleDNA } from "@/lib/pipeline";
-import { audioConfigured, generateVideo, musicBed, nearest, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
+import { audioConfigured, transcribe, generateVideo, musicBed, nearest, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
 import { CATEGORIES, keyframe, planShots, QA_PASS, shotQA } from "@/lib/video-plan";
 import { brandRules } from "@/lib/brand-rules";
 import { STATIC_FORMATS, vocBlock, voiceOfCustomer } from "@/lib/ad-wisdom";
 import { concepts, diversityIssues, selectDiverse } from "@/lib/concepts";
 import { claimsCheck, gateVerdict } from "@/lib/gate";
 import { learnings } from "@/lib/learnings";
+import { checkScript, scriptLab, scriptSeconds, scriptText, textMatch } from "@/lib/script-lab";
 import { captionVariants, meanVolume, mediaDuration, spokenScript, stitchShots } from "@/lib/video-post";
 import { get, list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
@@ -55,6 +56,14 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("pick_concepts"), runId: z.string().max(64), ids: z.array(z.string().max(16)).min(1).max(5) }),
   z.object({ action: z.literal("cancel"), runId: z.string().max(64) }),
   z.object({ action: z.literal("storyboard"), runId: z.string().max(64), directionId: z.string().max(32).optional(), plan: Plan, refs: Refs }),
+  z.object({ action: z.literal("write_scripts"), runId: z.string().max(64), directionId: z.string().max(32).optional(), lengthSec: z.number().int().min(6).max(30).optional() }),
+  z.object({
+    action: z.literal("approve_script"),
+    runId: z.string().max(64),
+    directionId: z.string().max(32),
+    scriptId: z.string().max(16),
+    edit: z.object({ hook: z.string().trim().max(200).optional(), beats: z.array(z.object({ vo: z.string().trim().max(300), onScreen: z.string().trim().max(80) })).max(6).optional(), cta: z.string().trim().max(60).optional() }).optional(),
+  }),
   z.object({ action: z.literal("redo_shot"), runId: z.string().max(64), directionId: z.string().max(32), shotId: z.string().max(8), visual: z.string().trim().min(5).max(800).optional(), refs: Refs }),
   z.object({ action: z.literal("render_video"), runId: z.string().max(64), directionId: z.string().max(32), tier: z.enum(["draft", "final"]), refs: Refs, draftModel: z.string().max(120).optional(), finalModel: z.string().max(120).optional() }),
   z.object({ action: z.literal("regenerate"), runId: z.string().max(64), directionId: z.string().max(32), refs: Refs }),
@@ -324,8 +333,10 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
         music: p.music ?? true,
         budgetUsd: p.budgetUsd ?? 3,
       };
-      const targets = body.directionId ? run.directions.filter((d) => d.id === body.directionId) : run.directions;
-      if (!targets.length) return { error: "Direction not found" };
+      const all = body.directionId ? run.directions.filter((d) => d.id === body.directionId) : run.directions;
+      if (!all.length) return { error: "Direction not found" };
+      const targets = run.format === "video" ? all.filter((d) => d.approvedScript) : all;
+      if (!targets.length) return { error: "Approve a script first: run Write scripts, pick the best one per direction, then build the storyboard." };
       return {
         activity: `Storyboarding ${targets.length === 1 ? `“${targets[0].title}”` : `${targets.length} directions`}: shot list, keyframes and keyframe QA…`,
         work: async () => {
@@ -338,6 +349,56 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
             }
           });
           say(run, "agent", "Storyboards are ready. Check the keyframes, redo or edit any shot, then render a draft video for the directions you like.");
+        },
+      };
+    }
+    case "write_scripts": {
+      if (!run.brief || !run.research || !run.directions.length) return { error: "Pitch directions first" };
+      const targets = body.directionId ? run.directions.filter((d) => d.id === body.directionId) : run.directions;
+      if (!targets.length) return { error: "Direction not found" };
+      const lengthSec = body.lengthSec ?? run.videoPlan?.lengthSec ?? 15;
+      return {
+        activity: `Script Lab: Sol is writing 5 scripts per direction, Carbon is grading them…`,
+        work: async () => {
+          run.job = { label: `Writing and grading scripts for ${targets.length} direction${targets.length === 1 ? "" : "s"}`, done: 0, total: targets.length };
+          const [kit, rules] = await Promise.all([brandFor(run), guidance(run)]);
+          const res = await Promise.allSettled(
+            targets.map(async (d) => {
+              const r = await scriptLab({ direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, rules, mustSay: kit?.mustSay, lengthSec });
+              Object.assign(d, { scripts: r.scripts, approvedScript: null });
+              run.costUsd += r.cost;
+              if (run.job) run.job.done++;
+              await saveRun(run);
+              return r;
+            }),
+          );
+          run.job = null;
+          res.forEach((r, k) => {
+            if (r.status === "rejected") say(run, "error", `Script Lab for “${targets[k].title}” failed: ${String(r.reason?.message ?? r.reason).slice(0, 300)}`);
+          });
+          const best = targets.filter((d) => d.scripts?.length).map((d) => d.scripts![0].score?.overall ?? 0);
+          if (!best.length) return;
+          say(run, "agent", `Scripts are ready (best scores ${best.join(", ")}/10). Edit any line, then approve one script per direction. Storyboards, voice and video only use approved scripts.`);
+        },
+      };
+    }
+    case "approve_script": {
+      const d = run.directions.find((x) => x.id === body.directionId);
+      const sc = d?.scripts?.find((x) => x.id === body.scriptId);
+      if (!d || !sc) return { error: "Script not found" };
+      return {
+        activity: `Approving the ${sc.framework} script for “${d.title}”…`,
+        work: async () => {
+          const next = structuredClone(sc);
+          if (body.edit?.hook) next.hook.spoken = body.edit.hook;
+          if (body.edit?.cta) next.cta = body.edit.cta;
+          body.edit?.beats?.forEach((b, i) => {
+            if (next.beats[i]) Object.assign(next.beats[i], b);
+          });
+          const kit = await brandFor(run);
+          next.checks = checkScript(next, scriptSeconds(next), kit?.mustSay);
+          Object.assign(d, { approvedScript: next, script: scriptText(next), hook: next.hook.spoken || d.hook, shots: undefined });
+          say(run, "agent", `Approved the ${next.framework} script for “${d.title}”${next.checks.length ? ` (heads-up: ${next.checks.join(" ")})` : ""}. Build its storyboard next.`);
         },
       };
     }
@@ -561,8 +622,8 @@ async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final"
     await step(run, d, "Voiceover and music, checked before any video is generated", 1, total);
     const lines = shots.map((s) => spokenScript(s.vo));
     if (!lines.some(Boolean)) throw new Error(`Preflight: the storyboard has no spoken lines. Rebuild it. ${noSpend}`);
-    const vo = await Promise.all(lines.map((l) => (l ? voiceover(l, plan.voice) : null))).catch((e: Error) => {
-      throw new Error(`Preflight: voiceover failed (${e.message.slice(0, 160)}). ${noSpend}`);
+    const vo = await Promise.all(lines.map((l) => (l ? voiceWithCheck(l, plan.voice) : null))).catch((e: Error) => {
+      throw new Error(`Preflight: ${e.message.slice(0, 220)}. ${noSpend}`);
     });
     for (const [i, v] of vo.entries()) {
       if (!v) continue;
@@ -633,7 +694,7 @@ Start exactly from the given first frame and keep the product, people and settin
   const kit = await brandFor(run);
   const end = {
     brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
-    line: d.copy?.metaHeadline,
+    line: d.approvedScript?.cta || d.copy?.metaHeadline,
     cta: d.copy?.metaCta,
     color: kit?.colorRoles?.primary || run.research?.colors?.[0],
     logo: kit?.logo ? await mediaDataUrl(kit.logo).catch(() => null) : null,
@@ -649,9 +710,46 @@ Start exactly from the given first frame and keep the product, people and settin
   await step(run, d, "Final QA on the filmstrip", 3 + shots.length, total);
   const q = await qa(run.models.vision, main, "video", run.brief!, d.hook, shots.map((s) => s.vo).join(" "));
   spent += q.cost;
+  if (withAudio) {
+    const m = await scriptMatch(st.url, segments).catch((e: Error) => ({ error: e.message }));
+    if ("error" in m) warnings.push(`Script match check failed (${m.error.slice(0, 100)}).`);
+    else {
+      q.data.notes.unshift(`Script match: ${Math.round(m.overall * 100)}% of the approved script is heard; per shot ${m.perShot.map((x) => `${Math.round(x * 100)}%`).join(", ")}`);
+      const off = m.perShot.flatMap((x, i) => (x < 0.8 ? [i + 1] : []));
+      if (m.overall < 0.9 || off.length) {
+        q.data.notes.unshift(`The voiceover drifts from the approved script${off.length ? ` in shot ${off.join(", ")}` : ""}.`);
+        q.data.score = Math.min(q.data.score, QA_PASS - 1);
+        q.data.pass = false;
+      }
+    }
+  }
   await saveCreative(run, d, { url: main, type: "video", model, variants }, q.data, spent, null);
   run.job = null;
   return { score: q.data.score, spent, warnings };
+}
+
+/** Voiceover that is transcribed back and must match its script line before any video is rendered. */
+async function voiceWithCheck(line: string, voice: string) {
+  let last = 0;
+  for (let i = 0; i < 2; i++) {
+    const v = await voiceover(line, voice);
+    const heard = await transcribe(v.url).catch(() => null);
+    if (!heard) return v;
+    last = textMatch(heard.text, line);
+    if (last >= 0.85) return v;
+  }
+  throw new Error(`the voiceover didn't say the approved line ("${line.slice(0, 60)}"; ${Math.round(last * 100)}% match after 2 tries)`);
+}
+
+/** Speech-to-text on the stitched video, aligned to each shot's window, compared with the approved lines. */
+async function scriptMatch(video: string, segments: { start: number; end: number; text: string }[]) {
+  const t = await transcribe(video);
+  const perShot = segments.map((s) => {
+    if (!s.text.trim()) return 1;
+    const heard = t.chunks.filter((c) => c.end > s.start + 0.1 && c.start < s.end - 0.1).map((c) => c.text).join(" ");
+    return textMatch(heard, s.text);
+  });
+  return { overall: textMatch(t.text, segments.map((s) => s.text).join(" ")), perShot };
 }
 
 async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {

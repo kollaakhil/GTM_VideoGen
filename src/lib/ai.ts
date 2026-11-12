@@ -44,9 +44,18 @@ export async function chatJSON<T>(model: string, system: string, user: string | 
     { role: "system", content: `${system}\nRespond with a single valid JSON object only.` },
     { role: "user", content: user },
   ];
-  const json = await openrouter({ model, messages, response_format: { type: "json_object" } });
-  const text: string = json.choices?.[0]?.message?.content ?? "";
-  return { data: extractJSON(text) as T, usage: { costUsd: json.usage?.cost ?? 0 } };
+  let cost = 0;
+  for (let attempt = 0; ; attempt++) {
+    const json = await openrouter({ model, messages, response_format: { type: "json_object" } });
+    cost += json.usage?.cost ?? 0;
+    const text: string = json.choices?.[0]?.message?.content ?? "";
+    try {
+      return { data: extractJSON(text) as T, usage: { costUsd: cost } };
+    } catch (e) {
+      if (attempt >= 1) throw new Error(`${model} returned invalid JSON twice (${(e as Error).message.slice(0, 80)})`);
+      messages.push({ role: "assistant", content: text.slice(0, 20_000) }, { role: "user", content: `That was not valid JSON (${(e as Error).message.slice(0, 120)}). Return the complete answer again as one valid JSON object; escape every double quote inside strings.` });
+    }
+  }
 }
 
 export async function generateImage(model: string, prompt: string, refs: string[] = []): Promise<{ url: string; usage: Usage }> {
@@ -443,6 +452,32 @@ export const audioConfigured = () => !!process.env.FAL_KEY;
 export const VOICES = ["Rachel", "Aria", "Sarah", "Laura", "Charlotte", "Jessica", "Lily", "Roger", "Charlie", "George", "Callum", "Liam", "Will", "Eric", "Chris", "Brian", "Daniel"];
 
 /** ElevenLabs voiceover via fal ($0.05 per 1k characters). */
+/** Speech-to-text via fal Whisper; returns the transcript and timed segments. */
+export async function transcribe(audio: string): Promise<{ text: string; chunks: { start: number; end: number; text: string }[]; usage: Usage }> {
+  const key = process.env.FAL_KEY;
+  if (!key) throw new Error("fal.ai is not connected (set FAL_KEY)");
+  const headers = { Authorization: `Key ${key}`, "Content-Type": "application/json" };
+  const submit = await fetch(`${FAL_QUEUE}fal-ai/whisper`, { method: "POST", headers, body: JSON.stringify({ audio_url: audio, task: "transcribe", language: "en", chunk_level: "segment" }) });
+  if (!submit.ok) throw new Error(falError(submit.status, await submit.text()));
+  const { status_url, response_url } = await submit.json();
+  if (![status_url, response_url].every((u) => typeof u === "string" && u.startsWith(FAL_QUEUE))) throw new Error("Unexpected fal status URL");
+  const started = Date.now();
+  for (;;) {
+    if (Date.now() - started > 120_000) throw new Error("Transcription timed out");
+    await sleep(1500);
+    const st = await fetch(status_url, { headers });
+    if (!st.ok) continue;
+    const j = await st.json();
+    if (j.status === "COMPLETED") break;
+    if (!["IN_QUEUE", "IN_PROGRESS"].includes(j.status)) throw new Error(`Transcription ${String(j.status).toLowerCase()}`);
+  }
+  const res = await fetch(response_url, { headers });
+  const out = await res.json();
+  if (!res.ok) throw new Error(falError(res.status, JSON.stringify(out?.detail ?? out)));
+  const chunks = ((out.chunks ?? []) as { timestamp: [number, number | null]; text: string }[]).map((c) => ({ start: Number(c.timestamp?.[0]) || 0, end: Number(c.timestamp?.[1] ?? c.timestamp?.[0]) || 0, text: String(c.text ?? "").trim() }));
+  return { text: String(out.text ?? "").trim(), chunks, usage: { costUsd: 0.002 } };
+}
+
 export async function voiceover(text: string, voice = "Rachel"): Promise<{ url: string; usage: Usage }> {
   const out = await falRun<{ audio?: { url: string } }>("fal-ai/elevenlabs/tts/turbo-v2.5", { text, voice: VOICES.includes(voice) ? voice : "Rachel" });
   if (!out.audio?.url) throw new Error("Voiceover returned no audio");

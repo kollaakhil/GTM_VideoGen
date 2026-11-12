@@ -20,9 +20,13 @@ export async function planShots(
   rules = "",
 ): Promise<{ shots: Shot[]; cost: number }> {
   const cat = CATEGORIES[plan.category];
+  const sc = d.approvedScript;
   const n = Math.max(2, Math.min(cat.beats.length, Math.round(plan.lengthSec / 4)));
-  const beats = n >= cat.beats.length ? cat.beats : [cat.beats[0], ...cat.beats.slice(1, n - 1), "cta"];
+  const beats = sc ? sc.beats.map((_, i) => (i === 0 ? "hook" : i === sc.beats.length - 1 ? "cta" : `beat ${i + 1}`)) : n >= cat.beats.length ? cat.beats : [cat.beats[0], ...cat.beats.slice(1, n - 1), "cta"];
   const secs = shotSeconds(plan.lengthSec, beats.length);
+  const scriptBlock = sc
+    ? `\nApproved script (${sc.framework}). It is final: one shot per beat, in order, same timing. Keep each beat's scene and make it more filmable; "vo" must be copied word for word:\n${sc.beats.map((b, i) => `${i + 1}. [${b.seconds}s] scene: ${b.visual} | vo: "${b.vo}"`).join("\n")}\n`
+    : "";
   const { data, usage } = await chatJSON<{ shots: { beat: string; visual: string; camera: string; vo: string }[] }>(
     model,
     "You are a performance-ad director storyboarding a vertical 9:16 video ad. You write shot lists that AI video models render well.",
@@ -30,7 +34,7 @@ export async function planShots(
 Brief: ${JSON.stringify(b)}
 Brand tone: ${r.tone}
 Category: ${cat.label}. Look: ${cat.look}. Voice: ${cat.voice}.${rules}${style ? `\nBorrowed style: ${style.tone}; ${style.visualLanguage}; pacing ${style.pacing}. Never use ${style.brand}'s name, logo or slogans.` : ""}
-${examples.length ? `Shots that scored 8+ in this category before (borrow what made them render well: framing, light, motion; never their content):\n${examples.map((e) => `- ${e.beat}: ${e.visual} (${e.camera}) [${e.score}/10]`).join("\n")}\n` : ""}Write exactly ${beats.length} shots, beats in order: ${beats.join(", ")}. Each shot is ${secs}s.
+${examples.length ? `Shots that scored 8+ in this category before (borrow what made them render well: framing, light, motion; never their content):\n${examples.map((e) => `- ${e.beat}: ${e.visual} (${e.camera}) [${e.score}/10]`).join("\n")}\n` : ""}${scriptBlock}Write exactly ${beats.length} shots, beats in order: ${beats.join(", ")}.${sc ? "" : ` Each shot is ${secs}s.`}
 Rules:
 - Shot 1 must stop the scroll in the first second and show the product or the core tension immediately.
 - "visual": one concrete, filmable scene (subject, action, setting, light, palette). Same product appearance and same people across shots for continuity.
@@ -39,7 +43,10 @@ Rules:
 - "vo": the words spoken over this shot only, at most ${Math.round(secs * 2.3)} words, natural speech, only facts from the brief. The last shot ends on the call to action.
 Return JSON: {"shots":[{"beat","visual","camera","vo"}]}`,
   );
-  const shots = data.shots.slice(0, beats.length).map((s, i) => ({ id: `s${i}`, beat: s.beat || beats[i], seconds: secs, visual: s.visual, camera: s.camera, vo: s.vo, status: "planned" as const }));
+  const shots = beats.map((beat, i) => {
+    const s = data.shots[i] ?? { beat, visual: sc?.beats[i].visual ?? "", camera: "slow push-in", vo: "" };
+    return { id: `s${i}`, beat: s.beat || beat, seconds: sc ? sc.beats[i].seconds : secs, visual: s.visual || sc?.beats[i].visual || "", camera: s.camera, vo: sc ? sc.beats[i].vo : s.vo, status: "planned" as const };
+  }).filter((s) => s.visual);
   return { shots, cost: usage.costUsd };
 }
 

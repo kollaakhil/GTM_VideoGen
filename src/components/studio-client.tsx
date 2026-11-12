@@ -24,7 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CreativeCard } from "@/components/creative-card";
 import { cn } from "@/lib/utils";
 import type { ModelOption } from "@/lib/models";
-import type { Brand, Brief, Creative, CreativeProgress, Direction, Shot, StudioRun, VideoCategory, VideoPlan } from "@/lib/types";
+import type { AdScript, Brand, Brief, Creative, CreativeProgress, Direction, Shot, StudioRun, VideoCategory, VideoPlan } from "@/lib/types";
 import { CATEGORIES, estimateCost, LENGTHS, shotCount } from "@/lib/video-categories";
 
 type Model = ModelOption & { ready: boolean };
@@ -780,9 +780,99 @@ function JobBar({ job }: { job: NonNullable<StudioRun["job"]> }) {
   );
 }
 
+const scoreTone = (n: number) => (n >= 8 ? "bg-emerald-500/15 text-emerald-300" : n >= 6 ? "bg-amber-500/15 text-amber-300" : "bg-red-500/15 text-red-300");
+
+function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove }: {
+  d: Direction;
+  open: string | null;
+  setOpen: (id: string | null) => void;
+  edits: Record<string, string[]>;
+  setEdits: (e: Record<string, string[]>) => void;
+  busy: boolean;
+  onWrite: () => void;
+  onApprove: (sc: AdScript, lines?: string[]) => void;
+}) {
+  const ap = d.approvedScript;
+  return (
+    <div className="nodrag space-y-1.5 rounded-lg border border-white/5 bg-white/[0.02] p-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Script Lab · Sol writes, Carbon grades</span>
+        <button className="text-[10px] text-indigo-300 hover:underline disabled:opacity-40" disabled={busy} onClick={onWrite}>
+          {d.scripts?.length ? "Rewrite all" : ""}
+        </button>
+      </div>
+      {ap && (
+        <div className="flex items-center gap-1.5 text-[11px] text-emerald-300">
+          <Check className="size-3" /> Approved: {ap.framework}
+          {ap.score && <span className={`rounded px-1 ${scoreTone(ap.score.overall)}`}>{ap.score.overall}/10</span>}
+        </div>
+      )}
+      {!d.scripts?.length ? (
+        <Button size="sm" variant="secondary" className="w-full" disabled={busy} onClick={onWrite}>
+          <Pencil /> Write scripts
+        </Button>
+      ) : (
+        d.scripts.map((sc) => {
+          const isOpen = open === sc.id;
+          const lines = edits[sc.id];
+          const sco = sc.score;
+          return (
+            <div key={sc.id} className={`rounded-md border p-1.5 ${ap?.id === sc.id ? "border-emerald-500/40" : "border-white/5"}`}>
+              <button className="flex w-full items-center gap-1.5 text-left" onClick={() => setOpen(isOpen ? null : sc.id)}>
+                {sco && <span className={`rounded px-1 text-[10px] font-semibold ${scoreTone(sc.checks?.length ? Math.min(7, sco.overall) : sco.overall)}`}>{sco.overall}/10</span>}
+                <span className="truncate text-[11px] font-medium text-zinc-200">{sc.framework}</span>
+                {sco && <span className="ml-auto shrink-0 text-[10px] text-zinc-500" title="Simulated buyers who keep watching after the hook">{sco.panel.stopRate}/10 stop</span>}
+                <ChevronDown className={`size-3 shrink-0 text-zinc-500 transition ${isOpen ? "rotate-180" : ""}`} />
+              </button>
+              <p className="mt-1 text-[11px] italic text-zinc-300">“{sc.hook.spoken}”</p>
+              {isOpen && (
+                <div className="mt-1.5 space-y-1.5">
+                  {sc.beats.map((b, i) => (
+                    <div key={i} className="space-y-0.5">
+                      <div className="text-[10px] text-zinc-500">{i + 1}. {b.seconds}s · {b.visual.slice(0, 90)}{b.onScreen ? ` · on screen: “${b.onScreen}”` : ""}</div>
+                      <textarea
+                        aria-label={`Beat ${i + 1} voiceover`}
+                        className="nowheel w-full resize-none rounded border border-white/10 bg-zinc-950 px-1.5 py-1 text-[11px] text-zinc-200"
+                        rows={2}
+                        value={lines?.[i] ?? b.vo}
+                        onChange={(e) => {
+                          const next = [...(lines ?? sc.beats.map((x) => x.vo))];
+                          next[i] = e.target.value;
+                          setEdits({ ...edits, [sc.id]: next });
+                        }}
+                      />
+                    </div>
+                  ))}
+                  <div className="text-[10px] text-zinc-400">CTA: {sc.cta}</div>
+                  {sco && (
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(sco.scores).map(([k, v]) => (
+                        <span key={k} className={`rounded px-1 text-[9px] ${scoreTone(v)}`}>{k} {v}</span>
+                      ))}
+                    </div>
+                  )}
+                  {[...(sco?.unsupported ?? []).map((u) => `Unsupported: ${u}`), ...(sc.checks ?? []), ...(sco?.notes ?? [])].slice(0, 5).map((n, i) => (
+                    <p key={i} className="text-[10px] text-amber-200/80">• {n}</p>
+                  ))}
+                  {sco?.panel.quotes.map((q, i) => <p key={i} className="text-[10px] text-zinc-500">Buyer: “{q}”</p>)}
+                  <Button size="sm" className="w-full" disabled={busy} onClick={() => onApprove(sc, lines)}>
+                    <Check /> {ap?.id === sc.id ? "Re-approve with edits" : "Approve this script"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
 function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
   const { run, act, sending, form, pricing, models } = useFlow();
   const [vm, setVm] = useState<{ draft?: string; final?: string }>({});
+  const [openScript, setOpenScript] = useState<string | null>(null);
+  const [edits, setEdits] = useState<Record<string, string[]>>({});
   if (!run) return null;
   const vplan = run.videoPlan ?? form.plan;
   const pickModel = { draft: vm.draft ?? vplan.draftModel, final: vm.final ?? vplan.finalModel };
@@ -805,6 +895,18 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
         </div>
         <p className="line-clamp-2 text-[11px] text-zinc-500" title={d.angle}>{d.angle}</p>
         <p className="line-clamp-3 text-[12px] leading-relaxed text-zinc-400">{d.script}</p>
+        {d.format === "video" && (
+          <ScriptLab
+            d={d}
+            open={openScript}
+            setOpen={setOpenScript}
+            edits={edits}
+            setEdits={setEdits}
+            busy={sending || run.status === "working"}
+            onWrite={() => act("write_scripts", { runId: run.id, directionId: d.id, lengthSec: vplan.lengthSec })}
+            onApprove={(sc, lines) => act("approve_script", { runId: run.id, directionId: d.id, scriptId: sc.id, ...(lines ? { edit: { beats: sc.beats.map((b, i) => ({ vo: lines[i] ?? b.vo, onScreen: b.onScreen })) } } : {}) })}
+          />
+        )}
         {run.status === "working" && run.job?.directionId === d.id && <JobBar job={run.job} />}
         {d.shots?.length ? (
           <div className="space-y-2 border-t border-white/5 pt-2.5">
@@ -1242,6 +1344,13 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
       case "generate":
         if (run.format === "video") {
           const hasSb = run.directions.some((d) => d.shots?.length);
+          const approved = run.directions.filter((d) => d.approvedScript).length;
+          if (!approved) {
+            const written = run.directions.some((d) => d.scripts?.length);
+            text = written ? "Open a script on each direction, edit any line, and approve one. Storyboards, voice and video only use approved scripts." : "Script first: Sol writes 5 scripts per direction and Carbon grades them before anything is drawn or rendered.";
+            buttons = [btn(written ? "Rewrite scripts" : "Write scripts", () => act("write_scripts", { runId: run.id, lengthSec: form.plan.lengthSec }), !written, <Pencil />)];
+            break;
+          }
           text = hasSb ? "Review the storyboards. Redraw weak shots, then render a draft or final video on each direction." : "Pick a category and length on the Video plan card, then build storyboards before any video spend.";
           buttons = [
             btn("Re-pitch", () => act("directions", { runId: run.id, format: run.format }), false, <RefreshCw />),

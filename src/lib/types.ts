@@ -169,6 +169,34 @@ export interface Direction {
   visualPrompt: string;
   copy?: AdCopy;
   shots?: Shot[];
+  scripts?: AdScript[];
+  approvedScript?: AdScript | null;
+}
+
+export interface ScriptBeat {
+  seconds: number;
+  visual: string;
+  vo: string;
+  onScreen: string;
+}
+
+export interface ScriptScore {
+  overall: number;
+  scores: Record<string, number>;
+  notes: string[];
+  unsupported: string[];
+  panel: { stopRate: number; quotes: string[] };
+}
+
+export interface AdScript {
+  id: string;
+  framework: string;
+  hook: { visual: string; spoken: string; onScreen: string };
+  beats: ScriptBeat[];
+  cta: string;
+  score?: ScriptScore;
+  checks?: string[];
+  rounds?: number;
 }
 
 export interface QAResult {
