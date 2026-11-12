@@ -12,7 +12,7 @@ export async function GET() {
   const video = MODELS.filter((m) => m.modality === "video" && m.provider === "openrouter");
   const [credits, rows] = await Promise.all([
     openrouterCredits(),
-    Promise.all(video.map(async (m) => [m.id, { draft: await videoPricePerSec(m.id, "720p", false), final: await videoPricePerSec(m.id, "1080p", false) }] as const)),
+    Promise.all(video.map(async (m) => [m.id, { draft: await videoPricePerSec(m.id, "480p", false), final: await videoPricePerSec(m.id, "1080p", false) }] as const)),
   ]);
   return NextResponse.json({ credits, prices: Object.fromEntries(rows) });
 }

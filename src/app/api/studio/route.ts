@@ -530,7 +530,7 @@ async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final"
   let model = chosen;
   const shots = d.shots!;
   const tries = tier === "final" ? 2 : 1;
-  const resolution = tier === "final" ? "1080p" : "720p";
+  const resolution = tier === "final" ? "1080p" : "480p";
   const withAudio = audioConfigured();
   const total = shots.length + 4;
   const warnings: string[] = [];

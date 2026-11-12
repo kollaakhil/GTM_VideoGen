@@ -819,7 +819,7 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
                   disabled={sending || run.status === "working" || d.shots!.some((s) => !s.keyframe)}
                   onClick={() => act("render_video", { runId: run.id, directionId: d.id, tier, refs: form.refs })}
                 >
-                  <Film /> {tier === "draft" ? "Draft" : "Final"} ~$
+                  <Film /> {tier === "draft" ? "480p draft" : "Upgrade to HD"} ~$
                   {estimateCost("video", { perSec: pricing.prices[tier === "draft" ? (run.videoPlan ?? form.plan).draftModel : (run.videoPlan ?? form.plan).finalModel]?.[tier], lengthSec: d.shots!.reduce((t, s) => t + s.seconds, 0), shots: d.shots!.length, music: (run.videoPlan ?? form.plan).music }).toFixed(2)}
                 </Button>
               ))}

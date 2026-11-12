@@ -156,7 +156,7 @@ async function openrouterVideo(model: string, prompt: string, o: VideoOpts = {})
     model,
     prompt,
     duration: o.seconds ? nearest(spec.durations, o.seconds) : prefer(spec.durations, [6, 5, 8, 4]),
-    resolution: o.resolution && spec.resolutions?.includes(o.resolution) ? o.resolution : prefer(spec.resolutions, ["720p", "768p", "1080p"]),
+    resolution: o.resolution && spec.resolutions?.includes(o.resolution) ? o.resolution : prefer(spec.resolutions, o.resolution === "480p" ? ["480p", "512p", "540p", "720p", "768p"] : ["720p", "768p", "1080p"]),
     aspect_ratio: prefer(spec.aspects, ["9:16", "3:4", "1:1"]),
     generate_audio: o.audio ?? true,
     ...(o.firstFrame
