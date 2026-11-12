@@ -85,7 +85,7 @@ async function probe(file: string) {
 }
 
 /** Burns captions from the script into the video and renders 9:16, 4:5 and 1:1 cuts (center crop). */
-export type EndCard = { brand: string; line?: string; cta?: string; color?: string };
+export type EndCard = { brand: string; line?: string; cta?: string; color?: string; logo?: string | null; fontFile?: string | null; fontFamily?: string | null };
 
 const CTA_LABEL: Record<string, string> = { SHOP_NOW: "Shop now", LEARN_MORE: "Learn more", SIGN_UP: "Sign up", GET_OFFER: "Get offer", ORDER_NOW: "Order now" };
 
@@ -111,8 +111,8 @@ function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) 
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
-    `Style: Card,DejaVu Sans,40,${c},${c},&H00000000,1,1,0,0,5,0,0,0`,
-    `Style: Box,DejaVu Sans,40,${ink === "white" ? "&H00000000" : "&H00FFFFFF"},${c},${c},1,3,${Math.round(h / 90)},0,5,0,0,0`,
+    `Style: Card,${end.fontFamily || "DejaVu Sans"},40,${c},${c},&H00000000,1,1,0,0,5,0,0,0`,
+    `Style: Box,${end.fontFamily || "DejaVu Sans"},40,${ink === "white" ? "&H00000000" : "&H00FFFFFF"},${c},${c},1,3,${Math.round(h / 90)},0,5,0,0,0`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Text",
@@ -260,7 +260,17 @@ export async function captionVariants(
         const ink = inkFor(bg);
         const endAss = path.join(dir, `${a.w}x${a.h}-end.ass`);
         await fs.writeFile(endAss, endCardAss(end, ink, w, h));
-        const card = `subtitles=${endAss}:fontsdir=${FONTS},setsar=1,fps=30,format=yuv420p`;
+        let fontsDir = FONTS;
+        if (end.fontFile) {
+          fontsDir = path.join(dir, "fonts");
+          await fs.mkdir(fontsDir, { recursive: true });
+          await fs.copyFile(end.fontFile, path.join(fontsDir, path.basename(end.fontFile)));
+          await fs.copyFile(path.join(FONTS, "DejaVuSans-Bold.ttf"), path.join(fontsDir, "DejaVuSans-Bold.ttf"));
+        }
+        const logoFile = end.logo ? await toFile(dir, `logo-${a.w}x${a.h}.png`, end.logo) : null;
+        const logoIdx = src.audio ? 3 : 2;
+        const logoChain = logoFile ? `[v1raw];[${logoIdx}:v]scale=${Math.round(w * 0.42)}:-1[lg];[v1raw][lg]overlay=(W-w)/2:H*0.16:shortest=1` : "";
+        const card = `subtitles=${endAss}:fontsdir=${fontsDir},setsar=1,fps=30,format=yuv420p${logoChain}`;
         const fc = src.audio
           ? `[0:v]${vf},setsar=1,fps=30,format=yuv420p[v0];[1:v]${card}[v1];[0:a]aresample=44100,aformat=channel_layouts=stereo[a0];[2:a]aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]`
           : `[0:v]${vf},setsar=1,fps=30,format=yuv420p[v0];[1:v]${card}[v1];[v0][v1]concat=n=2:v=1:a=0[v]`;
@@ -270,6 +280,7 @@ export async function captionVariants(
             "-hide_banner", "-loglevel", "error", "-i", input,
             "-f", "lavfi", "-i", `color=c=0x${bg.slice(1)}:s=${w}x${h}:d=1.5:r=30`,
             ...(src.audio ? ["-f", "lavfi", "-t", "1.5", "-i", "anullsrc=r=44100:cl=stereo"] : []),
+            ...(logoFile ? ["-loop", "1", "-t", "1.5", "-i", logoFile] : []),
             "-filter_complex", fc, "-map", "[v]", ...(src.audio ? ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"] : ["-an"]), ...enc,
           ],
           { timeout: 180_000 },

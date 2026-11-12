@@ -7,7 +7,7 @@ import { CATEGORIES, keyframe, planShots, QA_PASS, shotQA } from "@/lib/video-pl
 import { brandRules } from "@/lib/brand-rules";
 import { learnings } from "@/lib/learnings";
 import { captionVariants, meanVolume, mediaDuration, spokenScript, stitchShots } from "@/lib/video-post";
-import { get, list, mediaDataUrl, newId, put, storeMedia } from "@/lib/store";
+import { get, list, mediaDataUrl, mediaPath, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
 import { rateLimit } from "@/lib/rate-limit";
 import type { Brief, Creative, Direction, QAResult, RunEvent, Shot, ShotQA, StudioRun } from "@/lib/types";
@@ -574,7 +574,16 @@ Start exactly from the given first frame and keep the product, people and settin
     warnings.push(`${model} returned no audio for this video.`);
   }
   const segments = shots.map((s, i) => ({ start: st.starts[i], end: st.starts[i + 1] ?? st.duration, text: s.vo }));
-  const end = { brand: run.research?.brand || brandName(run.brandUrl), line: d.copy?.metaHeadline, cta: d.copy?.metaCta, color: run.research?.colors?.[0] };
+  const kit = await brandFor(run);
+  const end = {
+    brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
+    line: d.copy?.metaHeadline,
+    cta: d.copy?.metaCta,
+    color: kit?.colorRoles?.primary || run.research?.colors?.[0],
+    logo: kit?.logo ? await mediaDataUrl(kit.logo).catch(() => null) : null,
+    fontFile: kit?.font?.file?.startsWith("/api/media/") ? mediaPath(decodeURIComponent(kit.font.file.slice("/api/media/".length))) : null,
+    fontFamily: kit?.font?.family ?? null,
+  };
   const variants = await captionVariants(st.url, "", end, segments).catch((e) => {
     warnings.push(`Captions and extra sizes failed (${(e as Error).message.slice(0, 100)}).`);
     return [];

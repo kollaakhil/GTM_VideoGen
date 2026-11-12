@@ -97,3 +97,22 @@ describe("stitchShots", () => {
     for (const f of [a, b, v, m, o]) fs.rmSync(f);
   }, 180_000);
 });
+
+describe("captionVariants end card with logo", () => {
+  it("overlays a logo image on the end card", async () => {
+    const { captionVariants } = await import("@/lib/video-post");
+    const ff = ffmpegPath || "ffmpeg";
+    const v = path.join(os.tmpdir(), `lg-${Date.now()}.mp4`);
+    const logo = path.join(os.tmpdir(), `lg-${Date.now()}.png`);
+    execFileSync(ff, ["-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=720x1280:rate=24:duration=1", "-pix_fmt", "yuv420p", "-y", v]);
+    execFileSync(ff, ["-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=200x80", "-frames:v", "1", "-y", logo]);
+    const out = await captionVariants(`data:video/mp4;base64,${fs.readFileSync(v).toString("base64")}`, "Hi.", { brand: "Acme", cta: "SHOP_NOW", color: "#ffffff", logo: `data:image/png;base64,${fs.readFileSync(logo).toString("base64")}` });
+    expect(out.length).toBe(3);
+    const o = path.join(os.tmpdir(), `lgo-${Date.now()}.mp4`);
+    fs.writeFileSync(o, Buffer.from(out[0].url.split(",")[1], "base64"));
+    const px = execFileSync(ff, ["-loglevel", "error", "-sseof", "-0.5", "-i", o, "-frames:v", "1", "-vf", "crop=20:20:350:250,scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
+    expect(px[0]).toBeGreaterThan(150);
+    expect(px[1]).toBeLessThan(100);
+    for (const f of [v, logo, o]) fs.rmSync(f);
+  }, 120_000);
+});
