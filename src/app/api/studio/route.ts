@@ -9,7 +9,7 @@ import { STATIC_FORMATS, vocBlock, voiceOfCustomer } from "@/lib/ad-wisdom";
 import { concepts, diversityIssues, selectDiverse } from "@/lib/concepts";
 import { claimsCheck, gateVerdict } from "@/lib/gate";
 import { learnings } from "@/lib/learnings";
-import { checkScript, scriptLab, scriptSeconds, scriptText, textMatch } from "@/lib/script-lab";
+import { checkScript, scriptLab, scriptSeconds, scriptText, textMatch, textRecall } from "@/lib/script-lab";
 import { captionVariants, meanVolume, mediaDuration, spokenScript, stitchShots } from "@/lib/video-post";
 import { get, list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
@@ -694,8 +694,8 @@ Start exactly from the given first frame and keep the product, people and settin
   const kit = await brandFor(run);
   const end = {
     brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
-    line: d.approvedScript?.cta || d.copy?.metaHeadline,
-    cta: d.copy?.metaCta,
+    line: d.copy?.metaHeadline,
+    cta: d.approvedScript?.cta?.replace(/[.!]+$/, "") || d.copy?.metaCta,
     color: kit?.colorRoles?.primary || run.research?.colors?.[0],
     logo: kit?.logo ? await mediaDataUrl(kit.logo).catch(() => null) : null,
     fontFile: kit?.font?.file ? await mediaFile(kit.font.file).catch(() => null) : null,
@@ -730,15 +730,16 @@ Start exactly from the given first frame and keep the product, people and settin
 
 /** Voiceover that is transcribed back and must match its script line before any video is rendered. */
 async function voiceWithCheck(line: string, voice: string) {
-  let last = 0;
+  let last = 0, said = "";
   for (let i = 0; i < 2; i++) {
     const v = await voiceover(line, voice);
     const heard = await transcribe(v.url).catch(() => null);
     if (!heard) return v;
     last = textMatch(heard.text, line);
+    said = heard.text.trim();
     if (last >= 0.85) return v;
   }
-  throw new Error(`the voiceover didn't say the approved line ("${line.slice(0, 60)}"; ${Math.round(last * 100)}% match after 2 tries)`);
+  throw new Error(`the voiceover didn't say the approved line. Script: "${line.slice(0, 80)}", heard: "${said.slice(0, 80)}" (${Math.round(last * 100)}% match after 2 tries). Reword the line in the Script Lab and approve it again`);
 }
 
 /** Speech-to-text on the stitched video, aligned to each shot's window, compared with the approved lines. */
@@ -746,8 +747,8 @@ async function scriptMatch(video: string, segments: { start: number; end: number
   const t = await transcribe(video);
   const perShot = segments.map((s) => {
     if (!s.text.trim()) return 1;
-    const heard = t.chunks.filter((c) => c.end > s.start + 0.1 && c.start < s.end - 0.1).map((c) => c.text).join(" ");
-    return textMatch(heard, s.text);
+    const heard = t.chunks.filter((c) => c.end > s.start - 0.4 && c.start < s.end + 0.4).map((c) => c.text).join(" ");
+    return textRecall(heard, s.text);
   });
   return { overall: textMatch(t.text, segments.map((s) => s.text).join(" ")), perShot };
 }

@@ -30,25 +30,83 @@ export type ScriptCtx = {
   lengthSec: number;
 };
 
-const words = (t: string) => t.toLowerCase().replace(/[^a-z0-9$%' ]+/g, " ").split(/\s+/).filter(Boolean);
+const ONES: Record<string, number> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
+const TENS: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+const FILLER = new Set(["dollars", "dollar", "bucks", "percent", "and", "um", "uh"]);
+
+/** Turns spoken numbers ("two ninety nine", "two hundred forty-nine") into digits so "$299" matches what Whisper hears. */
+function numberize(tokens: string[]): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (!(t in ONES) && !(t in TENS)) { out.push(t); i++; continue; }
+    let total = 0, cur = 0, lastSmall = false;
+    while (i < tokens.length) {
+      const w = tokens[i];
+      if (w in ONES) { if (lastSmall && cur < 10 && ONES[w] >= 10) { cur = cur * 100 + ONES[w]; } else cur += ONES[w]; lastSmall = ONES[w] < 10; }
+      else if (w in TENS) { cur = cur > 0 && cur < 10 ? cur * 100 + TENS[w] : cur + TENS[w]; lastSmall = false; }
+      else if (w === "hundred") { cur = (cur || 1) * 100; lastSmall = false; }
+      else if (w === "thousand") { total += (cur || 1) * 1000; cur = 0; lastSmall = false; }
+      else if (w === "and" && i + 1 < tokens.length && (tokens[i + 1] in ONES || tokens[i + 1] in TENS)) { i++; continue; }
+      else break;
+      i++;
+    }
+    out.push(String(total + cur));
+  }
+  return out;
+}
+
+const words = (t: string) =>
+  numberize(t.toLowerCase().replace(/[$,]/g, "").replace(/(\d)-(\d)/g, "$1 $2").replace(/[^a-z0-9%' ]+/g, " ").split(/\s+/).filter(Boolean))
+    .map((w) => w.replace(/'/g, ""))
+    .filter((w) => w && !FILLER.has(w));
+
+function lev(a: string, b: string): number {
+  const d = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = d[0];
+    d[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = d[j];
+      d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = tmp;
+    }
+  }
+  return d[b.length];
+}
+
+/** Same word, allowing transcription spelling drift on longer words (haldi/holdi, naamkaran/namkaran). */
+const sameWord = (a: string, b: string) => a === b || (Math.min(a.length, b.length) >= 4 && !/\d/.test(a + b) && lev(a, b) <= Math.max(1, Math.floor(Math.max(a.length, b.length) / 4)));
 export const scriptText = (s: AdScript) => s.beats.map((b) => b.vo).filter(Boolean).join(" ");
 export const scriptSeconds = (s: AdScript) => s.beats.reduce((t, b) => t + b.seconds, 0);
 
-/** Token-level similarity (LCS / longer length), 0..1. Used for must-say and speech-vs-script matching. */
-export function textMatch(a: string, b: string): number {
-  const x = words(a), y = words(b);
-  if (!x.length && !y.length) return 1;
-  if (!x.length || !y.length) return 0;
+function lcs(x: string[], y: string[]): number {
   const dp = new Array(y.length + 1).fill(0);
   for (const xi of x) {
     let prev = 0;
     for (let j = 1; j <= y.length; j++) {
       const tmp = dp[j];
-      dp[j] = xi === y[j - 1] ? prev + 1 : Math.max(dp[j], dp[j - 1]);
+      dp[j] = sameWord(xi, y[j - 1]) ? prev + 1 : Math.max(dp[j], dp[j - 1]);
       prev = tmp;
     }
   }
-  return dp[y.length] / Math.max(x.length, y.length);
+  return dp[y.length];
+}
+
+/** Token-level similarity (LCS / longer length), 0..1. Used for speech-vs-script matching. */
+export function textMatch(a: string, b: string): number {
+  const x = words(a), y = words(b);
+  if (!x.length && !y.length) return 1;
+  if (!x.length || !y.length) return 0;
+  return lcs(x, y) / Math.max(x.length, y.length);
+}
+
+/** Share of the expected words heard, in order, inside a longer transcript window (0..1). */
+export function textRecall(heard: string, expected: string): number {
+  const y = words(expected);
+  if (!y.length) return 1;
+  return lcs(words(heard), y) / y.length;
 }
 
 /** Share of a phrase's words that appear in the text (order-free), 0..1. */

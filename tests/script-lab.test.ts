@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkScript, finalScore, textMatch } from "@/lib/script-lab";
+import { checkScript, finalScore, textMatch, textRecall } from "@/lib/script-lab";
 import type { AdScript } from "@/lib/types";
 
 const base: AdScript = {
@@ -49,5 +49,17 @@ describe("finalScore", () => {
     const s = { ...base, score: { overall: 9, scores: {}, notes: [], unsupported: [], panel: { stopRate: 7, quotes: [] } }, checks: ["Runs 20s"] };
     expect(finalScore(s)).toBe(7);
     expect(finalScore({ ...s, checks: [] })).toBe(9);
+  });
+
+  it("matches spoken numbers, prices and transcription spelling drift", () => {
+    expect(textMatch("Hosting a home haldi? We rented this—$299.", "Hosting a home holdi. We rented this, two ninety-nine dollars.")).toBe(1);
+    expect(textMatch("Rent for $249 a weekend", "Rent for two hundred forty nine a weekend")).toBe(1);
+    expect(textMatch("Request your date", "Request your data")).toBeGreaterThan(0.6);
+    expect(textMatch("Rent for $249", "Rent for $299")).toBeLessThan(1);
+  });
+
+  it("textRecall scores a shot line inside a wider transcript window", () => {
+    expect(textRecall("we rented this two ninety nine get price and ship confirmation", "Hosting a home haldi? We rented this—$299.")).toBe(0.5);
+    expect(textRecall("hosting a home haldi we rented this 299 get price", "Hosting a home haldi? We rented this—$299.")).toBe(1);
   });
 });
