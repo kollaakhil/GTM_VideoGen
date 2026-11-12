@@ -42,6 +42,19 @@ export interface VoiceOfCustomer {
   sources: string[];
 }
 
+/** OAuth connection to a third-party account; tokens are AES-GCM sealed. */
+export interface Integration {
+  id: string;
+  createdAt: string;
+  clients: Record<string, string>;
+  clientId?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  email?: string;
+  connectedAt?: string;
+}
+
 export interface Swipe {
   id: string;
   brandUrl: string | null;

@@ -1,9 +1,15 @@
 import { PageHeader } from "@/components/page-header";
+import { Suspense } from "react";
+import { HiggsfieldAccount } from "@/components/higgsfield-account";
 import { connectionStatus } from "@/lib/connections";
+import { higgsfieldMcpStatus } from "@/lib/higgsfield-mcp";
 import { cn } from "@/lib/utils";
 
-export default function ConnectionsPage() {
+export const dynamic = "force-dynamic";
+
+export default async function ConnectionsPage() {
   const all = connectionStatus();
+  const hf = await higgsfieldMcpStatus();
   const groups = [...new Set(all.map((c) => c.group))];
   return (
     <div>
@@ -32,6 +38,11 @@ export default function ConnectionsPage() {
                   </div>
                 </div>
               ))}
+              {g === "AI & Media" && (
+                <Suspense>
+                  <HiggsfieldAccount connected={hf.connected} email={hf.email} />
+                </Suspense>
+              )}
             </div>
           </div>
         ))}
