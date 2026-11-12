@@ -260,7 +260,7 @@ export async function filmstrip(video: string): Promise<{ sheet: string; frames:
     const probe = await run(FFMPEG, ["-hide_banner", "-i", input], { timeout: 30_000 }).catch((e) => e as { stderr?: string });
     const m = String(probe.stderr ?? "").match(/Duration: (\d+):(\d+):([\d.]+)/);
     const duration = m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 6;
-    const frames = [...FRAME_TIMES.filter((t) => t < duration - 0.2), Math.max(0, duration - 0.15)].slice(0, 8);
+    const frames = [...FRAME_TIMES.filter((t) => t < duration - 0.6).slice(0, 7), Math.max(0, duration - 0.15)];
     const tiles: string[] = [];
     for (const [i, t] of frames.entries()) {
       const out = path.join(dir, `f${i}.jpg`);
