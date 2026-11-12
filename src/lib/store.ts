@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { seed } from "./seed";
-import type { Campaign, Creative, InboxItem, MetricDay, SignalEvent, StudioRun, Brand } from "./types";
+import type { Campaign, Creative, InboxItem, MetricDay, SignalEvent, StudioRun, Brand, PromptEntry } from "./types";
 
 export interface Tables {
   brands: Brand;
@@ -11,6 +11,7 @@ export interface Tables {
   inbox_items: InboxItem;
   campaigns: Campaign;
   signal_events: SignalEvent;
+  prompt_library: PromptEntry;
 }
 export type TableName = keyof Tables;
 
@@ -31,7 +32,7 @@ type Mem = { [K in TableName]: Map<string, Tables[K]> } & { metrics: MetricDay[]
 const g = globalThis as unknown as { __gtmMem?: Mem };
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
-const TABLES: TableName[] = ["brands", "studio_runs", "creatives", "inbox_items", "campaigns", "signal_events"];
+const TABLES: TableName[] = ["brands", "studio_runs", "creatives", "inbox_items", "campaigns", "signal_events", "prompt_library"];
 // Serverless filesystems are read-only/ephemeral: there the local store is memory-only and Supabase is required.
 const canPersist = !process.env.VERCEL;
 
@@ -51,6 +52,7 @@ function mem(): Mem {
       inbox_items: new Map(s.inbox.map((i) => [i.id, i])),
       campaigns: new Map(s.campaigns.map((c) => [c.id, c])),
       signal_events: new Map(s.signals.map((e) => [e.id, e])),
+      prompt_library: new Map(),
       metrics: s.metrics,
     };
     persist();

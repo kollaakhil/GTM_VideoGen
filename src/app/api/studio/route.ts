@@ -8,7 +8,7 @@ import { captionVariants, mediaDuration, spokenScript, stitchShots } from "@/lib
 import { get, list, mediaDataUrl, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
 import { rateLimit } from "@/lib/rate-limit";
-import type { Brief, Creative, Direction, QAResult, RunEvent, Shot, StudioRun } from "@/lib/types";
+import type { Brief, Creative, Direction, QAResult, RunEvent, Shot, ShotQA, StudioRun } from "@/lib/types";
 
 export const maxDuration = 300;
 const AUTO_FIX_ATTEMPTS = 1;
@@ -371,6 +371,19 @@ async function saveCreative(
 const FACE_BLOCK = /SensitiveContent|PrivacyInformation/i;
 const faceFallback = (model: string) => (model.includes("kling") ? "google/veo-3.1-fast" : "kwaivgi/kling-v3.0-std");
 
+async function remember(run: StudioRun, s: Shot, kind: "keyframe" | "clip", model: string, q: ShotQA) {
+  if (q.score < QA_PASS || !run.videoPlan) return;
+  await put("prompt_library", { id: newId("pl"), category: run.videoPlan.category, kind, model, beat: s.beat, visual: s.visual, camera: s.camera, score: q.score, brandUrl: run.brandUrl, createdAt: now() });
+}
+
+async function winningShots(run: StudioRun) {
+  const cat = run.videoPlan?.category;
+  return (await list("prompt_library"))
+    .filter((e) => e.category === cat)
+    .sort((a, b) => (b.kind === "clip" ? 1 : 0) - (a.kind === "clip" ? 1 : 0) || b.score - a.score)
+    .slice(0, 4);
+}
+
 const KEYFRAME_TRIES = 2;
 const CLIP_TRIES = 2;
 
@@ -386,12 +399,13 @@ async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: string[
     if (q.qa.score >= QA_PASS) break;
     notes = q.qa.notes;
   }
+  await remember(run, s, "keyframe", run.models.image, best!.qa);
   Object.assign(s, { keyframe: await storeMedia(best!.url, `${run.id}/${d.id}-${s.id}-kf-${Date.now()}`), keyframeQa: best!.qa, clip: null, clipQa: null, status: "keyframe" });
   await saveRun(run);
 }
 
 async function storyboard(run: StudioRun, d: Direction, refs: string[]) {
-  const p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA);
+  const p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, await winningShots(run));
   d.shots = p.shots;
   run.costUsd += p.cost;
   await saveRun(run);
@@ -437,6 +451,7 @@ Start exactly from the given first frame and keep the product, people and settin
         run.progress[d.id] = "fixing";
         await saveRun(run);
       }
+      await remember(run, s, "clip", model, best!.qa);
       Object.assign(s, { clip: await storeMedia(best!.url, `${run.id}/${d.id}-${s.id}-clip-${Date.now()}`), clipQa: best!.qa, status: "done" });
       await saveRun(run);
     }),

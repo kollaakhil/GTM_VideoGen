@@ -84,6 +84,19 @@ export interface VideoPlan {
   budgetUsd: number;
 }
 
+export interface PromptEntry {
+  id: string;
+  category: VideoCategory;
+  kind: "keyframe" | "clip";
+  model: string;
+  beat: string;
+  visual: string;
+  camera: string;
+  score: number;
+  brandUrl: string;
+  createdAt: string;
+}
+
 export interface ShotQA {
   score: number;
   notes: string[];
