@@ -8,7 +8,7 @@ export interface ConnectionDef {
 
 export const CONNECTIONS: ConnectionDef[] = [
   { id: "openrouter", name: "OpenRouter", group: "AI & Media", envs: ["OPENROUTER_API_KEY"], note: "Text, vision QA, image models and Gemini Omni video" },
-  { id: "openai", name: "OpenAI", group: "AI & Media", envs: ["OPENAI_API_KEY"], note: "GPT models (Astra, Sol) called directly instead of via OpenRouter; Script Lab writes with Astra when set" },
+  { id: "openai", name: "OpenAI", group: "AI & Media", envs: ["OPENAI_API_KEY"], note: "GPT models (Astra, Sol) called directly instead of via OpenRouter; used when Sol grades or Astra/Sol writes in Script Lab" },
   { id: "fal", name: "fal.ai", group: "AI & Media", envs: ["FAL_KEY"], note: "Seedance, Kling and other premium video models" },
   { id: "higgsfield", name: "Higgsfield", group: "AI & Media", envs: ["HF_API_KEY"], note: "Image and video models via Higgsfield (HF_API_KEY, or HF_API_KEY_ID + HF_API_KEY_SECRET)" },
   { id: "supabase", name: "Supabase", group: "Infrastructure", envs: ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"], note: "Database, storage and auth (in-memory demo store until set)" },

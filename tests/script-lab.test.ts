@@ -80,5 +80,6 @@ describe("judgeFor", () => {
     expect(judgeFor("google/gemini-4-carbon", "anthropic/claude-sonnet-5.5")).toBe("anthropic/claude-sonnet-5.5");
     expect(judgeFor("openai/gpt-6.1-sol", "openai/gpt-6.1-sol")).toBe("anthropic/claude-sonnet-5.5");
     expect(judgeFor("anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5.5")).toBe("openai/gpt-6.1-sol");
+    expect(judgeFor("google/gemini-4-carbon")).toBe("openai/gpt-6.1-sol");
   });
 });

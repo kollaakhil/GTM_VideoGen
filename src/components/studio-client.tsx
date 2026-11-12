@@ -784,7 +784,7 @@ function JobBar({ job }: { job: NonNullable<StudioRun["job"]> }) {
 const scoreTone = (n: number) => (n >= 8 ? "bg-emerald-500/15 text-emerald-300" : n >= 6 ? "bg-amber-500/15 text-amber-300" : "bg-red-500/15 text-red-300");
 
 const WRITERS: Record<string, string> = { "google/gemini-4-carbon": "Carbon", "anthropic/claude-opus-5.5": "Opus 5.5", "openai/gpt-6.1-sol": "Sol", "openai/gpt-6-astra": "Astra" };
-const JUDGES: Record<string, string> = { "anthropic/claude-sonnet-5.5": "Sonnet 5.5", "openai/gpt-6.1-sol": "Sol" };
+const JUDGES: Record<string, string> = { "openai/gpt-6.1-sol": "Sol", "anthropic/claude-sonnet-5.5": "Sonnet 5.5" };
 const saved = (key: string, list: Record<string, string>) => {
   const v = typeof window === "undefined" ? null : localStorage.getItem(key);
   return v && v in list ? v : Object.keys(list)[0];

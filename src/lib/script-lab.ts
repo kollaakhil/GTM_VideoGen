@@ -4,9 +4,9 @@ import { vocBlock } from "./ad-wisdom";
 
 export const SCRIPT_PASS = 8;
 export const WRITER = process.env.SCRIPT_WRITER_MODEL || "google/gemini-4-carbon";
-export const JUDGE = process.env.SCRIPT_JUDGE_MODEL || "anthropic/claude-sonnet-5.5";
+export const JUDGE = process.env.SCRIPT_JUDGE_MODEL || "openai/gpt-6.1-sol";
 export const SCRIPT_WRITERS = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6.1-sol", "openai/gpt-6-astra"] as const;
-export const SCRIPT_JUDGES = ["anthropic/claude-sonnet-5.5", "openai/gpt-6.1-sol"] as const;
+export const SCRIPT_JUDGES = ["openai/gpt-6.1-sol", "anthropic/claude-sonnet-5.5"] as const;
 const LABELS: Record<string, string> = { "openai/gpt-6-astra": "Astra", "openai/gpt-6.1-sol": "Sol", "anthropic/claude-opus-5.5": "Opus 5.5", "anthropic/claude-sonnet-5.5": "Sonnet 5.5", "google/gemini-4-carbon": "Carbon" };
 export const writerLabel = (m?: string) => LABELS[m ?? WRITER] ?? (m ?? WRITER).split("/").pop()!;
 /** The judge is always a different model from the writer, so nobody grades their own work. */
