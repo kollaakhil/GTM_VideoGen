@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkScript, finalScore, textMatch, textRecall } from "@/lib/script-lab";
+import { checkScript, finalScore, sameHooks, textMatch, textRecall } from "@/lib/script-lab";
 import type { AdScript } from "@/lib/types";
 
 const base: AdScript = {
@@ -29,7 +29,7 @@ describe("checkScript", () => {
     expect(issues.some((i) => i.includes("CTA"))).toBe(true);
   });
   it("flags missing must-say items", () => {
-    expect(checkScript(base, 10, ["Ships across Texas"])).toEqual(['Missing must-say: "Ships across Texas".']);
+    expect(checkScript(base, 10, ["Ships across Texas"])).toEqual(['Missing or shortened must-say; use it word for word: "Ships across Texas".']);
     expect(checkScript(base, 10, ["brass urlis"])).toEqual([]);
   });
 });
@@ -61,5 +61,16 @@ describe("finalScore", () => {
   it("textRecall scores a shot line inside a wider transcript window", () => {
     expect(textRecall("we rented this two ninety nine get price and ship confirmation", "Hosting a home haldi? We rented this—$299.")).toBe(0.5);
     expect(textRecall("hosting a home haldi we rented this 299 get price", "Hosting a home haldi? We rented this—$299.")).toBe(1);
+  });
+});
+
+describe("sameHooks", () => {
+  const mk = (id: string, spoken: string, overall: number): AdScript => ({
+    id, framework: "x", hook: { visual: "", spoken, onScreen: "" }, beats: [], cta: "",
+    score: { overall, scores: {}, notes: [], unsupported: [], panel: { stopRate: 5, quotes: [] } }, checks: [],
+  });
+  it("flags the weaker of two hooks that open the same way", () => {
+    const d = sameHooks([mk("a", "Hands full and running late?", 8), mk("b", "Hands full, still fighting laces?", 7), mk("c", "Full price? I waited.", 7)]);
+    expect([...d]).toEqual(["b"]);
   });
 });

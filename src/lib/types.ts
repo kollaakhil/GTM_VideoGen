@@ -35,6 +35,7 @@ export interface Research {
 
 export interface VoiceOfCustomer {
   phrases: string[];
+  quotes?: string[];
   pains: string[];
   desires: string[];
   objections: string[];

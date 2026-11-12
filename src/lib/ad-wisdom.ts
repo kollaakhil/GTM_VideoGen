@@ -57,10 +57,10 @@ export async function voiceOfCustomer(model: string, brandUrl: string, r: Resear
   const { data, usage } = await chatJSON<Omit<VoiceOfCustomer, "sources">>(
     model,
     "You are a direct-response researcher. Extract real customer language. Quote or closely paraphrase actual phrasing; never invent testimonials or statistics.",
-    `Brand: ${brand}\nWhat the brand sells: ${r.summary}\nAudience: ${r.audience}\n${corpus ? `Customer discussions and reviews:\n${corpus}` : "(No public discussions found; infer likely customer language from the audience and say nothing that sounds like a quote.)"}\n\nReturn JSON: {"phrases": string[] (6-10 short phrases customers actually use about this problem/category), "pains": string[] (4-6), "desires": string[] (4-6), "objections": string[] (3-5 reasons people hesitate to buy)}`,
+    `Brand: ${brand}\nWhat the brand sells: ${r.summary}\nAudience: ${r.audience}\n${corpus ? `Customer discussions and reviews:\n${corpus}` : "(No public discussions found; infer likely customer language from the audience and say nothing that sounds like a quote.)"}\n\nReturn JSON: {"phrases": string[] (6-10 short phrases customers actually use about this problem/category), "pains": string[] (4-6), "desires": string[] (4-6), "objections": string[] (3-5 reasons people hesitate to buy), "quotes": string[] (4-8 full sentences copied word for word from the discussions above, the most vivid ones about the problem or the product; [] when there are no discussions)}`,
   );
   return { data: { ...data, sources: [byBrand.source, byCategory.source, reviews.source].filter((s): s is string => !!s) }, cost: usage.costUsd };
 }
 
 export const vocBlock = (v?: VoiceOfCustomer | null) =>
-  v ? `\nVoice of customer (use their words in hooks; answer objections):\n- Phrases: ${v.phrases.join(" | ")}\n- Pains: ${v.pains.join("; ")}\n- Desires: ${v.desires.join("; ")}\n- Objections: ${v.objections.join("; ")}` : "";
+  v ? `\nVoice of customer (use their words in hooks; answer objections):\n- Phrases: ${v.phrases.join(" | ")}${v.quotes?.length ? `\n- Real customer quotes (borrow their wording, never attribute them): ${v.quotes.slice(0, 8).map((q) => `"${q}"`).join(" ")}` : ""}\n- Pains: ${v.pains.join("; ")}\n- Desires: ${v.desires.join("; ")}\n- Objections: ${v.objections.join("; ")}` : "";

@@ -135,7 +135,7 @@ export function checkScript(s: AdScript, lengthSec: number, mustSay: string[] = 
   const last = s.beats[s.beats.length - 1];
   if (!s.cta || !last || covered(s.cta, `${last.vo} ${last.onScreen}`) < 0.5) out.push("The CTA is not said or shown in the final beat.");
   const all = [s.hook.spoken, s.hook.onScreen, ...s.beats.flatMap((b) => [b.vo, b.onScreen]), s.cta].join(" ");
-  for (const m of mustSay) if (covered(m, all) < 0.6) out.push(`Missing must-say: "${m}".`);
+  for (const m of mustSay) if (covered(m, all) < 0.85) out.push(`Missing or shortened must-say; use it word for word: "${m}".`);
   return out;
 }
 
@@ -231,8 +231,8 @@ export const finalScore = (s: AdScript) => {
   return n ? Math.min(SCRIPT_PASS - 1, base - Math.min(3, n)) : base;
 };
 
-async function rewrite(writer: string, s: AdScript, c: ScriptCtx): Promise<{ script: AdScript; cost: number }> {
-  const fixes = [...(s.score?.notes ?? []), ...(s.checks ?? []), ...(s.score?.unsupported ?? []).map((u) => `Remove unsupported claim: ${u}`)];
+async function rewrite(writer: string, s: AdScript, c: ScriptCtx, extra: string[] = []): Promise<{ script: AdScript; cost: number }> {
+  const fixes = [...extra, ...(s.score?.notes ?? []), ...(s.checks ?? []), ...(s.score?.unsupported ?? []).map((u) => `Remove unsupported claim: ${u}`)];
   const { data, usage } = await chatJSON<Raw>(
     writer,
     "You are a top direct-response video ad scriptwriter revising a script from a creative director's notes.",
@@ -245,6 +245,25 @@ Return JSON: ${SCRIPT_SHAPE}`,
   );
   return { script: { ...clean({ ...data, framework: s.framework }, s.id), rounds: (s.rounds ?? 0) + 1 }, cost: usage.costUsd };
 }
+
+/** Hooks that open the same way as a better-scored script in the set. */
+export function sameHooks(list: AdScript[]): Set<string> {
+  const out = new Set<string>();
+  const open = (t: string) => words(t).slice(0, 2).join(" ");
+  const ranked = [...list].sort((a, b) => finalScore(b) - finalScore(a));
+  ranked.forEach((s, i) => {
+    for (const t of ranked.slice(0, i)) {
+      if (open(s.hook.spoken) === open(t.hook.spoken) || textMatch(s.hook.spoken, t.hook.spoken) >= 0.5) {
+        out.add(s.id);
+        break;
+      }
+    }
+  });
+  return out;
+}
+
+const SAME_HOOK = "This hook opens like another script in the set. Write a completely different spoken hook (different hook type, different first words, different moment).";
+const POLISH = 9;
 
 /** Sol writes, Carbon judges (with a simulated audience panel), weak scripts are rewritten up to twice. */
 export async function scriptLab(c: ScriptCtx, o: { writer?: string; judge?: string; count?: number; keep?: number } = {}): Promise<{ scripts: AdScript[]; cost: number }> {
@@ -260,10 +279,8 @@ export async function scriptLab(c: ScriptCtx, o: { writer?: string; judge?: stri
   let scripts = w.scripts.filter((s) => s.beats.length >= 2);
   if (!scripts.length) throw new Error("The script writer returned no usable scripts");
   await grade(scripts);
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    const weak = scripts.filter((s) => finalScore(s) < SCRIPT_PASS);
-    if (!weak.length) break;
-    const redo = await Promise.all(weak.map((s) => rewrite(writer, s, c)));
+  const improve = async (weak: AdScript[], extra: (s: AdScript) => string[] = () => []) => {
+    const redo = await Promise.all(weak.map((s) => rewrite(writer, s, c, extra(s))));
     cost += redo.reduce((t, r) => t + r.cost, 0);
     const fresh = redo.map((r) => r.script);
     await grade(fresh);
@@ -271,6 +288,20 @@ export async function scriptLab(c: ScriptCtx, o: { writer?: string; judge?: stri
       const n = fresh.find((f) => f.id === s.id);
       return n && finalScore(n) >= finalScore(s) ? n : s;
     });
+  };
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const dupes = sameHooks(scripts);
+    const weak = scripts.filter((s) => finalScore(s) < SCRIPT_PASS || dupes.has(s.id));
+    if (!weak.length) break;
+    await improve(weak, (s) => (dupes.has(s.id) ? [SAME_HOOK] : []));
+  }
+  // Polish the leader with the judge's remaining notes until it reaches 9+.
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const top = [...scripts].sort((a, b) => finalScore(b) - finalScore(a))[0];
+    if (!top || finalScore(top) >= POLISH || !top.score?.notes.length) break;
+    const before = finalScore(top);
+    await improve([top]);
+    if (finalScore(scripts.find((s) => s.id === top.id)!) <= before) break;
   }
   scripts.sort((a, b) => finalScore(b) - finalScore(a) || (b.score?.panel.stopRate ?? 0) - (a.score?.panel.stopRate ?? 0));
   return { scripts: scripts.slice(0, o.keep ?? 3), cost };
