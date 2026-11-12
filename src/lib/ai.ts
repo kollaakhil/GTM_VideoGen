@@ -24,7 +24,8 @@ async function openrouter(body: Record<string, unknown>) {
       body: JSON.stringify({ ...body, usage: { include: true } }),
     });
     // Rate limits and transient provider errors: back off and retry (honours Retry-After).
-    if ((res.status !== 429 && res.status < 500) || attempt >= 4) break;
+    const inFlight = res.status === 402 && (await res.clone().text()).includes("in_flight_budget");
+    if ((res.status !== 429 && res.status < 500 && !inFlight) || attempt >= 4) break;
     const after = Number(res.headers.get("retry-after"));
     await new Promise((r) => setTimeout(r, (after > 0 ? Math.min(after, 60) : 4 * 2 ** attempt) * 1000 + Math.random() * 1000));
   }
