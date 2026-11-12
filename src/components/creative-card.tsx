@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Check, RefreshCw, ShieldCheck, Shuffle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,11 +23,12 @@ export function CreativeCard({
   busy,
 }: {
   creative: Creative;
-  onAction?: (a: "approve" | "reject" | "request_publish" | "override_qa", channel?: "meta" | "google") => void;
+  onAction?: (a: "approve" | "reject" | "request_publish" | "override_qa", channel?: "meta" | "google", reason?: string) => void;
   onRegenerate?: () => void;
   busy?: boolean;
 }) {
   const k = kpis(c.metrics);
+  const [rejecting, setRejecting] = useState(false);
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
       <div className="relative aspect-[4/5] bg-muted">
@@ -97,10 +99,30 @@ export function CreativeCard({
             ))}
           </ul>
         )}
+        {onAction && rejecting && c.status === "draft" && (
+          <div className="space-y-1 rounded-lg border border-red-400/20 bg-red-500/[0.04] p-2">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Why? The engine learns from this</div>
+            <div className="flex flex-wrap gap-1">
+              {["Off-brand", "Wrong product", "Weak hook", "Visual glitch", "Wrong claim", "Not our audience", "No reason"].map((r) => (
+                <button
+                  key={r}
+                  disabled={busy}
+                  onClick={() => {
+                    setRejecting(false);
+                    onAction("reject", undefined, r === "No reason" ? undefined : r);
+                  }}
+                  className="rounded-md border border-white/10 px-1.5 py-0.5 text-[11px] text-zinc-300 hover:border-red-400/40 hover:text-red-200"
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {onAction && (c.status === "draft" || c.status === "approved") && (
           <div className="flex flex-wrap gap-1.5 pt-1">
             {c.status === "draft" && (
-              <Button size="xs" variant="outline" disabled={busy} onClick={() => onAction("reject")}>
+              <Button size="xs" variant="outline" disabled={busy} onClick={() => setRejecting((v) => !v)}>
                 <X /> Reject
               </Button>
             )}

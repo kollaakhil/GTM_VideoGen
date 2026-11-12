@@ -13,8 +13,8 @@ export function LibraryClient({ initial }: { initial: Creative[] }) {
   const [error, setError] = useState<string | null>(null);
   const shown = useMemo(() => items.filter((c) => filter === "all" || c.status === filter), [items, filter]);
 
-  async function act(c: Creative, action: "approve" | "reject" | "request_publish" | "override_qa", channel?: "meta" | "google") {
-    const res = await fetch("/api/creatives", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: c.id, action, channel }) });
+  async function act(c: Creative, action: "approve" | "reject" | "request_publish" | "override_qa", channel?: "meta" | "google", reason?: string) {
+    const res = await fetch("/api/creatives", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: c.id, action, channel, reason }) });
     const json = await res.json();
     if (!res.ok) return setError(json.error);
     setError(null);
@@ -37,7 +37,7 @@ export function LibraryClient({ initial }: { initial: Creative[] }) {
       {error && <div className="mb-4 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {shown.map((c) => (
-          <CreativeCard key={c.id} creative={c} onAction={(a, ch) => act(c, a, ch)} />
+          <CreativeCard key={c.id} creative={c} onAction={(a, ch, r) => act(c, a, ch, r)} />
         ))}
       </div>
     </div>

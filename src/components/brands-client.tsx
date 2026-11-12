@@ -55,7 +55,7 @@ const readFile = (f: File) => new Promise<string>((res, rej) => {
 const field = "w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 text-[13px] text-zinc-200 outline-none focus:border-indigo-400/50";
 const label = "mb-1 block text-[10px] font-semibold uppercase tracking-wider text-zinc-500";
 
-export function BrandsClient({ initial }: { initial: Brand[] }) {
+export function BrandsClient({ initial, learned = {} }: { initial: Brand[]; learned?: Record<string, { winners: string[]; avoid: string[] }> }) {
   const [brands, setBrands] = useState(initial);
   const [d, setD] = useState<Draft>(initial[0] ? toDraft(initial[0]) : blank);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -197,6 +197,20 @@ export function BrandsClient({ initial }: { initial: Brand[] }) {
             </div>
           ))}
         </section>
+
+        {d.id && learned[d.id] && (
+          <section className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+            <span className={label}>What the engine learned (from approvals, rejections, QA and ad results)</span>
+            {!learned[d.id].winners.length && !learned[d.id].avoid.length ? (
+              <p className="text-xs text-zinc-500">Nothing yet. Approve or reject creatives (with a reason) and connect ad results; future briefs and storyboards build on what works.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <ul className="space-y-1 text-emerald-200/90">{learned[d.id].winners.map((w) => <li key={w}>+ {w}</li>)}</ul>
+                <ul className="space-y-1 text-red-200/90">{learned[d.id].avoid.map((w) => <li key={w}>− {w}</li>)}</ul>
+              </div>
+            )}
+          </section>
+        )}
 
         <div className="flex items-center gap-3">
           <Button onClick={save} disabled={saving || d.url.length < 10} className="bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90"><Save /> {saving ? "Saving…" : "Save brand kit"}</Button>

@@ -147,7 +147,7 @@ interface Ctx {
   };
   start: () => void;
   act: (action: string, extra?: Record<string, unknown>) => Promise<boolean>;
-  creativeAction: (c: Creative, a: CreativeAction, ch?: "meta" | "google") => void;
+  creativeAction: (c: Creative, a: CreativeAction, ch?: "meta" | "google", reason?: string) => void;
   editing: boolean;
   setEditing: (v: boolean) => void;
   pricing: Pricing;
@@ -849,7 +849,7 @@ function CreativeNode({ data }: NodeProps<Node<{ index: number }>>) {
         <CreativeCard
           creative={c}
           busy={sending || run.status === "working"}
-          onAction={(a, ch) => creativeAction(c, a, ch)}
+          onAction={(a, ch, r) => creativeAction(c, a, ch, r)}
           onRegenerate={redo}
         />
       </div>
@@ -1341,9 +1341,9 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
   };
   const startRun = () => act("research", { offer: form.offer.trim() || undefined, brandUrl: form.brandUrl.trim(), referenceUrl: form.referenceUrl.trim(), goal: form.goal.trim(), format: form.format, models: form.sel });
 
-  const creativeAction = async (c: Creative, a: CreativeAction, ch?: "meta" | "google") => {
+  const creativeAction = async (c: Creative, a: CreativeAction, ch?: "meta" | "google", reason?: string) => {
     try {
-      const j = await fetchJSON("/api/creatives", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: c.id, action: a, channel: ch }) });
+      const j = await fetchJSON("/api/creatives", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: c.id, action: a, channel: ch, reason }) });
       setCreatives((xs) => xs.map((x) => (x.id === c.id ? j.creative : x)));
       if (a === "request_publish") flash(`“${c.title}” is waiting in the Inbox. It will be created as a paused ad.`);
     } catch (e) {
