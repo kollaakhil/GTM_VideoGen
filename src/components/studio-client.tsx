@@ -15,7 +15,7 @@ import {
   type Edge,
   type Node,
   type NodeProps,
-  useStore,
+  type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { AlertTriangle, Clapperboard, ArrowRight, Square, Check, ChevronDown, Film, Globe, History, ImageIcon, Inbox, Lightbulb, Loader2, MessageSquare, Pencil, Plus, RefreshCw, Rocket, Search, Sparkles, Upload, Wand2, X, LayoutGrid, ShieldCheck } from "lucide-react";
@@ -1421,7 +1421,13 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
 
 function Canvas({ elapsed, notice }: { elapsed: number; notice: string | null }) {
   const { run, byDir } = useFlow();
-  const dirH = useStore((st) => Math.round(Math.max(0, ...st.nodes.filter((n) => n.type === "direction").map((n) => n.measured?.height ?? 0)) / 40) * 40);
+  const [dirHs, setDirHs] = useState<Record<string, number>>({});
+  const dirH = Math.round(Math.max(0, ...Object.values(dirHs)) / 40) * 40;
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    const next: Record<string, number> = {};
+    for (const c of changes) if (c.type === "dimensions" && c.dimensions && c.id.startsWith("dir-")) next[c.id] = c.dimensions.height;
+    if (Object.keys(next).length) setDirHs((h) => ({ ...h, ...next }));
+  }, []);
   const { nodes, edges } = useGraph(run, byDir, dirH);
   const flow = useReactFlow();
   const seen = useRef<string>("");
@@ -1443,6 +1449,7 @@ function Canvas({ elapsed, notice }: { elapsed: number; notice: string | null })
     <div className="relative min-h-0 flex-1 bg-zinc-950">
       <ReactFlow
         nodes={nodes}
+        onNodesChange={onNodesChange}
         edges={edges}
         nodeTypes={nodeTypes}
         nodesDraggable={false}
