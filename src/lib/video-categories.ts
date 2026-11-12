@@ -14,13 +14,10 @@ export const CATEGORIES: Record<VideoCategory, { label: string; beats: string[];
 
 export const LENGTHS = [6, 10, 15, 20, 30];
 
-const PREMIUM = /veo-3\.1(?!-fast|-lite)|kling-v3\.0-pro|seedance-2\.0$|hailuo-3$|flux-3-video|wan-3\.0-prime/;
-
-/** Rough pre-flight cost so the user sees the bill before spending (assumes one QA retry on some shots). */
-export function estimateCost(stage: "storyboard" | "video", o: { model?: string; lengthSec: number; shots: number; music?: boolean }) {
+/** Pre-flight cost: storyboard keyframes, or one pass of video at the model's real per-second price plus QA and audio. */
+export function estimateCost(stage: "storyboard" | "video", o: { perSec?: number | null; lengthSec: number; shots: number; music?: boolean }) {
   if (stage === "storyboard") return +(o.shots * 0.08 + 0.02).toFixed(2);
-  const perSec = o.model && PREMIUM.test(o.model) ? 0.4 : 0.1;
-  return +(o.lengthSec * perSec * 1.4 + o.shots * 0.02 + 0.02 + (o.music ? 0.6 : 0)).toFixed(2);
+  return +(o.lengthSec * (o.perSec ?? 0.12) + o.shots * 0.01 + 0.02 + (o.music ? 0.6 : 0)).toFixed(2);
 }
 
 export const shotCount = (lengthSec: number, category: VideoCategory) => Math.max(2, Math.min(CATEGORIES[category].beats.length, Math.round(lengthSec / 4)));

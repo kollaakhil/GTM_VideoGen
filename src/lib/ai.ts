@@ -68,7 +68,7 @@ async function falVideo(model: string, prompt: string): Promise<string> {
   throw new Error("fal job timed out");
 }
 
-type VideoSpec = { durations?: number[] | null; resolutions?: string[] | null; aspects?: string[] | null; frames?: string[] | null };
+type VideoSpec = { durations?: number[] | null; resolutions?: string[] | null; aspects?: string[] | null; frames?: string[] | null; pricing?: Record<string, string> | null };
 export type VideoOpts = { firstFrame?: string; lastFrame?: string; seconds?: number; audio?: boolean; resolution?: string };
 let videoCatalog: { at: number; specs: Map<string, VideoSpec> } | null = null;
 
@@ -79,9 +79,9 @@ async function openrouterVideoSpec(model: string): Promise<VideoSpec> {
     videoCatalog = {
       at: Date.now(),
       specs: new Map(
-        (json.data ?? []).map((m: { id: string; supported_durations?: number[]; supported_resolutions?: string[]; supported_aspect_ratios?: string[]; supported_frame_images?: string[] }) => [
+        (json.data ?? []).map((m: { id: string; supported_durations?: number[]; supported_resolutions?: string[]; supported_aspect_ratios?: string[]; supported_frame_images?: string[]; pricing_skus?: Record<string, string> }) => [
           m.id,
-          { durations: m.supported_durations, resolutions: m.supported_resolutions, aspects: m.supported_aspect_ratios, frames: m.supported_frame_images },
+          { durations: m.supported_durations, resolutions: m.supported_resolutions, aspects: m.supported_aspect_ratios, frames: m.supported_frame_images, pricing: m.pricing_skus },
         ]),
       ),
     };
@@ -90,7 +90,40 @@ async function openrouterVideoSpec(model: string): Promise<VideoSpec> {
 }
 
 const prefer = <T,>(options: T[] | null | undefined, wanted: T[]): T | undefined => (options?.length ? (wanted.find((w) => options.includes(w)) ?? options[0]) : undefined);
-const nearest = (options: number[] | null | undefined, want: number) => (options?.length ? options.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a)) : want);
+export const nearest = (options: number[] | null | undefined, want: number) => (options?.length ? options.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a)) : want);
+
+/** USD per output second from OpenRouter's pricing SKUs (null when unknown or not an OpenRouter model). */
+export async function videoPricePerSec(model: string, resolution = "720p", audio = false): Promise<number | null> {
+  if (providerOf(model) !== "openrouter") return null;
+  const p = (await openrouterVideoSpec(model)).pricing;
+  if (!p) return null;
+  const a = audio ? "with_audio" : "without_audio";
+  const keys = [`duration_seconds_${a}_${resolution}`, `duration_seconds_${a}`, `image_to_video_duration_seconds_${resolution}`, `duration_seconds_${resolution}`, ...(audio ? ["duration_seconds_with_audio"] : []), "duration_seconds"];
+  for (const k of keys) if (p[k]) return Number(p[k]);
+  const cents = p[`cents_per_video_output_second_${resolution}`];
+  if (cents) return Number(cents) / 100;
+  const tok = p[audio ? "video_tokens" : "video_tokens_without_audio"] ?? p.video_tokens;
+  if (tok) {
+    const px = resolution === "480p" ? 480 * 854 : resolution === "1080p" ? 1080 * 1920 : 720 * 1280;
+    return (Number(tok) * px * 24) / 1024;
+  }
+  return null;
+}
+
+/** Spendable OpenRouter balance: account credits left, capped by the key's own limit. */
+export async function openrouterCredits(): Promise<number | null> {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) return null;
+  const auth = { Authorization: `Bearer ${key}` };
+  const [c, k] = await Promise.all([
+    fetch("https://openrouter.ai/api/v1/credits", { headers: auth }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    fetch("https://openrouter.ai/api/v1/key", { headers: auth }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+  ]);
+  const left: number[] = [];
+  if (c?.data) left.push(Number(c.data.total_credits) - Number(c.data.total_usage));
+  if (k?.data?.limit_remaining != null) left.push(Number(k.data.limit_remaining));
+  return left.length ? Math.min(...left) : null;
+}
 
 /** Durations a video model accepts (from OpenRouter's catalog), for planning shot lengths. */
 export async function videoDurations(model: string): Promise<number[] | null> {

@@ -194,6 +194,19 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
   }
 }
 
+/** Mean loudness in dB (about -91 means digital silence). */
+export async function meanVolume(media: string) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-vol-"));
+  try {
+    const f = await toFile(dir, "m", media);
+    const out = await run(FFMPEG, ["-hide_banner", "-i", f, "-vn", "-af", "volumedetect", "-f", "null", "-"], { timeout: 60_000 }).catch((e) => e as { stderr?: string });
+    const m = String(out.stderr ?? "").match(/mean_volume: (-?[\d.]+) dB/);
+    return m ? Number(m[1]) : -91;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
 /** Audio length in seconds (for fitting a voiceover to shots). */
 export async function mediaDuration(media: string) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-probe-"));

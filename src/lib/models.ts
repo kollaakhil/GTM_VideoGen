@@ -21,6 +21,7 @@ export const MODELS: ModelOption[] = [
   { id: "bytedance/seedance-2.0", label: "Seedance 2.0 (OpenRouter)", provider: "openrouter", modality: "video" },
   { id: "kwaivgi/kling-v3.0-std", label: "Kling 3.0 Std (OpenRouter)", provider: "openrouter", modality: "video" },
   { id: "kwaivgi/kling-v3.0-pro", label: "Kling 3.0 Pro (OpenRouter)", provider: "openrouter", modality: "video" },
+  { id: "google/veo-3.1-lite", label: "Veo 3.1 Lite (OpenRouter)", provider: "openrouter", modality: "video" },
   { id: "google/veo-3.1-fast", label: "Veo 3.1 Fast (OpenRouter)", provider: "openrouter", modality: "video" },
   { id: "google/veo-3.1", label: "Veo 3.1 (OpenRouter)", provider: "openrouter", modality: "video" },
   { id: "google/gemini-omni-1.2-flash", label: "Gemini Omni 1.2 (OpenRouter)", provider: "openrouter", modality: "video" },

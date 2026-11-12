@@ -186,6 +186,7 @@ export interface StudioRun {
   status: "idle" | "working" | "error";
   activity: string | null;
   jobId?: string | null;
+  job?: { label: string; done: number; total: number; directionId?: string } | null;
   videoPlan?: VideoPlan | null;
   events: RunEvent[];
   progress: Record<string, CreativeProgress>;

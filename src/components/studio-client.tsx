@@ -80,11 +80,15 @@ interface Ctx {
   creativeAction: (c: Creative, a: CreativeAction, ch?: "meta" | "google") => void;
   editing: boolean;
   setEditing: (v: boolean) => void;
+  pricing: Pricing;
 }
+
+type Pricing = { credits: number | null; prices: Record<string, { draft: number | null; final: number | null }> };
 const FlowCtx = createContext<Ctx | null>(null);
 const useFlow = () => useContext(FlowCtx)!;
 
-const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 15, draftModel: "kwaivgi/kling-v3.0-std", finalModel: "kwaivgi/kling-v3.0-pro", voice: "Rachel", music: true, budgetUsd: 10 };
+const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 10, draftModel: "google/veo-3.1-lite", finalModel: "google/veo-3.1-fast", voice: "Rachel", music: true, budgetUsd: 3 };
+const money = (n: number | null | undefined) => (n == null ? "?" : `$${n.toFixed(2)}`);
 const VOICE_OPTIONS = ["Rachel", "Aria", "Sarah", "Charlotte", "Jessica", "Lily", "Roger", "George", "Liam", "Will", "Eric", "Brian", "Daniel"];
 const SB_SHIFT = 430;
 
@@ -548,7 +552,7 @@ function BriefNode() {
 }
 
 function VideoPlanNode() {
-  const { run, form, models, act, sending } = useFlow();
+  const { run, form, models, act, sending, pricing } = useFlow();
   if (!run) return null;
   const p = form.plan;
   const set = (patch: Partial<VideoPlan>) => form.set({ plan: { ...p, ...patch } });
@@ -589,7 +593,7 @@ function VideoPlanNode() {
             <span className="text-[10px] uppercase tracking-wider text-zinc-500">Draft model</span>
             <select className={sel} value={p.draftModel} onChange={(e) => set({ draftModel: e.target.value })}>
               {video.map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
+                <option key={m.id} value={m.id}>{m.label}{pricing.prices[m.id]?.draft != null ? ` · $${pricing.prices[m.id].draft!.toFixed(2)}/s` : ""}</option>
               ))}
             </select>
           </label>
@@ -597,7 +601,7 @@ function VideoPlanNode() {
             <span className="text-[10px] uppercase tracking-wider text-zinc-500">Final model</span>
             <select className={sel} value={p.finalModel} onChange={(e) => set({ finalModel: e.target.value })}>
               {video.map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
+                <option key={m.id} value={m.id}>{m.label}{pricing.prices[m.id]?.final != null ? ` · $${pricing.prices[m.id].final!.toFixed(2)}/s` : ""}</option>
               ))}
             </select>
           </label>
@@ -609,10 +613,21 @@ function VideoPlanNode() {
             <input type="checkbox" checked={p.music} onChange={(e) => set({ music: e.target.checked })} /> Music bed
           </label>
         </div>
-        <p className="text-[11px] leading-snug text-zinc-500">
-          Storyboards ≈ ${estimateCost("storyboard", { lengthSec: p.lengthSec, shots: shots * run.directions.length })}. Per video: draft ≈ ${estimateCost("video", { model: p.draftModel, lengthSec: p.lengthSec, shots, music: p.music })}, final ≈ $
-          {estimateCost("video", { model: p.finalModel, lengthSec: p.lengthSec, shots, music: p.music })}.
-        </p>
+        {(() => {
+          const draft = estimateCost("video", { perSec: pricing.prices[p.draftModel]?.draft, lengthSec: p.lengthSec, shots, music: p.music });
+          const final = estimateCost("video", { perSec: pricing.prices[p.finalModel]?.final, lengthSec: p.lengthSec, shots, music: p.music });
+          const low = pricing.credits != null && pricing.credits < draft * 1.2;
+          return (
+            <div className="space-y-1 rounded-lg bg-white/[0.03] p-2 text-[11px] leading-snug text-zinc-400">
+              <div>Storyboards ≈ {money(estimateCost("storyboard", { lengthSec: p.lengthSec, shots: shots * run.directions.length }))}</div>
+              <div>
+                Per video: draft ≈ <span className={cn(draft > p.budgetUsd && "text-amber-300")}>{money(draft)}</span>, final ≈ <span className={cn(final > p.budgetUsd && "text-amber-300")}>{money(final)}</span>
+              </div>
+              <div className={cn(low ? "text-red-300" : "text-zinc-500")}>OpenRouter balance: {money(pricing.credits)}{low ? " · too low for a draft, add credits" : ""}</div>
+              {(draft > p.budgetUsd || final > p.budgetUsd) && <div className="text-amber-300">Over your cap: shorten the video, pick a cheaper model or raise the cap.</div>}
+            </div>
+          );
+        })()}
         <Button size="sm" className="w-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90" disabled={sending || run.status === "working"} onClick={() => act("storyboard", { runId: run.id, plan: p, refs: form.refs })}>
           <Clapperboard /> {has ? "Rebuild storyboards" : "Build storyboards"}
         </Button>
@@ -651,8 +666,23 @@ function ShotThumb({ d, s }: { d: Direction; s: Shot }) {
   );
 }
 
+function JobBar({ job }: { job: NonNullable<StudioRun["job"]> }) {
+  const pct = job.total ? Math.round((job.done / job.total) * 100) : 5;
+  return (
+    <div className="space-y-1">
+      <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+        <div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400 transition-all duration-700" style={{ width: `${Math.max(5, pct)}%` }} />
+      </div>
+      <div className="flex justify-between text-[10px] text-zinc-400">
+        <span className="truncate pr-2">{job.label}</span>
+        <span className="tabular-nums">{job.total ? `${job.done}/${job.total}` : "…"}</span>
+      </div>
+    </div>
+  );
+}
+
 function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
-  const { run, act, sending, form } = useFlow();
+  const { run, act, sending, form, pricing } = useFlow();
   if (!run) return null;
   const d = run.directions[data.index];
   if (!d) {
@@ -672,6 +702,7 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
         </div>
         <p className="line-clamp-2 text-[11px] text-zinc-500" title={d.angle}>{d.angle}</p>
         <p className="line-clamp-3 text-[12px] leading-relaxed text-zinc-400">{d.script}</p>
+        {run.status === "working" && run.job?.directionId === d.id && <JobBar job={run.job} />}
         {d.shots?.length ? (
           <div className="space-y-2 border-t border-white/5 pt-2.5">
             <div className="nowheel flex gap-1.5 overflow-x-auto pb-1">
@@ -690,7 +721,7 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
                   onClick={() => act("render_video", { runId: run.id, directionId: d.id, tier, refs: form.refs })}
                 >
                   <Film /> {tier === "draft" ? "Draft" : "Final"} ~$
-                  {estimateCost("video", { model: tier === "draft" ? (run.videoPlan ?? form.plan).draftModel : (run.videoPlan ?? form.plan).finalModel, lengthSec: d.shots!.reduce((t, s) => t + s.seconds, 0), shots: d.shots!.length, music: (run.videoPlan ?? form.plan).music })}
+                  {estimateCost("video", { perSec: pricing.prices[tier === "draft" ? (run.videoPlan ?? form.plan).draftModel : (run.videoPlan ?? form.plan).finalModel]?.[tier], lengthSec: d.shots!.reduce((t, s) => t + s.seconds, 0), shots: d.shots!.length, music: (run.videoPlan ?? form.plan).music }).toFixed(2)}
                 </Button>
               ))}
             </div>
@@ -999,8 +1030,16 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
     text = (
       <span className="flex items-center gap-2">
         <Loader2 className="size-4 animate-spin text-indigo-300" />
-        {run.activity}
+        {run.job?.label ?? run.activity}
         {run.stage === "generate" && total > 0 && <span className="text-zinc-500">{done}/{total}</span>}
+        {run.job && (
+          <span className="flex w-44 items-center gap-2">
+            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+              <span className="block h-full rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400 transition-all duration-700" style={{ width: `${Math.max(5, run.job.total ? Math.round((run.job.done / run.job.total) * 100) : 5)}%` }} />
+            </span>
+            <span className="tabular-nums text-zinc-500">{run.job.total ? `${run.job.done}/${run.job.total}` : ""}</span>
+          </span>
+        )}
         <span className="tabular-nums text-zinc-500">{elapsed}s</span>
       </span>
     );
@@ -1055,7 +1094,14 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
     <div className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex justify-center px-6">
       <div className="pointer-events-auto flex max-w-3xl items-center gap-4 rounded-2xl border border-white/10 bg-zinc-900/90 py-2 pl-4 pr-2 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.9)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-300">
         <div className="min-w-0 text-[13px] text-zinc-200">
-          {notice ? <span className="text-emerald-300">{notice}</span> : lastError ? <span className="line-clamp-2 text-red-300">{lastError}</span> : text}
+          {notice ? <span className="text-emerald-300">{notice}</span> : lastError ? (
+            <span className="flex items-start gap-2 text-red-300">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <span className="line-clamp-4">{lastError}</span>
+            </span>
+          ) : (
+            text
+          )}
         </div>
         {buttons.length > 0 && <div className="flex shrink-0 items-center gap-1">{buttons}</div>}
         <div className="shrink-0 border-l border-white/10 pl-3 pr-1 text-[11px] tabular-nums text-zinc-500">${run.costUsd.toFixed(2)}</div>
@@ -1143,6 +1189,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
     return json;
   }, []);
 
+  const [pricing, setPricing] = useState<Pricing>({ credits: null, prices: {} });
   const loadRuns = useCallback(() => fetchJSON("/api/studio").then((j) => setRuns(j.runs)).catch(() => {}), [fetchJSON]);
   const loadRun = useCallback(
     (id: string) =>
@@ -1159,6 +1206,11 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
     () => fetchJSON("/api/brands").then((j) => setForm((f) => ({ ...f, kits: j.brands }))).catch(() => {}),
     [fetchJSON],
   );
+  const loadPricing = useCallback(() => fetchJSON("/api/video-pricing").then((j) => setPricing({ credits: j.credits ?? null, prices: j.prices ?? {} })).catch(() => {}), [fetchJSON]);
+  const runStatus = run?.status;
+  useEffect(() => {
+    if (runStatus !== "working") void loadPricing();
+  }, [loadPricing, runStatus]);
 
   useEffect(() => {
     loadRuns();
@@ -1240,6 +1292,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
     sending,
     models,
     form: { ...form, set: (patch) => setForm((f) => ({ ...f, ...patch })) },
+    pricing,
     start,
     act,
     creativeAction,
