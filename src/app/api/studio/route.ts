@@ -367,6 +367,10 @@ async function saveCreative(
   await saveRun(run);
 }
 
+// Some models (e.g. Seedance) refuse first frames containing realistic people; fall back to one that accepts them.
+const FACE_BLOCK = /SensitiveContent|PrivacyInformation/i;
+const faceFallback = (model: string) => (model.includes("kling") ? "google/veo-3.1-fast" : "kwaivgi/kling-v3.0-std");
+
 const KEYFRAME_TRIES = 2;
 const CLIP_TRIES = 2;
 
@@ -396,7 +400,8 @@ async function storyboard(run: StudioRun, d: Direction, refs: string[]) {
 
 async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final", refs: string[]) {
   const plan = run.videoPlan!;
-  const model = tier === "final" ? plan.finalModel : plan.draftModel;
+  const chosen = tier === "final" ? plan.finalModel : plan.draftModel;
+  let model = chosen;
   const shots = d.shots!;
   const withAudio = audioConfigured();
   let spent = 0;
@@ -414,7 +419,15 @@ async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final"
         const prompt = `${s.visual}
 Camera: ${s.camera}. Look: ${CATEGORIES[plan.category].look}.
 Start exactly from the given first frame and keep the product, people and setting consistent. Natural, physically plausible motion, no morphing. No text, captions, logos or price tags appear.${!withAudio && s.vo ? `\nSpoken line: "${s.vo}"` : ""}${notes.length ? `\nFix from the last take: ${notes.join(" ")}` : ""}`;
-        const v = await generateVideo(model, prompt, { firstFrame: first, seconds: s.seconds, audio: !withAudio, resolution: tier === "final" ? "1080p" : "480p" });
+        const vopts = { firstFrame: first, seconds: s.seconds, audio: !withAudio, resolution: tier === "final" ? "1080p" : "480p" };
+        const v = await generateVideo(model, prompt, vopts).catch(async (e: Error) => {
+          if (!FACE_BLOCK.test(e.message)) throw e;
+          if (model === chosen) {
+            model = faceFallback(chosen);
+            say(run, "agent", `${chosen} refuses first frames with realistic people, so this video switched to ${model}.`);
+          }
+          return generateVideo(model, prompt, vopts);
+        });
         const sheet = await filmstrip(v.url);
         const q = await shotQA(run.models.vision, sheet.sheet, s, "clip", refs[0]);
         spent += v.usage.costUsd + q.cost;

@@ -84,7 +84,7 @@ interface Ctx {
 const FlowCtx = createContext<Ctx | null>(null);
 const useFlow = () => useContext(FlowCtx)!;
 
-const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 15, draftModel: "bytedance/seedance-2.0-fast", finalModel: "kwaivgi/kling-v3.0-pro", voice: "Rachel", music: true, budgetUsd: 10 };
+const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 15, draftModel: "kwaivgi/kling-v3.0-std", finalModel: "kwaivgi/kling-v3.0-pro", voice: "Rachel", music: true, budgetUsd: 10 };
 const VOICE_OPTIONS = ["Rachel", "Aria", "Sarah", "Charlotte", "Jessica", "Lily", "Roger", "George", "Liam", "Will", "Eric", "Brian", "Daniel"];
 const SB_SHIFT = 430;
 
