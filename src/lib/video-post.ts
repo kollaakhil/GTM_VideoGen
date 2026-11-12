@@ -341,13 +341,12 @@ export async function typesetStatic(background: string, kit: StaticKit): Promise
       `Style: Offer,${font},44,&H00FFFFFF,&H00000000,&H64000000,1,1,0,2,1,0,0,0`,
       `Style: Cta,${font},44,${ink === "white" ? "&H00FFFFFF" : "&H00000000"},${assColor(primary)},${assColor(primary)},1,3,22,0,1,0,0,0`,
       `Style: Foot,${font},30,&H00E6E6E6,&H00000000,&H64000000,0,1,0,2,1,0,0,0`,
-      `Style: Brand,${font},48,&H00FFFFFF,&H00000000,&H64000000,1,1,0,3,7,0,0,0`,
       "", "[Events]", "Format: Layer, Start, End, Style, Text",
       ev("Head", 1, 70, headBottom, lines.join("\\N")),
       ...(offer ? [ev("Offer", 1, 70, offerY, offer)] : []),
       ...(kit.cta ? [ev("Cta", 1, 92, ctaY, CTA_LABEL[kit.cta] ?? clean(kit.cta))] : []),
       ...(footer ? [ev("Foot", 1, 70, H - 50, footer)] : []),
-      ...(!kit.logo ? [ev("Brand", 7, 70, 60, clean(kit.brand))] : []),
+
     ].join("\n");
     await fs.writeFile(path.join(dir, "t.ass"), ass);
     let fontsDir = FONTS;

@@ -12,15 +12,22 @@ export interface Usage {
 async function openrouter(body: Record<string, unknown>) {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
-  const res = await fetch(OR_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      "X-Title": "GTM Engine",
-    },
-    body: JSON.stringify({ ...body, usage: { include: true } }),
-  });
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(OR_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        "X-Title": "GTM Engine",
+      },
+      body: JSON.stringify({ ...body, usage: { include: true } }),
+    });
+    // Rate limits and transient provider errors: back off and retry (honours Retry-After).
+    if ((res.status !== 429 && res.status < 500) || attempt >= 4) break;
+    const after = Number(res.headers.get("retry-after"));
+    await new Promise((r) => setTimeout(r, (after > 0 ? Math.min(after, 60) : 4 * 2 ** attempt) * 1000 + Math.random() * 1000));
+  }
   if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return res.json();
 }

@@ -209,7 +209,7 @@ export async function render(
   if (opts.kit) {
     const scene = await generateImage(
       opts.imageModel,
-      `${d.visualPrompt}\n4:5 vertical photo for a social ad. Photoreal, natural light, the product clearly visible in the upper two-thirds. Absolutely no text, words, letters, numbers, logos, labels or signage anywhere in the image; the headline is added later. Keep the bottom third calm and uncluttered.${colors}${fixes}`,
+      `${d.visualPrompt}\n4:5 vertical photo for a social ad. Photoreal, natural light, the product clearly visible in the upper two-thirds. Absolutely no text, words, letters, numbers, logos, labels or signage anywhere in the image; any box, bag or packaging is plain and unbranded; the headline is added later. Keep the bottom third calm and uncluttered.${colors}${fixes}`,
       opts.refs,
     );
     const url = await typesetStatic(scene.url, { ...opts.kit, headline: d.copy?.metaHeadline || d.hook, cta: d.copy?.metaCta });
@@ -231,7 +231,7 @@ export async function qa(model: string, mediaUrl: string, mediaType: "image" | "
   if (mediaType === "video") return videoQA(model, mediaUrl, b, hook, captions);
   const { data, usage } = await chatJSON<{ score: number; notes: string[] }>(
     model,
-    `${QA_RUBRIC} This is ONE static ad with ONE idea: judge it on that idea. Do not lower the score for leaving out secondary facts from the brief (other prices, every service area, terms, timelines); a separate checker enforces mandatory copy. Also fail any misspelled word, made-up social handle or URL, wordmark that doesn't match the brand, or copied third-party logo.`,
+    `${QA_RUBRIC} This is ONE static ad with ONE idea: judge it on that idea. Do not lower the score for leaving out secondary facts from the brief (other prices, every service area, terms, timelines); a separate checker enforces mandatory copy. Headline, offer and CTA are typeset in code; the brand logo appears only if the brand uploaded one, so never ask for a wordmark. Also fail any misspelled word, made-up social handle or URL, wordmark that doesn't match the brand, or copied third-party logo.`,
     [
       { type: "text", text: `Brief: ${JSON.stringify(b)}\nIntended hook: ${hook}\nReturn JSON: {"score": number, "notes": string[] (max 4, concrete fixes)}` },
       { type: "image_url", image_url: { url: mediaUrl } },
