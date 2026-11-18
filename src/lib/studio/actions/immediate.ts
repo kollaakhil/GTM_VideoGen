@@ -1,3 +1,4 @@
+import { overrideStage as setOverride, saveStage } from "@/lib/stage-policy";
 import { NextResponse } from "next/server";
 import { diversityIssues, selectDiverse } from "@/lib/concepts";
 import { MODELS, providerConfigured } from "@/lib/models";
@@ -81,7 +82,19 @@ export async function approveTake(run: StudioRun, body: Body<"approve_take">, us
   if (take.storyboardKey !== d.storyboardKey) return NextResponse.json({ error: "The storyboard changed after this take. Render a new take first." }, { status: 400 });
   for (const t of d.takes!) t.approvedBy = t.id === take.id ? user : null;
   d.approvedTakeId = take.id;
+  // The gate chips follow the approved take, so its own video, sound and edit scores are what HD is checked against.
+  for (const g of take.stages ?? []) saveStage(run, g, d.id);
   say(run, "agent", `Approved take ${d.takes!.indexOf(take) + 1} (${take.score}/10${take.pass ? "" : ", below the 9/10 bar: the HD export must still pass QA before publishing"}). Upscaling keeps these exact shots, voice and music.`);
+  run.updatedAt = now();
+  await put("studio_runs", run);
+  return NextResponse.json({ run });
+}
+
+/** A human lets a stage through below its threshold; the reason and who did it are kept on the score. */
+export async function overrideStage(run: StudioRun, body: Body<"override_stage">, user: string) {
+  if (!setOverride(run, body.key, user, body.reason)) return NextResponse.json({ error: "That stage hasn't been scored yet" }, { status: 404 });
+  const s = run.stageScores![body.key];
+  say(run, "agent", `${user} overrode the ${s.stage} gate at ${s.score}/10: ${body.reason}`);
   run.updatedAt = now();
   await put("studio_runs", run);
   return NextResponse.json({ run });

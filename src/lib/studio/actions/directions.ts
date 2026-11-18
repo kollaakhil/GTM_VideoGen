@@ -1,3 +1,4 @@
+import { stageBlock } from "@/lib/stage-policy";
 import { directions } from "@/lib/pipeline";
 import { vocBlock } from "@/lib/ad-wisdom";
 import type { StudioRun } from "@/lib/types";
@@ -8,6 +9,8 @@ import type { Job, ActionBody } from "./types";
 export async function planDirections(run: StudioRun, body: ActionBody<"directions">): Promise<Job> {
   const m = run.models;
   if (!run.brief || !run.research) return { error: "Write the brief first" };
+  const gate = stageBlock(run, "research");
+  if (gate) return { error: gate };
   if (body.format) run.format = body.format;
   return {
     activity: `Pitching ${(run.concepts ?? []).filter((c) => c.selected).length || 3} directions…`,

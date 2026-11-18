@@ -1,3 +1,4 @@
+import { stageBlock } from "@/lib/stage-policy";
 import { CATEGORIES } from "@/lib/video-plan";
 import { STATIC_FORMATS } from "@/lib/ad-wisdom";
 import { concepts, diversityIssues } from "@/lib/concepts";
@@ -9,6 +10,8 @@ import type { Job, ActionBody } from "./types";
 export async function planConcepts(run: StudioRun, body: ActionBody<"concepts">): Promise<Job> {
   const m = run.models;
   if (!run.brief || !run.research) return { error: "Write the brief first" };
+  const gate = stageBlock(run, "research");
+  if (gate) return { error: gate };
   if (body.format) run.format = body.format;
   return {
     activity: "Building the concept matrix…",

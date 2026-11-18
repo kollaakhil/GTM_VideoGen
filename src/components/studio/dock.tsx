@@ -7,6 +7,7 @@ import { AlertTriangle, ArrowRight, Square, Film, Loader2, Pencil, Plus, Refresh
 import { Button } from "@/components/ui/button";
 import { draftVideoBlocker, scriptProductionBlockers, storyboardKeyframeFixes, storyboardProofPhoto, storyboardTargets } from "@/lib/quality-policy";
 import { useFlow } from "./context";
+import { QualityGates } from "./quality-gates";
 import { storyboardPhotos } from "./utils";
 
 export function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
@@ -132,7 +133,8 @@ export function Dock({ elapsed, notice }: { elapsed: number; notice: string | nu
   }
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex justify-center px-6">
+    <div className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex flex-col items-center gap-2 px-6">
+      <QualityGates />
       <div className="pointer-events-auto flex max-w-3xl items-center gap-4 rounded-2xl border border-white/10 bg-zinc-900/90 py-2 pl-4 pr-2 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.9)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-300">
         <div className="min-w-0 text-[13px] text-zinc-200">
           {notice ? <span className="text-emerald-300">{notice}</span> : lastError ? (

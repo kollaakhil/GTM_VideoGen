@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { providerOf } from "@/lib/models";
 import { qa } from "@/lib/pipeline";
-import { audioConfigured, transcribe, generateVideo, musicBed, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
+import { aiConfigured, audioConfigured, transcribe, generateVideo, musicBed, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
 import { lookLine, musicPrompt } from "@/lib/video-looks";
 import { upscaleClip } from "@/lib/upscale";
 import { blenderAvailable, buildWorld, cameraPlate, REAL_SET_RESERVE, realSetStatus } from "@/lib/real-set";
@@ -17,6 +17,9 @@ import { now, say, live, saveRun } from "./run-state";
 import { brandFor, guidance, brandName, shortHash, swipesFor } from "./context";
 import { inspirationGuidance } from "@/lib/inspiration";
 import { saveCreative } from "./creatives";
+import { better, gateJudge, shotsGate, audioChecks, editChecks, judgeContinuity, videoChecks } from "@/lib/stage-gates";
+import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
+import { latestCalibration } from "@/lib/judge-calibration";
 
 async function remember(run: StudioRun, s: Shot, kind: "keyframe" | "clip", model: string, q: ShotQA) {
   if (!shotReady(q) || !run.videoPlan) return;
@@ -56,7 +59,27 @@ export async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: 
 
 export async function storyboard(run: StudioRun, d: Direction, refs: string[], savedRefs: string[]) {
   const structure = inspirationGuidance((await swipesFor(run)).flatMap((x) => x.breakdown ? [x.breakdown] : []));
-  const p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, await winningShots(run), (await guidance(run)) + structure);
+  const rules = (await guidance(run)) + structure;
+  const winners = await winningShots(run);
+  let p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, winners, rules);
+  // Shot-plan gate before any keyframe spend: specific, consistent cast and set, lens and continuity, matching the script.
+  if (aiConfigured()) {
+    const cal = await latestCalibration();
+    const judge = gateJudge(run);
+    let gate = await shotsGate(judge, p.shots, cal);
+    if (!gate.score.pass) {
+      const again = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, winners, `${rules}\nA director rejected the last shot list (${gate.score.score}/10). Fix every point: ${gate.fixes.join(" | ")}`).catch(() => null);
+      if (again) {
+        run.costUsd += again.cost;
+        const g2 = await shotsGate(judge, again.shots, cal, 2);
+        if (g2.score.score >= gate.score.score) p = { ...again, cost: p.cost };
+        gate = better(gate, g2);
+      }
+    }
+    run.costUsd += gate.cost;
+    saveStage(run, gate.score, d.id);
+    if (!gate.score.pass) say(run, "error", `${stageBlock(run, "shots", d.id)} Top fixes: ${gate.fixes.slice(0, 3).join(" ")}`);
+  }
   Object.assign(d, { shots: p.shots, productRefs: savedRefs, storyboardKey: randomUUID(), passingDraft: null, compactCopy: false });
   run.costUsd += p.cost;
   if (run.job) {
@@ -282,7 +305,7 @@ Start from the attached frame. Preserve the exact product; no invented text or l
   d.passingDraft = done.pass ? d.storyboardKey : null;
   const take: VideoTake = {
     id: newId("take"), storyboardKey: d.storyboardKey!, creativeId: done.creativeId ?? "", url: done.url, score: done.quality.score, pass: done.pass,
-    clips: clips.map(({ shotId, url, model }) => ({ shotId, url, model })), voices, music, costUsd: spent, createdAt: now(),
+    clips: clips.map(({ shotId, url, model }) => ({ shotId, url, model })), voices, music, costUsd: spent, createdAt: now(), stages: done.stages,
   };
   d.takes = [...(d.takes ?? []).filter((t) => t.storyboardKey === d.storyboardKey), take].slice(-6);
   await saveRun(run);
@@ -391,7 +414,8 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     const shot = shots.find((s) => s.id === finding.shotId);
     if (shot?.vo) delete shot.voiceTrack;
   }
-  findings.push(...await wordLevelFindings(main, segments, script, plan.category));
+  const words = await wordLevelFindings(main, segments, script, plan.category);
+  findings.push(...words.findings);
 
   const evidence: VideoQuality["shots"] = [];
   for (const [i, s] of shots.entries()) {
@@ -439,26 +463,65 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     const segment = segments[n - 1];
     findings.push({ kind: "preflight", at: segment.start, shotId: segment.shotId, expected: `Keyframe match and ${QA_PASS}/10 before HD`, observed: `Keyframe ${n} still needs review.`, status: "review" });
   }
+  const stages = await takeStages(run, main, { shots, st, evidence, craft: craft.score, words, music: a.music, speechFails: speech.findings.filter((f) => f.kind === "speech" && f.status === "fail").length, charge, beats: d.approvedScript?.beats.map((b) => b.seconds) });
+  for (const g of stages) saveStage(run, g, d.id);
   const quality = { ...exportVerdict(tier, craft.score, evidence, findings, variants.map((v) => v.aspect)), storyboardKey: d.storyboardKey! };
   const pass = videoReady(quality);
   const result = { score: quality.score, pass, notes: [...findings.slice(0, 5).map((f) => f.observed), ...craft.notes] };
   const model = [...new Set(a.clips.map((c) => c.model))].join(" + ") + (a.upscaledFrom ? " (Real-ESRGAN HD)" : "");
   const creative = await saveCreative(run, d, { url: main, type: "video", model, variants, quality }, result, a.spent, null);
   run.job = null;
-  return { quality, pass, url: creative?.mediaUrl ?? "", creativeId: creative?.id ?? null };
+  return { quality, pass, url: creative?.mediaUrl ?? "", creativeId: creative?.id ?? null, stages };
+}
+
+/** Video, sound & voice and edit gates for one cut (see stage-gates.ts); one continuity vision call when AI is on. */
+async function takeStages(run: StudioRun, main: string, o: {
+  shots: Shot[]; st: { starts: number[]; duration: number }; evidence: VideoQuality["shots"]; craft: number; words: WordLevel; music: string | null; speechFails: number; charge: (n: number) => void; beats?: number[];
+}) {
+  const plan = run.videoPlan!;
+  const judge = gateJudge(run);
+  const cal = await latestCalibration();
+  const lines = o.shots.filter((s) => s.vo.trim()).length;
+  const shotSeconds = o.shots.map((s, i) => (o.st.starts[i + 1] ?? o.st.duration) - o.st.starts[i]);
+  let continuity: number | null = null;
+  const notes: string[] = [];
+  if (aiConfigured()) {
+    try {
+      const frames = (await Promise.all(o.shots.map((s, i) => evidenceFrames(main, [Number((o.st.starts[i] + shotSeconds[i] / 2).toFixed(3))])))).flat();
+      const c = await judgeContinuity(judge, frames);
+      o.charge(c.cost);
+      continuity = c.score;
+      notes.push(...c.notes);
+    } catch {
+      notes.push("Continuity judge could not run.");
+    }
+  }
+  const cuts = await sceneCuts(main).catch(() => null);
+  const video = stageScore("video", videoChecks(o.evidence.map((e) => e.qa), o.craft), run.models.vision, 1, o.evidence.flatMap((e) => e.qa?.notes ?? []).slice(0, 4), cal);
+  const audio = stageScore("audio", audioChecks({ wer: o.words.wer, werVia: o.words.via, lufs: o.words.level?.lufs ?? null, peak: o.words.level?.peak ?? null, linesOutside: o.words.linesOutside, lines, musicPlanned: !!plan.music, musicPresent: !!o.music, speechFails: o.speechFails }), "rules", 1);
+  const edit = stageScore("edit", editChecks({
+    planned: o.st.starts.slice(1), detected: cuts?.cuts.filter((t) => t > 0.2 && t < o.st.duration - 0.2) ?? [], shotSeconds,
+    beatSeconds: o.beats?.length === o.shots.length ? o.beats : o.shots.map((s) => s.seconds),
+    wordsPerShot: o.shots.map((s) => s.vo.split(/\s+/).filter(Boolean).length), continuity,
+  }), judge, 1, notes, cal);
+  return [video, audio, edit];
 }
 
 /** Word-by-word checks on the final mix: WER against the script, voice timing per shot, and lip sync when enabled. */
-async function wordLevelFindings(main: string, segments: { shotId: string; start: number; end: number; text: string }[], script: string, category: string): Promise<QualityFinding[]> {
+type WordLevel = { findings: QualityFinding[]; wer: number | null; via?: string; linesOutside: number; level: { lufs: number; peak: number } | null };
+
+async function wordLevelFindings(main: string, segments: { shotId: string; start: number; end: number; text: string }[], script: string, category: string): Promise<WordLevel> {
   const findings: QualityFinding[] = [];
   const timed = await wordTimings(main).catch(() => null);
-  if (!timed) return findings;
+  if (!timed) return { findings, wer: null, linesOutside: 0, level: await loudness(main).catch(() => null) };
+  let linesOutside = 0;
   const heard = timed.words.map((w) => w.word).join(" ");
   const { wer, via } = await werCheck(script, heard);
   if (wer > 0.1) findings.push({ kind: "speech", at: 0, expected: `Narration matches the script (WER ≤ 10%, ${via})`, observed: `WER ${(wer * 100).toFixed(0)}%: heard “${heard.slice(0, 200)}”`, status: wer > 0.25 ? "fail" : "review" });
   for (const seg of segments) {
     if (!seg.text.trim()) continue;
     const inside = timed.words.filter((w) => w.start >= seg.start - 0.05 && w.start < seg.end);
+    if (!inside.length) linesOutside++;
     if (!inside.length) findings.push({ kind: "speech", shotId: seg.shotId, at: seg.start, expected: `Voice inside its shot (${seg.start.toFixed(1)}–${seg.end.toFixed(1)}s, ${timed.via})`, observed: "No words were heard during this shot", status: "fail" });
   }
   const level = await loudness(main).catch(() => null);
@@ -467,7 +530,7 @@ async function wordLevelFindings(main: string, segments: { shotId: string; start
     const sync = await lipSync(main);
     if (sync && (Math.abs(sync.offset) > 3 || sync.confidence < 3)) findings.push({ kind: "speech", at: 0, expected: "Lip sync within 3 frames (SyncNet)", observed: `Offset ${sync.offset} frames, confidence ${sync.confidence.toFixed(1)}`, status: "review" });
   }
-  return findings;
+  return { findings, wer, via, linesOutside, level };
 }
 
 async function checkedVoice(line: string, voice: string, charge: (n: number) => void) {

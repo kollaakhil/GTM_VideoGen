@@ -91,6 +91,8 @@ export const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("render_video"), runId: z.string().max(64), directionId: z.string().max(32), tier: z.enum(["draft", "final"]), refs: Refs, draftModel: z.string().max(120).optional(), finalModel: z.string().max(120).optional(), takes: z.number().int().min(1).max(3).optional() }),
   z.object({ action: z.literal("shot_settings"), runId: z.string().max(64), directionId: z.string().max(32), shotId: z.string().max(8), model: ModelId.optional(), lens: z.enum(LENS_IDS).optional() }),
   z.object({ action: z.literal("approve_take"), runId: z.string().max(64), directionId: z.string().max(32), takeId: z.string().max(64) }),
+  z.object({ action: z.literal("override_stage"), runId: z.string().max(64), key: z.string().regex(/^(research|shots|video|audio|edit)(:[A-Za-z0-9_-]{1,32})?$/), reason: z.string().trim().min(3).max(300) }),
+  z.object({ action: z.literal("calibrate_judges"), runId: z.string().max(64) }),
   z.object({ action: z.literal("regenerate"), runId: z.string().max(64), directionId: z.string().max(32), refs: Refs }),
 ]);
 
