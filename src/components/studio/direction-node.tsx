@@ -63,7 +63,7 @@ export function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
           />
           </>
         )}
-        {run.status === "working" && run.job?.directionId === d.id && <JobBar job={run.job} />}
+        {run.status === "working" && run.job?.directionId === d.id && !run.job.phase && <JobBar job={run.job} />}
         {d.format === "video" && (
           <details className="text-xs text-zinc-400">
             <summary className="cursor-pointer">Concept details</summary>

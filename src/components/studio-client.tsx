@@ -90,7 +90,13 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
     if (status !== "working" || !id) return;
     const since = Date.now();
     setElapsed(0);
-    const poll = setInterval(() => loadRun(id), 1500);
+    // One poll in flight at a time: a slow server must not pile up requests behind a long job.
+    let inFlight = false;
+    const poll = setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
+      void Promise.resolve(loadRun(id)).finally(() => { inFlight = false; });
+    }, 1500);
     const tick = setInterval(() => setElapsed(Math.round((Date.now() - since) / 1000)), 1000);
     return () => {
       clearInterval(poll);
@@ -128,7 +134,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
   };
   const startRun = () => {
     const inspirations = form.inspirations.flatMap((i): Inspiration[] => i.upload ? [{ upload: i.upload, name: i.name }] : i.url?.trim() && urlOk(i.url) ? [{ url: fullUrl(i.url) }] : []);
-    return act("research", { offer: form.offer.trim() || undefined, brandUrl: fullUrl(form.brandUrl), referenceUrl: inspirations.find((i) => i.url)?.url ?? "", goal: form.goal.trim(), format: form.format, models: form.sel, inspirations, autoBrief: true });
+    return act("research", { offer: form.offer.trim() || undefined, brandUrl: fullUrl(form.brandUrl), referenceUrl: inspirations.find((i) => i.url && !MEDIA_LINK.test(i.url))?.url ?? "", goal: form.goal.trim(), format: form.format, models: form.sel, inspirations, autoBrief: true });
   };
 
   const creativeAction = async (c: Creative, a: CreativeAction, ch?: "meta" | "google", reason?: string) => {
@@ -226,6 +232,9 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
     </FlowCtx.Provider>
   );
 }
+
+/** Direct video/image links are broken down as inspirations, never fetched as a style page. */
+const MEDIA_LINK = /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)(\?|#|$)/i;
 
 export function StudioClient(props: { models: Model[]; defaults: Record<Modality, string> }) {
   return (

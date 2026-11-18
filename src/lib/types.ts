@@ -286,6 +286,9 @@ export interface VideoTake {
   createdAt: string;
   approvedBy?: string | null;
   upscaledCreativeId?: string | null;
+  /** The final (upscaled) video and its QA score. */
+  upscaledUrl?: string | null;
+  finalScore?: number | null;
   /** Video, sound and edit gate scores for this take. */
   stages?: StageScore[];
 }
@@ -427,7 +430,9 @@ export interface StudioRun {
   status: "idle" | "working" | "error";
   activity: string | null;
   jobId?: string | null;
-  job?: { label: string; done: number; total: number; directionId?: string } | null;
+  job?: JobProgress | null;
+  /** The last failed background job: the real error, and the request to send again for Retry. */
+  failure?: { message: string; directionId?: string; retry?: Record<string, unknown>; at: string } | null;
   videoPlan?: VideoPlan | null;
   storyboardPhotos?: string[];
   brandId?: string | null;
@@ -521,4 +526,17 @@ export interface JudgeCalibration {
   judges: { judge: string; kind: string; accuracy: number; inflation: number; items: number }[];
   disagreements: { kind: string; item: string; label: "pass" | "fail"; expected: number; got: number; note: string }[];
   costUsd: number;
+}
+
+export type JobPhase = "queued" | "preflight" | "voice" | "rendering" | "qa" | "stitching" | "upscaling" | "done" | "failed";
+
+/** Background job progress the UI polls: overall step, phase, and one entry per shot for video renders. */
+export interface JobProgress {
+  label: string;
+  done: number;
+  total: number;
+  directionId?: string;
+  phase?: JobPhase;
+  startedAt?: string;
+  shots?: { id: string; stage: JobPhase; startedAt?: string; endedAt?: string }[];
 }

@@ -123,3 +123,19 @@ Each static direction renders `TOURNAMENT_SIZE` takes (default 2, max 4) and kee
 - **TTS check blocked the first 480p take before any video spend:** "The narration did not match an approved line after two attempts." The CTA "Get notified at drinkolipop.com." is read and transcribed as "drink olipop dot com", and the exact-token compare failed. Fix: `sameSpeech` also compares the two lines with spaces and "dot" removed (a mishearing like "lollipop" still fails), and the error now quotes what was heard.
 - **Script judge never reached 7 on an out-of-stock product.** Every re-score raised a new proof problem (missing nutrition terms, unverified "ruby-red" color, out-of-stock context), and the score stayed at 6 across 7 re-scores ($0.02 each). For the MVP run I approved the 6/10 script; draft takes are allowed, and HD stays blocked by the script blockers. Lesson: pick an in-stock product page for E2E, and cap re-score loops.
 - **Second try: the voice was heard as "drinkallapop.com".** Speech-to-text mishears coined brand domains. Fix: the voice pre-check (`nearSpeech`) still needs every other word to match exactly, but lets the domain differ by up to 3 characters. Export QA stays strict, so a misread domain still shows up there as a finding.
+
+## 12. Video step: background jobs, progress bars, one linear flow (E2E 2026-11-18)
+
+- **Symptom:** clicking the 480p button "did nothing"; `/api/studio` GETs hung 138–187 s. **Cause:** not the render itself
+  (`render_video` already returns at once and runs in `after()`), but `next dev` recompiling routes on an 8 GB Mac under
+  heavy swap, plus the client firing a new poll every 1.5 s while earlier ones were still pending. **Fix:** run the app
+  with `next build && next start` for testing, and the client keeps one poll in flight at a time.
+- Jobs now persist `run.job` from the moment they are queued (`phase: "queued"`), then `preflight → voice → rendering/qa
+  per shot → stitching → qa` (final: `upscaling` per shot). Each shot carries `stage`, `startedAt`, `endedAt`, so the UI
+  draws an overall bar and per-shot bars with percent and ETA (`src/lib/job-progress.ts`).
+- A failed job logs `[studio] job … failed` server-side and saves `run.failure` with the real message and the original
+  request, so the failure card's **Retry** re-sends exactly that request. A second click while a job runs gets 409.
+- Default 480p model is now a priced fal model (Higgsfield MCP needs its own sign-in and has no price, so estimates
+  showed "?"). Default takes: 1.
+- **Make final video anyway** (`acceptWarnings`) overrides failing take gates on the record, turns script/keyframe
+  blockers into review findings, and still produces the HD file; the creative stays unpublishable until fixed.

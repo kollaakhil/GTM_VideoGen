@@ -49,6 +49,10 @@ export function VideoPlanNode() {
               ))}
             </select>
           </label>
+        </div>
+        <details className="nodrag rounded-lg border border-white/10 px-2 py-1.5 text-xs text-zinc-300">
+          <summary className="cursor-pointer text-[11px] text-zinc-400">Customize · voice, model, lens, style, music, real set</summary>
+          <div className="mt-2 grid grid-cols-2 gap-2">
           <label className="block space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-zinc-500">Voice</span>
             <select className={sel} value={p.voice} onChange={(e) => set({ voice: e.target.value })}>
@@ -97,7 +101,8 @@ export function VideoPlanNode() {
           <label className="flex items-end gap-2 pb-1.5 text-xs text-zinc-300" title={pricing.realSet?.reason ?? "Build one World Labs 3D set and shoot every keyframe in it"}>
             <input type="checkbox" checked={!!p.realSet} disabled={!pricing.realSet?.available && !p.realSet} onChange={(e) => set({ realSet: e.target.checked })} /> Real set (3D world)
           </label>
-        </div>
+          </div>
+        </details>
         {(() => {
           const draft = estimateCost("video", { perSec: pricing.prices[p.draftModel]?.draft, lengthSec: p.lengthSec, shots, music: p.music });
           const low = pricing.credits != null && pricing.credits < draft * 1.2;
