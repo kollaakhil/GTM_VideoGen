@@ -31,6 +31,8 @@ export interface Research {
   sources: string[];
   styleRef?: string | null;
   colors?: string[];
+  /** Real competitors in the category, named by the research model and checked by the research gate. */
+  competitors?: { name: string; url?: string; difference?: string }[];
 }
 
 export interface VoiceOfCustomer {
@@ -284,6 +286,8 @@ export interface VideoTake {
   createdAt: string;
   approvedBy?: string | null;
   upscaledCreativeId?: string | null;
+  /** Video, sound and edit gate scores for this take. */
+  stages?: StageScore[];
 }
 
 interface RealSet {
@@ -448,6 +452,8 @@ export interface StudioRun {
   brief: Brief | null;
   directions: Direction[];
   creativeIds: string[];
+  /** Per-stage quality gate scores keyed by stage or stage:directionId (see stage-gates.ts). */
+  stageScores?: Record<string, StageScore>;
   costUsd: number;
   createdAt: string;
 }
@@ -489,4 +495,30 @@ export interface SignalEvent {
   status: "sent" | "skipped" | "failed";
   detail: string;
   createdAt: string;
+}
+
+export type StageId = "research" | "script" | "shots" | "video" | "audio" | "edit";
+
+export interface StageScore {
+  stage: StageId;
+  /** Calibrated score the gate compares against its threshold. */
+  score: number;
+  /** Score before judge calibration. */
+  raw: number;
+  pass: boolean;
+  checks: { name: string; score: number; note: string; by: "rules" | "judge"; weight?: number }[];
+  notes: string[];
+  attempts: number;
+  judge: string;
+  override: { by: string; at: string; reason: string } | null;
+  at: string;
+}
+
+/** Judge calibration against the labeled golden set; disagreements are kept for review. */
+export interface JudgeCalibration {
+  id: string;
+  createdAt: string;
+  judges: { judge: string; kind: string; accuracy: number; inflation: number; items: number }[];
+  disagreements: { kind: string; item: string; label: "pass" | "fail"; expected: number; got: number; note: string }[];
+  costUsd: number;
 }

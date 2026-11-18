@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import pg from "pg";
 import { seed } from "./seed";
-import type { Campaign, Creative, InboxItem, MetricDay, SignalEvent, StudioRun, Brand, PromptEntry, Swipe, Integration } from "./types";
+import type { Campaign, Creative, InboxItem, MetricDay, SignalEvent, StudioRun, Brand, PromptEntry, Swipe, Integration, JudgeCalibration } from "./types";
 
 export interface Tables {
   brands: Brand;
@@ -16,6 +16,7 @@ export interface Tables {
   prompt_library: PromptEntry;
   swipes: Swipe;
   integrations: Integration;
+  judge_calibrations: JudgeCalibration;
 }
 export type TableName = keyof Tables;
 
@@ -42,7 +43,7 @@ const BUCKET = "gtm-media";
 type Mem = { [K in TableName]: Map<string, Tables[K]> } & { metrics: MetricDay[] };
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
-const TABLES: TableName[] = ["brands", "studio_runs", "creatives", "inbox_items", "campaigns", "signal_events", "prompt_library", "swipes", "integrations"];
+const TABLES: TableName[] = ["brands", "studio_runs", "creatives", "inbox_items", "campaigns", "signal_events", "prompt_library", "swipes", "integrations", "judge_calibrations"];
 // Serverless filesystems are read-only/ephemeral: there the local store is memory-only and Supabase is required.
 const canPersist = !process.env.VERCEL;
 
@@ -65,6 +66,7 @@ function mem(): Mem {
       prompt_library: new Map(),
       swipes: new Map(),
       integrations: new Map(),
+      judge_calibrations: new Map(),
       metrics: s.metrics,
     };
     persist();

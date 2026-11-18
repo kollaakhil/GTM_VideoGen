@@ -1,6 +1,7 @@
 import { MODELS, providerConfigured } from "@/lib/models";
 import { QA_PASS } from "@/lib/video-plan";
 import { draftVideoBlocker, scriptProductionBlocker, storyboardKeyframeFixes, videoReady } from "@/lib/quality-policy";
+import { stageBlock, takeStageBlock } from "@/lib/stage-policy";
 import type { StudioRun } from "@/lib/types";
 import { say } from "../run-state";
 import { renderVideo } from "../video";
@@ -15,6 +16,8 @@ export async function planRenderVideo(run: StudioRun, body: ActionBody<"render_v
   if (!d || !plan) return { error: "Build a storyboard with keyframes before rendering." };
   const missing = draftVideoBlocker(d, plan);
   if (missing) return { error: missing };
+  const shotGate = stageBlock(run, "shots", d.id);
+  if (shotGate) return { error: shotGate };
   if (body.tier === "final") {
     const blocker = scriptProductionBlocker(d.approvedScript);
     if (blocker) return { error: `Before upgrading to HD: ${blocker}` };
@@ -22,6 +25,8 @@ export async function planRenderVideo(run: StudioRun, body: ActionBody<"render_v
     if (weak.length) return { error: `Before upgrading to HD: redraw keyframes ${weak.join(", ")} until they match and score ${QA_PASS}/10.` };
     const take = d.takes?.find((t) => t.id === d.approvedTakeId);
     if (!take || take.storyboardKey !== d.storyboardKey) return { error: "Approve a 480p take of this storyboard before upscaling to HD." };
+    const weakStage = takeStageBlock(run, d.id, take);
+    if (weakStage) return { error: `Before upgrading to HD: ${weakStage}` };
   }
   for (const m of [body.draftModel]) {
     if (m && !MODELS.some((x) => x.id === m && x.modality === "video" && providerConfigured(x.provider))) return { error: `Video model ${m} isn't available` };

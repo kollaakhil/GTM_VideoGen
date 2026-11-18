@@ -99,7 +99,8 @@ export async function organic(model: string, b: Brief, r: Research, style?: Styl
 
 export const QA_PASS_SCORE = Number(process.env.QA_PASS_SCORE) || 8;
 
-export async function research(model: string, brandUrl: string, goal: string): Promise<{ data: Research; cost: number }> {
+/** `fixes` are the research gate's notes from a failed attempt; `site` reuses an already fetched page. */
+export async function research(model: string, brandUrl: string, goal: string, fixes: string[] = [], prior?: Site): Promise<{ data: Research; cost: number; site: Site | null }> {
   if (!aiConfigured()) {
     return {
       cost: 0,
@@ -111,18 +112,21 @@ export async function research(model: string, brandUrl: string, goal: string): P
         angles: ["Time saved", "Pain of wasted spend", "Social proof", "Founder story"],
         sources: [brandUrl],
       },
+      site: null,
     };
   }
-  const site = await fetchSite(brandUrl);
+  const site = prior ?? (await fetchSite(brandUrl));
   if (site.error && /private|not allowed|Invalid URL/.test(site.error)) throw new Error(site.error);
   const { data, usage } = await chatJSON<Research>(
     model,
     "You are a senior performance-marketing strategist. Analyse the brand from its website copy.",
-    `Goal: ${goal}\nWebsite (${brandUrl}) text:\n${site.text || `(could not fetch site: ${site.error}; infer from URL and say so in the summary)`}\n\nReturn JSON: {"brand": string (the brand name exactly as the site writes it), "summary": string (max 60 words), "audience": string, "valueProps": string[], "tone": string, "angles": string[] (5-6 distinct ad angles), "sources": string[]}`,
+    `Goal: ${goal}\nWebsite (${brandUrl}) text:\n${site.text || `(could not fetch site: ${site.error}; infer from URL and say so in the summary)`}\n\nReturn JSON: {"brand": string (the brand name exactly as the site writes it), "summary": string (max 60 words), "audience": string, "valueProps": string[], "tone": string, "angles": string[] (5-6 distinct ad angles), "sources": string[], "competitors": [{"name": string, "url": string, "difference": string}] (2-4 real companies selling a similar product; only ones you are sure exist, never invented)}
+Only state facts the website text supports; when unsure, leave it out.${fixes.length ? `\nA fact-checker rejected the last version. Fix these: ${fixes.join(" | ")}` : ""}`,
   );
   return {
-    data: { ...data, sources: data.sources?.length ? data.sources : [brandUrl], styleRef: site.styleRef, colors: site.colors },
+    data: { ...data, competitors: Array.isArray(data.competitors) ? data.competitors.filter((c) => c && typeof c.name === "string").slice(0, 4) : [], sources: data.sources?.length ? data.sources : [brandUrl], styleRef: site.styleRef, colors: site.colors },
     cost: usage.costUsd,
+    site,
   };
 }
 

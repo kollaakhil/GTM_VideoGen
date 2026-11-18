@@ -6,7 +6,7 @@ import type { StudioRun } from "@/lib/types";
 import { Body } from "@/lib/studio/schema";
 import { healOrphan, startJob } from "@/lib/studio/run-state";
 import { newRun, runListResponse, runResponse } from "@/lib/studio/runs";
-import { approveTake, cancelRun, editBrief, pickConcepts, saveStoryboardPhotosAction, shotSettings } from "@/lib/studio/actions/immediate";
+import { approveTake, overrideStage, cancelRun, editBrief, pickConcepts, saveStoryboardPhotosAction, shotSettings } from "@/lib/studio/actions/immediate";
 import { plan } from "@/lib/studio/actions";
 
 export const maxDuration = 300;
@@ -44,6 +44,7 @@ export async function POST(req: Request) {
   if (body.action === "pick_concepts") return pickConcepts(run, body);
   if (body.action === "shot_settings") return shotSettings(run, body);
   if (body.action === "approve_take") return approveTake(run, body, user);
+  if (body.action === "override_stage") return overrideStage(run, body, user);
 
   const job = await plan(run, body);
   if ("error" in job) return NextResponse.json({ error: job.error }, { status: 400 });

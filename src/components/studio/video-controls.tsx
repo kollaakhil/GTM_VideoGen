@@ -120,6 +120,11 @@ export function VideoControls({ d }: { d: Direction }) {
               <div className="min-w-0 flex-1 text-[11px] text-zinc-300">
                 <div>Take {i + 1} · <span className={t.pass ? "text-emerald-300" : "text-amber-200"}>{t.score}/10</span> · {money(t.costUsd)}</div>
                 <div className="truncate text-[10px] text-zinc-500">{[...new Set(t.clips.map((c) => c.model.split("/").slice(-2).join("/")))].join(", ")}</div>
+                {!!t.stages?.length && (
+                  <div className="flex gap-1.5 text-[10px]" title={t.stages.map((g) => `${g.stage} ${g.score}/10: ${g.checks.map((c) => `${c.name} ${c.score}`).join(", ")}`).join("\n")}>
+                    {t.stages.map((g) => <span key={g.stage} className={g.pass ? "text-emerald-300" : "text-amber-200"}>{g.stage} {g.score}</span>)}
+                  </div>
+                )}
               </div>
               {t.id === d.approvedTakeId ? (
                 <span className="flex items-center gap-1 text-[11px] text-emerald-300"><CheckCircle2 className="size-3.5" /> Approved</span>

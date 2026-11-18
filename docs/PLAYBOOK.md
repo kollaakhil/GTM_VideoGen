@@ -87,3 +87,31 @@ Each static direction renders `TOURNAMENT_SIZE` takes (default 2, max 4) and kee
 - **Links that hide the video.** YouTube, TikTok, Instagram and Facebook pages don't expose a downloadable file. The breakdown falls back to the page (og:image plus page text) and says so in chat: "Upload the file for a full cut-by-cut breakdown." Direct `.mp4/.mov/.webm` links and pages with `og:video` get the full breakdown. Downloads are SSRF-checked and capped at 30 MB.
 - **Homebrew FFmpeg has no `drawtext`.** Use `node_modules/ffmpeg-static/ffmpeg` for test fixtures with burned-in text.
 - **A style-reference fetch failure no longer fails research.** `styleDNA` errors (for example a direct video link) are caught, and the run continues without the style map.
+
+## 11. Stage gates and judge calibration (PR 6)
+
+- **Every stage has its own scored gate**, shown as a strip of chips above the dock (hover a chip for every check and the suggested fixes). Bars: Research 8, Script 7 (the script lab's existing loop), Shot plan 8, Video 9, Sound & voice 8, Edit 8. A stage under its bar blocks the next step until it's fixed or a human clicks **override** and gives a reason. The reason and who overrode it are kept on the score.
+  - Research blocks concepts and directions.
+  - Shot plan blocks 480p takes.
+  - The approved take's video, sound and edit scores block the HD upscale.
+- **Bounded auto-improve with one cheap retry.** The gate judge is the run's vision model (a flash-class model; set `GATE_JUDGE_MODEL` to change it).
+  - Research is re-run once with the fact-checker's notes on the already-fetched page.
+  - The shot list is re-planned once with the director's fixes *before* any keyframe spend.
+  - The better attempt is kept.
+  - Video, sound and edit are scored on every take. A failing take is fixed by making another 480p take, not by another HD pass.
+- **What each gate checks.**
+  - **Research:** distinct sources, depth, customer evidence and named competitors (rules), plus a judge on hallucinated facts against the site text, evidence and real competitors. Research now names 2–4 real competitors.
+  - **Shot plan:** words per shot, lens/framing, light, word overlap with the locked beat and shared cast/set words (rules), plus a judge on specificity, characters, set, lens, continuity and script match.
+  - **Video:** the worst and average per-scene frame scores, and the Creative Director review.
+  - **Sound & voice:** WER (jiwer), loudness near -14 LUFS with peak under -1, every line inside its shot, per-line speech checks and the music bed.
+  - **Edit:** cuts on the planned starts (scenedetect), shot length vs the beat, words/s, and one continuity vision call over one frame per shot.
+- **Rule of thumb:** any single check at 3/10 or below caps the stage at 6. One broken dimension can't hide behind a good average.
+- **A judge outage never blocks.** If the judge call fails, the gate scores on rules only and says the judge was unavailable. Demo mode (no AI key) skips judging.
+- **QA of the QA.** **Calibrate judges** (about $0.03) scores a labeled golden set: one good and one bad research, one good and one bad shot list, and synthetic continuity frames (the same black bottle framed wide, medium and close vs. one that turns red, then blue).
+  - When the judge scores a known-bad item at or above the bar, the margin is its *inflation*. Later scores from that judge are reduced by it (never raised).
+  - Each disagreement is stored in `judge_calibrations` (migration `0004`) and posted in chat.
+- **Mistake to avoid: never `source .env.local` in the shell you run tests in.** Exported real keys make the mocked script-flow tests call live providers and fail. Load keys only in a subshell for smoke scripts.
+- **vitest gotcha:** a `vi.fn()` that rejects (with either `mockRejectedValue` or a throwing `mockImplementation`) was reported as a test failure even though the gate caught it and returned the right score (confirmed by logging). The unit test covers the fallback with a malformed verdict instead.
+- **First calibration run ($0.028, gemini-3.8-flash):** research and shot judges agreed with every label. The continuity judge scored three identical frames 7/10 (it marks down "no variety"), a disagreement that would have failed good edits. Fix: the golden frames now show the same bottle wide, medium and close, and the prompt says a change of framing between shots is not a continuity error.
+- **Second calibration run found two golden-set bugs, not judge bugs.** (1) The good and bad continuity items were judged in parallel but wrote the same frame files, so the "good" item was scored on the red/blue frames (3/10). Each item now writes its own files. (2) The "grounded" research said "commuters and gym-goers", which the golden site text didn't say. The judge was right to flag it, so the site text now says it. Lesson: when a judge disagrees with a label, check the label and the fixture first.
+- **Third run:** research and shots agreed with every label. The continuity judge still gave the good frames 7 while writing "no continuity errors". It was grading production value, not continuity. An explicit 10/8/6/3 scale didn't help (still 7, "perfect visual continuity"). Fix: the judge now only *lists* errors (minor/major) and the score is computed: 10 − 1.5 per minor − 4 per major. Lesson: ask flash judges for findings, not numbers.

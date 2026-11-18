@@ -1,3 +1,4 @@
+import { planCalibrate } from "./calibrate";
 import type { StudioRun } from "@/lib/types";
 import type { ActionBody, Job, PlannedBody } from "./types";
 import { planResearch } from "./research";
@@ -28,6 +29,7 @@ const HANDLERS: { [A in PlannedBody["action"]]: Handler<A> } = {
   redo_shot: planRedoShot,
   render_video: planRenderVideo,
   regenerate: planRegenerate,
+  calibrate_judges: planCalibrate,
 };
 
 export function plan(run: StudioRun, body: PlannedBody): Promise<Job> {
