@@ -7,7 +7,7 @@ import { rehearseScript, rehearsalMetrics } from "./script-rehearsal";
 
 export const SCRIPT_TARGET = 7;
 export const WRITER = process.env.SCRIPT_WRITER_MODEL || "google/gemini-4-carbon";
-export const JUDGE = process.env.SCRIPT_JUDGE_MODEL || "openai/gpt-6.1-sol";
+const JUDGE = process.env.SCRIPT_JUDGE_MODEL || "openai/gpt-6.1-sol";
 export const SCRIPT_WRITERS = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6.1-sol", "openai/gpt-6-astra"] as const;
 export const SCRIPT_JUDGES = ["openai/gpt-6.1-sol", "anthropic/claude-sonnet-5.5"] as const;
 const LABELS: Record<string, string> = { "openai/gpt-6-astra": "Astra", "openai/gpt-6.1-sol": "Sol", "anthropic/claude-opus-5.5": "Opus 5.5", "anthropic/claude-sonnet-5.5": "Sonnet 5.5", "google/gemini-4-carbon": "Carbon" };
@@ -298,7 +298,7 @@ export function storyWindows(total: number) {
 }
 
 /** Each script is graded in its own call so one malformed answer can't sink the batch. */
-export async function judgeScripts(judge: string, scripts: AdScript[], c: ScriptCtx): Promise<{ scores: ScriptScore[]; cost: number }> {
+async function judgeScripts(judge: string, scripts: AdScript[], c: ScriptCtx): Promise<{ scores: ScriptScore[]; cost: number }> {
   const res = await Promise.all(scripts.map((s) => judgeBatch(judge, [s], c).catch(() => null)));
   const ok = res.filter((r) => r !== null);
   if (!ok.length) throw new Error("The script judge failed on every script");

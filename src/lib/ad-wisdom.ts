@@ -3,7 +3,7 @@ import { safeFetchText } from "./safe-fetch";
 import type { Research, VoiceOfCustomer } from "./types";
 
 /** Classic direct-response principles (Ogilvy, Schwartz, Hopkins, Sugarman, modern paid social) every brief and concept must follow. */
-export const AD_PRINCIPLES = [
+const AD_PRINCIPLES = [
   "Lead with the customer's problem or desire in their own words, not the brand's features (Schwartz: channel existing desire).",
   "Match the message to awareness level: unaware -> story/problem, problem-aware -> agitate + solution, solution-aware -> why us, product-aware -> offer + proof, most-aware -> deal + urgency.",
   "One ad, one idea, one promise. Specific beats general: numbers, places, prices and named outcomes (Hopkins, Ogilvy).",

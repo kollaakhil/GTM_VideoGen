@@ -1,5 +1,5 @@
-export type Channel = "meta" | "google";
-export type CreativeStatus = "draft" | "approved" | "live" | "paused" | "rejected";
+type Channel = "meta" | "google";
+type CreativeStatus = "draft" | "approved" | "live" | "paused" | "rejected";
 
 export interface Brand {
   id: string;
@@ -113,7 +113,7 @@ export interface Brief {
   kpi: string;
 }
 
-export interface AdCopy {
+interface AdCopy {
   metaPrimaryText: string;
   metaHeadline: string;
   metaCta: string;
@@ -323,7 +323,7 @@ export interface Creative {
   metricsSyncedAt?: string | null;
 }
 
-export type Stage = "research" | "brief" | "directions" | "generate" | "qa" | "publish";
+type Stage = "research" | "brief" | "directions" | "generate" | "qa" | "publish";
 
 export interface RunEvent {
   at: string;

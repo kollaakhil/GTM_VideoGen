@@ -24,7 +24,7 @@ async function listPrice(model: string): Promise<[number, number] | null> {
 }
 
 /** openai/* models go straight to OpenAI when OPENAI_API_KEY is set; everything else via OpenRouter. */
-export const viaOpenAI = (model: string) => model.startsWith("openai/") && !!process.env.OPENAI_API_KEY;
+const viaOpenAI = (model: string) => model.startsWith("openai/") && !!process.env.OPENAI_API_KEY;
 
 async function chat(body: Record<string, unknown> & { model: string }) {
   if (!viaOpenAI(body.model)) return openrouter(body);
@@ -165,7 +165,7 @@ function falUnitPrice(model: string) {
 }
 
 /** USD per output second at a resolution, from fal's pricing API (token-priced models use w*h*24fps/1024 tokens per second). */
-export async function falPricePerSec(model: string, resolution: string): Promise<number | null> {
+async function falPricePerSec(model: string, resolution: string): Promise<number | null> {
   const p = await falUnitPrice(model);
   if (!p) return null;
   if (p.unit === "seconds") return p.price;
@@ -230,7 +230,7 @@ async function openrouterVideoSpec(model: string): Promise<VideoSpec> {
 }
 
 const prefer = <T,>(options: T[] | null | undefined, wanted: T[]): T | undefined => (options?.length ? (wanted.find((w) => options.includes(w)) ?? options[0]) : undefined);
-export const nearest = (options: number[] | null | undefined, want: number) => (options?.length ? options.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a)) : want);
+const nearest = (options: number[] | null | undefined, want: number) => (options?.length ? options.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a)) : want);
 
 /** USD per output second from OpenRouter's pricing SKUs (null when unknown or not an OpenRouter model). */
 export async function videoPricePerSec(model: string, resolution = "720p", audio = false): Promise<number | null> {
@@ -332,7 +332,7 @@ async function openrouterVideo(model: string, prompt: string, o: VideoOpts = {})
 const HIGGSFIELD_ASPECTS: Record<string, string[]> = { kling: ["9:16", "1:1"], default: ["9:16", "3:4", "1:1"] };
 
 /** "KEY_ID:KEY_SECRET" from either a single HF_API_KEY or the ID/secret pair. */
-export function higgsfieldCredential(): string | null {
+function higgsfieldCredential(): string | null {
   const id = process.env.HF_API_KEY_ID?.trim();
   const secret = process.env.HF_API_KEY_SECRET?.trim();
   if (id && secret) return `${id}:${secret}`;
@@ -372,7 +372,7 @@ export function parseHiggsfieldRates(text: string): Record<string, number> {
 
 const hfPriceCache = new Map<string, Promise<Record<string, number> | null>>();
 /** Per-second USD rates by resolution, from Higgsfield's estimate endpoint (no charge). */
-export function higgsfieldRates(model: string): Promise<Record<string, number> | null> {
+function higgsfieldRates(model: string): Promise<Record<string, number> | null> {
   const e = model.replace(/^higgsfield:/, "").replace("/text-to-video", "/image-to-video");
   if (!hfPriceCache.has(e)) {
     hfPriceCache.set(
@@ -509,7 +509,7 @@ async function falRun<T>(endpoint: string, input: Record<string, unknown>): Prom
 }
 
 export const audioConfigured = () => !!process.env.FAL_KEY;
-export const VOICES = ["Rachel", "Aria", "Sarah", "Laura", "Charlotte", "Jessica", "Lily", "Roger", "Charlie", "George", "Callum", "Liam", "Will", "Eric", "Chris", "Brian", "Daniel"];
+const VOICES = ["Rachel", "Aria", "Sarah", "Laura", "Charlotte", "Jessica", "Lily", "Roger", "Charlie", "George", "Callum", "Liam", "Will", "Eric", "Chris", "Brian", "Daniel"];
 
 /** ElevenLabs voiceover via fal ($0.05 per 1k characters). */
 /** Speech-to-text via fal Whisper; returns the transcript and timed segments. */

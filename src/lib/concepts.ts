@@ -3,7 +3,7 @@ import { principlesBlock, vocBlock } from "./ad-wisdom";
 import { diversityScores } from "./pipeline";
 import type { Brief, Concept, Research, StyleDNA, Swipe, VoiceOfCustomer } from "./types";
 
-export const AWARENESS = ["unaware", "problem", "solution", "product", "most"] as const;
+const AWARENESS = ["unaware", "problem", "solution", "product", "most"] as const;
 
 /** Minimum distinctness (0-1, Jaccard distance on the concept's descriptors) for a concept to count as its own creative. */
 export const MIN_DIVERSITY = 0.55;

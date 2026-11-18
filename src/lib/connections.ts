@@ -1,4 +1,4 @@
-export interface ConnectionDef {
+interface ConnectionDef {
   id: string;
   name: string;
   group: "AI & Media" | "Data sources" | "Publishing" | "Signals" | "Infrastructure";
@@ -6,7 +6,7 @@ export interface ConnectionDef {
   note: string;
 }
 
-export const CONNECTIONS: ConnectionDef[] = [
+const CONNECTIONS: ConnectionDef[] = [
   { id: "openrouter", name: "OpenRouter", group: "AI & Media", envs: ["OPENROUTER_API_KEY"], note: "Text, vision QA, image models and Gemini Omni video" },
   { id: "openai", name: "OpenAI", group: "AI & Media", envs: ["OPENAI_API_KEY"], note: "GPT models (Astra, Sol) called directly instead of via OpenRouter; used when Sol grades or Astra/Sol writes in Script Lab" },
   { id: "fal", name: "fal.ai", group: "AI & Media", envs: ["FAL_KEY"], note: "Seedance, Kling and other premium video models" },

@@ -151,7 +151,7 @@ export async function audioFindings(media: string, contentDuration: number, aspe
 
 const localModel = () => process.env.WHISPER_MODEL_PATH;
 
-export async function audioWindow(file: string, out: string, start?: number, end?: number) {
+async function audioWindow(file: string, out: string, start?: number, end?: number) {
   await run(ffmpeg, ["-v", "error", ...(start !== undefined ? ["-ss", sec(start)] : []), "-i", file, ...(end !== undefined && start !== undefined ? ["-t", sec(end - start)] : []), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-y", out], args);
 }
 
