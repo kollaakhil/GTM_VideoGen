@@ -7,7 +7,7 @@ import { upscaleClip } from "@/lib/upscale";
 import { blenderAvailable, buildWorld, cameraPlate, REAL_SET_RESERVE, realSetStatus } from "@/lib/real-set";
 import { lipSync, loudness, sceneCuts, werCheck, wordTimings } from "@/lib/qa-tools";
 import { CATEGORIES, keyframe, planShots, QA_PASS, reviewShotFrames } from "@/lib/video-plan";
-import { checkScript, sameSpeech } from "@/lib/script-lab";
+import { checkScript, nearSpeech } from "@/lib/script-lab";
 import { approvedStoryboardLength, scriptProductionBlockers, shotReady, storyboardKeyframeFixes, videoAspects, videoReady } from "@/lib/quality-policy";
 import { captionVariants, END_SECONDS, expectedCopy, meanVolume, mediaDuration, stitchShots } from "@/lib/video-post";
 import { audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
@@ -540,7 +540,7 @@ async function checkedVoice(line: string, voice: string, charge: (n: number) => 
     charge(v.usage.costUsd);
     const heard = await transcribeLine(v.url, transcribe);
     charge(heard.usage.costUsd);
-    if (sameSpeech(heard.text, line)) return v.url;
+    if (nearSpeech(heard.text, line)) return v.url;
     last = heard.text;
   }
   throw new Error(`The narration did not match an approved line after two attempts (expected “${line}”, heard “${last.slice(0, 160)}”). Check pronunciation or reapprove revised wording before video spend.`);

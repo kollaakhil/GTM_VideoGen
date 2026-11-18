@@ -151,6 +151,40 @@ export function sameSpeech(heard: string, expected: string) {
   return collapsed(heard) === collapsed(expected);
 }
 
+/**
+ * Voice pre-check tolerance for lines that contain a web domain: speech-to-text routinely mishears coined brand
+ * domains ("drinkolipop.com" → "drinkallapop.com"). Every word outside the domain must still match exactly, and the
+ * domain may differ by at most 3 characters.
+ */
+export function nearSpeech(heard: string, expected: string) {
+  if (sameSpeech(heard, expected)) return true;
+  const domain = expected.match(/\b[a-z0-9-]+\.(com|co|io|ai|net|org|shop|store)\b/i)?.[0];
+  if (!domain) return false;
+  const [before, after] = expected.split(domain);
+  const words = (t: string) => exactCopy(t).split(/\s+/).filter(Boolean);
+  const h = words(heard.replace(/\.(?=[a-z])/gi, " dot ")).filter((w) => w !== "dot");
+  const b = words(before), a = words(after.replace(/^\.?[a-z]*/i, ""));
+  if (h.length < b.length + a.length + 1) return false;
+  if (h.slice(0, b.length).join(" ") !== b.join(" ") || (a.length && h.slice(-a.length).join(" ") !== a.join(" "))) return false;
+  const mid = h.slice(b.length, h.length - a.length).join("").replace(/(com|co|io|ai|net|org|shop|store)$/, "");
+  const want = exactCopy(domain.replace(/\.[a-z]+$/i, "")).replace(/\s+/g, "");
+  return levenshtein(mid, want) <= 3;
+}
+
+function levenshtein(a: string, b: string) {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = tmp;
+    }
+  }
+  return row[b.length];
+}
+
 const hasPhrase = (line: string, phrase: string) => {
   const matchCopy = (s: string) => exactCopy(s.normalize("NFKC").replace(/(\d)([.,])(?=\d)/g, (_, digit: string, separator: string) => `${digit}${separator === "." ? "decimalpoint" : ""}`)
     .replace(/(\d)\+/g, "$1 plus").replace(/£(?=\s?\d)/g, "pounds ").replace(/€(?=\s?\d)/g, "euros "));
