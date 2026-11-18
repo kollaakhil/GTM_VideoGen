@@ -142,3 +142,10 @@ Each static direction renders `TOURNAMENT_SIZE` takes (default 2, max 4) and kee
 - **"OpenRouter's balance … too low" with $14.9 left (E2E 3:01 PM):** the balance check had an 8 s timeout and treated
   "no answer" as "no money". On the swapping Mac both requests timed out. Now each check retries once (10 s, then 25 s),
   logs `[openrouter] … check failed`, and an unreachable API says so ("Nothing was spent; press Retry").
+- **Black panels over the product in the final (E2E 4:09 PM):** after an on-screen copy mismatch the export is
+  re-typeset in "compact copy" mode, which drew two fixed `drawbox` panels (about 89%×26% and 81%×32% of the frame) for
+  the whole video. **Fix:** no fixed panels; every caption/overlay line gets its own tight semi-opaque ASS box
+  (BorderStyle 3, padding ≈ 0.28 × font size) that exists only while that line is on screen.
+  Test: `tests/caption-backing.test.ts` checks pixels around and after the text stay clear.
+- **Step counter jumped 4/7 → 6/8 on the final:** upscale used `shots + 3` but stitch/QA used the draft's `shots + 4`.
+  One `jobSteps(tier, shots)` now numbers every step of a job.
