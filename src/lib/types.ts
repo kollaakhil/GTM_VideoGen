@@ -268,6 +268,12 @@ export interface AdScript {
   rounds?: number;
   review?: { rubric: string; writer: string; judge: string; targetSeconds: number };
   proofBrief?: ScriptProofBrief;
+  /** Script style id chosen at the Script checkpoint (absent = auto). */
+  style?: string;
+  /** Jev pre-check (JEV_GATES=1): per-question probabilities, why it escalated, and whether the judge was skipped. */
+  gate?: { model: string; cost: number; skippedJudge: boolean; reasons: string[]; answers: { id: string; yes: number; confidence: number; ok: boolean }[] };
+  /** Claims preflight on every script line: unsupported, comparison or superlative claims and where they appear. */
+  claimFlags?: { where: string; claim: string }[];
 }
 
 export interface QAResult {
@@ -356,6 +362,8 @@ export interface StudioRun {
   concepts?: Concept[];
   swipeIds?: string[];
   referenceUrl?: string | null;
+  /** Script style the operator picked at the Script checkpoint (see script-styles.ts). */
+  scriptStyle?: string | null;
   offer?: string | null;
   styleDNA?: StyleDNA | null;
   organic?: OrganicPack | null;

@@ -12,7 +12,7 @@ export const TOURNAMENT_SIZE = Math.max(1, Math.min(4, Number(process.env.TOURNA
 export const goalCtx = (run: StudioRun, extra = "") =>
   (run.offer ? `${run.goal}\nReal offer terms (use exactly; never invent prices, discounts or shipping terms beyond these): ${run.offer}` : run.goal) + extra;
 
-export const hostOf = (u: string) => new URL(u).hostname.replace(/^www\./, "");
+const hostOf = (u: string) => new URL(u).hostname.replace(/^www\./, "");
 
 export async function brandFor(run: StudioRun) {
   if (run.brandId) {
@@ -38,3 +38,8 @@ export function saveStoryboardPhotos(runId: string, refs: string[]) {
 }
 
 export const shortHash = (input: unknown) => createHash("sha256").update(JSON.stringify(input)).digest("hex").slice(0, 24);
+
+/** Swipe-file ads saved for this brand (or for any brand), used as inspirations for concepts and scripts. */
+export async function swipesFor(run: StudioRun) {
+  return (await list("swipes")).filter((s) => !s.brandUrl || hostOf(s.brandUrl) === hostOf(run.brandUrl)).slice(0, 8);
+}

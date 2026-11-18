@@ -1,10 +1,9 @@
 import { CATEGORIES } from "@/lib/video-plan";
 import { STATIC_FORMATS } from "@/lib/ad-wisdom";
 import { concepts, diversityIssues } from "@/lib/concepts";
-import { list } from "@/lib/store";
 import type { StudioRun } from "@/lib/types";
 import { say } from "../run-state";
-import { hostOf, guidance } from "../context";
+import { guidance, swipesFor } from "../context";
 import type { Job, ActionBody } from "./types";
 
 export async function planConcepts(run: StudioRun, body: ActionBody<"concepts">): Promise<Job> {
@@ -14,7 +13,7 @@ export async function planConcepts(run: StudioRun, body: ActionBody<"concepts">)
   return {
     activity: "Building the concept matrix…",
     work: async () => {
-      const swipes = (await list("swipes")).filter((s) => !s.brandUrl || hostOf(s.brandUrl) === hostOf(run.brandUrl)).slice(0, 8);
+      const swipes = await swipesFor(run);
       const formats = run.format === "video" ? Object.values(CATEGORIES).map((c) => c.label) : STATIC_FORMATS;
       const c = await concepts(m.text, { research: run.research!, brief: run.brief!, voc: run.voc, style: run.styleDNA, swipes, formats, rules: await guidance(run) });
       Object.assign(run, { concepts: c.data, directions: [], stage: "directions", costUsd: run.costUsd + c.cost });

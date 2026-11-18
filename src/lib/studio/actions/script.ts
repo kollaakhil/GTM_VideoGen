@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { brandRules } from "@/lib/brand-rules";
-import { checkScript, draftHooks, judgeFor, proofAssetUrl, reviewHooks, reviewScript, scriptLab, scriptSeconds, scriptText, WRITER, writerLabel } from "@/lib/script-lab";
+import { applyScriptEdit, checkScript, draftHooks, judgeFor, proofAssetUrl, reviewHooks, reviewScript, scriptChanged, scriptLab, scriptSeconds, scriptText, WRITER, writerLabel } from "@/lib/script-lab";
+import { preflightScript } from "@/lib/gate";
+import { styleLabel } from "@/lib/script-styles";
 import { hasIndependentScriptReview, scriptProductionBlocker } from "@/lib/quality-policy";
 import { storeMedia } from "@/lib/store";
-import type { Direction, ScriptProofBrief, StudioRun } from "@/lib/types";
+import type { AdScript, Direction, ScriptProofBrief, StudioRun } from "@/lib/types";
 import { Ref } from "../schema";
 import { say, live, saveRun } from "../run-state";
-import { brandFor, guidance } from "../context";
+import { brandFor, guidance, swipesFor } from "../context";
 import type { Job, ActionBody } from "./types";
 
 export async function planDraftHooks(run: StudioRun, body: ActionBody<"draft_hooks">): Promise<Job> {
@@ -22,6 +24,7 @@ export async function planDraftHooks(run: StudioRun, body: ActionBody<"draft_hoo
   if (quoteIndex !== undefined && !quote) return { error: "Select a sourced customer quote or leave it blank." };
   const writer = body.writer ?? WRITER;
   const judge = judgeFor(writer, body.judge);
+  if (body.style) run.scriptStyle = body.style;
   return {
     activity: `Hook Lab: drafting and reviewing three openings for “${d.title}”…`,
     work: async () => {
@@ -31,7 +34,7 @@ export async function planDraftHooks(run: StudioRun, body: ActionBody<"draft_hoo
       d.hookLab = lab;
       run.job = { directionId: d.id, label: "Drafting distinct openings", done: 0, total: 2 };
       await saveRun(run);
-      const c = { direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, lengthSec: body.lengthSec, proof };
+      const c = { direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, lengthSec: body.lengthSec, proof, scriptStyle: run.scriptStyle, swipes: await swipesFor(run) };
       const drafts = await draftHooks(writer, c, () => {
         if (!live(run)) throw new Error("Stopped before retrying missing openings.");
       });
@@ -57,16 +60,18 @@ export async function planWriteScripts(run: StudioRun, body: ActionBody<"write_s
   if (lab.lengthSec !== body.lengthSec) return { error: "Rebuild the openings for the current video duration." };
   const writer = body.writer ?? WRITER;
   const judge = judgeFor(writer, body.judge);
+  if (body.style) run.scriptStyle = body.style;
   return {
     activity: `Script Lab: ${writerLabel(writer)} writes from the chosen opening; ${writerLabel(judge)} reviews…`,
     work: async () => {
       run.job = { directionId: d.id, label: "Writing, rehearsing and reviewing the script", done: 0, total: 1 };
-      const [kit, rules] = await Promise.all([brandFor(run), guidance(run)]);
-      const r = await scriptLab({ direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, rules, mustSay: kit?.mustSay, lengthSec: body.lengthSec, proof: lab.brief }, hook, writer, judge);
-      lab.selectedId = hook.id;
-      d.scripts = [r.script, ...(d.scripts ?? [])].slice(0, 3);
+      const [kit, rules, swipes] = await Promise.all([brandFor(run), guidance(run), swipesFor(run)]);
+      const r = await scriptLab({ direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, rules, mustSay: kit?.mustSay, lengthSec: body.lengthSec, proof: lab.brief, scriptStyle: run.scriptStyle, swipes }, hook, writer, judge);
       run.costUsd += r.cost;
-      say(run, "agent", "Your draft and score are ready. Approve the script you want to use.");
+      const script = await withClaimsPreflight(run, d, r.script);
+      lab.selectedId = hook.id;
+      d.scripts = [script, ...(d.scripts ?? [])].slice(0, 3);
+      say(run, "agent", `Your ${run.scriptStyle && run.scriptStyle !== "auto" ? `${styleLabel(run.scriptStyle)} ` : ""}draft and score are ready.${script.claimFlags?.length ? ` The claims check flagged ${script.claimFlags.length} line${script.claimFlags.length === 1 ? "" : "s"}; edit them before approving.` : ""} Edit any line, re-score, then approve the script you want to use.`);
     },
   };
 }
@@ -75,28 +80,19 @@ export async function planApproveScript(run: StudioRun, body: ActionBody<"approv
   const d = run.directions.find((x) => x.id === body.directionId);
   const sc = d?.scripts?.find((x) => x.id === body.scriptId);
   if (!d || !sc) return { error: "Script not found" };
-  if (sc.proofBrief && ((body.edit?.hook !== undefined && body.edit.hook !== sc.hook.spoken) ||
-    (body.edit?.cta !== undefined && body.edit.cta !== sc.cta) ||
-    (body.edit?.beats?.[0] && (body.edit.beats[0].vo !== sc.hook.spoken || body.edit.beats[0].onScreen !== sc.hook.onScreen)))) {
-    return { error: "The opening and CTA are locked. Pick another hook or revise the proof brief instead." };
-  }
   return {
     activity: `Saving script approval for “${d.title}”…`,
     work: async () => {
-      let next = structuredClone(sc);
-      if (body.edit?.hook !== undefined && next.beats[0]) next.beats[0].vo = body.edit.hook;
-      if (body.edit?.cta !== undefined) next.cta = body.edit.cta;
-      body.edit?.beats?.forEach((b, i) => {
-        if (next.beats[i]) Object.assign(next.beats[i], b);
-      });
-      if (body.edit && next.beats[0]) Object.assign(next.hook, { spoken: next.beats[0].vo, onScreen: next.beats[0].onScreen });
-      const changed = JSON.stringify([next.hook, next.beats, next.cta]) !== JSON.stringify([sc.hook, sc.beats, sc.cta]);
+      let next = applyScriptEdit(sc, body.edit);
+      const changed = scriptChanged(next, sc);
       const kit = await brandFor(run);
       const targetSeconds = sc.review?.targetSeconds ?? run.videoPlan?.lengthSec ?? scriptSeconds(next);
       next.checks = checkScript(next, targetSeconds, kit?.mustSay);
       if (changed) {
         next.score = undefined;
         next.review = undefined;
+        next.gate = undefined;
+        next = await withClaimsPreflight(run, d, next);
       }
       const saveApproval = () => {
         d.scripts = d.scripts!.map((s) => s.id === sc.id ? next : s);
@@ -106,16 +102,61 @@ export async function planApproveScript(run: StudioRun, body: ActionBody<"approv
       };
       if (changed || d.approvedScript?.id !== sc.id) Object.assign(d, { shots: undefined, passingDraft: null, storyboardKey: null });
       saveApproval();
-      if (!next.checks.length && !hasIndependentScriptReview(next)) {
+      if (!next.checks?.length && !hasIndependentScriptReview(next)) {
         await saveRun(run);
         if (!run.brief || !run.research) throw new Error("Brand research and a brief are required to review this script.");
-        const result = await reviewScript(next, { direction: d, brief: run.brief, research: run.research, voc: run.voc, style: run.styleDNA, rules: brandRules(kit), mustSay: kit?.mustSay, lengthSec: targetSeconds, proof: sc.proofBrief }, sc.review?.writer ?? WRITER, sc.review?.judge);
-        next = result.script;
+        const result = await reviewScript(next, { direction: d, brief: run.brief, research: run.research, voc: run.voc, style: run.styleDNA, rules: brandRules(kit), mustSay: kit?.mustSay, lengthSec: targetSeconds, proof: next.proofBrief, scriptStyle: next.style ?? run.scriptStyle, swipes: await swipesFor(run) }, sc.review?.writer ?? WRITER, sc.review?.judge);
+        next = { ...result.script, claimFlags: next.claimFlags };
         run.costUsd += result.cost;
         saveApproval();
       }
       const blocker = scriptProductionBlocker(next);
       say(run, "agent", blocker ? `Script approved. Build its storyboard now. Before upgrading to HD: ${blocker}` : "Script approved. Build its storyboard next.");
+    },
+  };
+}
+
+/** Claims preflight on every script line and the ad's body copy; flags script lines and rewrites flagged body copy. */
+async function withClaimsPreflight(run: StudioRun, d: Direction, script: AdScript): Promise<AdScript> {
+  const model = run.models?.text;
+  if (!run.research || !run.brief || !model) return script;
+  const pf = await preflightScript(model, { script, copy: d.copy, research: run.research, brief: run.brief, offerTerms: run.offer }).catch(() => null);
+  if (!pf) return script;
+  run.costUsd += pf.cost;
+  if (pf.copy) d.copy = pf.copy;
+  for (const c of pf.changes) say(run, "agent", `“${d.title}”: ${c}.`);
+  return { ...script, claimFlags: pf.flags };
+}
+
+/** Re-checks and re-scores one script after operator edits (hook, any beat, CTA) without approving it. */
+export async function planRescoreScript(run: StudioRun, body: ActionBody<"rescore_script">): Promise<Job> {
+  const d = run.directions.find((x) => x.id === body.directionId);
+  const sc = d?.scripts?.find((x) => x.id === body.scriptId) ?? (d?.approvedScript?.id === body.scriptId ? d.approvedScript : undefined);
+  if (!d || !sc) return { error: "Script not found" };
+  if (!run.brief || !run.research) return { error: "Brand research and a brief are required to review this script." };
+  return {
+    activity: `Re-checking and re-scoring the edited script for “${d.title}”…`,
+    work: async () => {
+      const edited = applyScriptEdit(sc, body.edit);
+      const changed = scriptChanged(edited, sc);
+      const [kit, swipes] = await Promise.all([brandFor(run), swipesFor(run)]);
+      const targetSeconds = sc.review?.targetSeconds ?? run.videoPlan?.lengthSec ?? scriptSeconds(edited);
+      const checked = await withClaimsPreflight(run, d, edited);
+      const c = { direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, rules: brandRules(kit), mustSay: kit?.mustSay, lengthSec: targetSeconds, proof: edited.proofBrief, scriptStyle: edited.style ?? run.scriptStyle, swipes };
+      // Only an edited script may carry its earlier scores forward when Jev passes it; a plain re-score always pays for the judge.
+      const prior = changed && hasIndependentScriptReview(sc) ? sc : null;
+      const r = await reviewScript(checked, c, sc.review?.writer ?? WRITER, sc.review?.judge, { prior });
+      run.costUsd += r.cost;
+      const next: AdScript = { ...r.script, claimFlags: checked.claimFlags };
+      d.scripts = (d.scripts ?? []).some((s) => s.id === sc.id) ? d.scripts!.map((s) => s.id === sc.id ? next : s) : [next, ...(d.scripts ?? [])].slice(0, 3);
+      const unapproved = changed && d.approvedScript?.id === sc.id;
+      if (d.approvedScript?.id === sc.id) {
+        if (changed) Object.assign(d, { approvedScript: null, shots: undefined, passingDraft: null, storyboardKey: null });
+        else d.approvedScript = next;
+      }
+      const flags = [...(next.claimFlags ?? []).map((f) => `${f.where}: ${f.claim}`), ...(next.checks ?? [])];
+      const gate = next.gate ? (next.gate.skippedJudge ? " Jev pre-check passed, so the full judge was skipped." : " Jev pre-check escalated to the full judge.") : "";
+      say(run, flags.length ? "error" : "agent", `Re-scored: ${next.score?.overall ?? "?"}/10.${gate}${flags.length ? ` Fix before approving: ${flags.slice(0, 3).join(" · ")}` : " Approve it when you're happy."}${unapproved ? " Your edit cleared the earlier approval." : ""}`);
     },
   };
 }

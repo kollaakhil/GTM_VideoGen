@@ -44,3 +44,5 @@ export interface Ctx {
 export type Pricing = { credits: number | null; prices: Record<string, { draft: number | null; final: number | null }> };
 
 export type BeatEdit = Pick<AdScript["beats"][number], "vo" | "onScreen">;
+/** Operator edits sent with approve_script or rescore_script. Beat 1 is the hook. */
+export type ScriptEditBody = { beats?: BeatEdit[]; cta?: string };

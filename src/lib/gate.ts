@@ -2,7 +2,7 @@ import { aiConfigured, chatJSON } from "./ai";
 import { QA_PASS_SCORE } from "./pipeline";
 import { CLAIM_RULE } from "./ad-wisdom";
 import { MIN_DIVERSITY } from "./concepts";
-import type { Brief, GateResult, Research } from "./types";
+import type { AdScript, Brief, Direction, GateResult, Research } from "./types";
 import { z } from "zod";
 
 const Claims = z.object({ unsupported: z.array(z.string()), missing: z.array(z.string()) });
@@ -33,18 +33,23 @@ export function gateVerdict(o: { qa: number; diversity: number | null; unsupport
 
 const Rewrite = z.object({ headline: z.string() });
 
-const words = (t: string) => t.toLowerCase().replace(/^\s*(headline|offer)\s*:\s*/i, "").match(/[a-z0-9$%#]+/g) ?? [];
+const words = (t: string) => t.toLowerCase().replace(/^\s*(headline|offer)\s*:\s*/i, "").match(/[\p{L}\p{N}$%#]+/gu) ?? [];
+
+/** 0..1 overlap of a quoted claim with a line: 1 when one contains the other, else the share of claim words present. */
+function claimOverlap(text: string, claim: string): number {
+  const t = words(text);
+  const c = words(claim);
+  if (!t.length || !c.length) return 0;
+  const tj = t.join(" ");
+  const cj = c.join(" ");
+  if (tj.includes(cj) || cj.includes(tj)) return 1;
+  const ts = new Set(t);
+  return c.filter((w) => ts.has(w)).length / c.length;
+}
 
 /** True when a quoted unsupported claim refers to this piece of copy. */
 export function claimHits(text: string, claim: string): boolean {
-  const t = words(text);
-  const c = words(claim);
-  if (!t.length || !c.length) return false;
-  const tj = t.join(" ");
-  const cj = c.join(" ");
-  if (tj.includes(cj) || cj.includes(tj)) return true;
-  const ts = new Set(t);
-  return c.filter((w) => ts.has(w)).length / c.length >= 0.6;
+  return claimOverlap(text, claim) >= 0.6;
 }
 
 /** Clips at the last whole word that fits. */
@@ -111,4 +116,91 @@ export async function preflightCopy(
     if (headline !== o.headline) changes.push(`Rewrote the headline “${o.headline}” → “${headline}” (unsupported: ${headClaims.join("; ")})`);
   }
   return { headline, offer, unsupported, changes, cost };
+}
+
+type Copy = NonNullable<Direction["copy"]>;
+type Line = { where: string; text: string; field?: { key: "metaPrimaryText" | "metaHeadline" | "googleHeadlines" | "googleDescriptions"; index?: number; max: number } };
+
+/** Every spoken and printed line of a script plus the ad's body copy, labeled by where it appears. */
+function scriptLines(s: AdScript, copy?: Direction["copy"]): Line[] {
+  const lines: Line[] = [];
+  s.beats.forEach((b, i) => {
+    if (b.vo.trim()) lines.push({ where: `beat ${i + 1} voiceover`, text: b.vo });
+    if (b.onScreen.trim()) lines.push({ where: `beat ${i + 1} on-screen text`, text: b.onScreen });
+  });
+  if (copy) {
+    if (copy.metaPrimaryText?.trim()) lines.push({ where: "primary text", text: copy.metaPrimaryText, field: { key: "metaPrimaryText", max: 500 } });
+    if (copy.metaHeadline?.trim()) lines.push({ where: "Meta headline", text: copy.metaHeadline, field: { key: "metaHeadline", max: 40 } });
+    copy.googleHeadlines?.forEach((t, i) => t.trim() && lines.push({ where: `Google headline ${i + 1}`, text: t, field: { key: "googleHeadlines", index: i, max: 30 } }));
+    copy.googleDescriptions?.forEach((t, i) => t.trim() && lines.push({ where: `Google description ${i + 1}`, text: t, field: { key: "googleDescriptions", index: i, max: 90 } }));
+  }
+  return lines;
+}
+
+export type ScriptPreflight = { flags: { where: string; claim: string }[]; copy: Direction["copy"]; changes: string[]; unsupported: string[]; cost: number };
+
+const Fixes = z.object({ fixes: z.record(z.string(), z.string()) });
+
+/**
+ * Claims preflight on the full script and the ad's body copy, before approval. Unsupported claims, comparisons and
+ * superlatives in script lines are flagged (the operator edits them; they block HD). Flagged body copy is rewritten
+ * once by the text model and re-checked; anything still unsupported stays flagged.
+ */
+export async function preflightScript(
+  model: string,
+  o: { script: AdScript; copy?: Direction["copy"]; research: Research; brief: Brief; offerTerms?: string | null },
+): Promise<ScriptPreflight> {
+  const none: ScriptPreflight = { flags: [], copy: o.copy, changes: [], unsupported: [], cost: 0 };
+  if (!aiConfigured()) return none;
+  const lines = scriptLines(o.script, o.copy);
+  if (!lines.length) return none;
+  const check = (ls: Line[]) => claimsCheck(model, { texts: ls.map((l) => `${l.where}: ${l.text}`), research: o.research, brief: o.brief, offer: o.offerTerms });
+  const first = await check(lines);
+  let cost = first.cost;
+  const unsupported = first.data.unsupported;
+  if (!unsupported.length) return { ...none, cost };
+  const located = unsupported.flatMap((claim) => {
+    // Attribute each claim to the line(s) it overlaps most, so one quote doesn't flag every line sharing a word.
+    const scored = lines.map((l) => ({ l, o: claimOverlap(l.text, claim) }));
+    const best = Math.max(0, ...scored.map((x) => x.o));
+    const hits = best >= 0.6 ? scored.filter((x) => x.o === best).map((x) => x.l) : [];
+    return hits.length ? hits.map((line) => ({ line, claim })) : [{ line: { where: "script", text: "" } as Line, claim }];
+  });
+  const copyHits = located.filter((h) => h.line.field);
+  const flags = located.filter((h) => !h.line.field).map((h) => ({ where: h.line.where, claim: h.claim }));
+  if (!copyHits.length || !o.copy) return { flags, copy: o.copy, changes: [], unsupported, cost };
+
+  const copy: Copy = structuredClone(o.copy);
+  const changes: string[] = [];
+  const fixed = new Set<string>();
+  const targets = [...new Map(copyHits.map((h) => [h.line.where, h.line])).values()];
+  try {
+    const { data, usage } = await chatJSON<unknown>(
+      model,
+      "You fix ad copy that makes claims the facts don't support. Keep the idea and customer language; remove or soften only the unsupported part.",
+      `Facts:\n- Research: ${JSON.stringify({ summary: o.research.summary, valueProps: o.research.valueProps })}\n- Offer: ${o.offerTerms || o.brief.offer}\nRule: ${CLAIM_RULE}\nNo comparisons with competitors or superlatives unless stated in the facts.\nFix these lines:\n${JSON.stringify(targets.map((t) => ({ label: t.where, maxChars: t.field!.max, text: t.text, unsupported: copyHits.filter((h) => h.line.where === t.where).map((h) => h.claim) })))}\nReturn JSON: {"fixes": {"<label>": "<fixed text>"}} using each label exactly, e.g. {"fixes": {"${targets[0].where}": "..."}}`,
+    );
+    cost += usage.costUsd;
+    // Models sometimes echo extra detail in the key ("primary text (max 500 chars)"), so match on the label itself.
+    const label = (k: string) => k.replace(/\s*\(.*\)\s*$/, "").replace(/:$/, "").trim().toLowerCase();
+    const fixes = new Map(Object.entries(Fixes.parse(data).fixes).map(([k, v]) => [label(k), v]));
+    const rewritten = targets.flatMap((t) => {
+      const next = clipWords(fixes.get(t.where.toLowerCase()) ?? "", t.field!.max);
+      return next && next !== t.text ? [{ ...t, text: next, old: t.text }] : [];
+    });
+    const again = rewritten.length ? await check(rewritten) : null;
+    cost += again?.cost ?? 0;
+    for (const r of rewritten) {
+      if (again!.data.unsupported.some((c) => claimHits(r.text, c))) continue;
+      const f = r.field!;
+      if (f.index === undefined) (copy[f.key] as string) = r.text;
+      else (copy[f.key] as string[])[f.index] = r.text;
+      fixed.add(r.where);
+      changes.push(`Rewrote the ${r.where} “${r.old}” → “${r.text}”`);
+    }
+  } catch {
+    // Keep the original copy flagged if the optional rewrite fails.
+  }
+  for (const h of copyHits) if (!fixed.has(h.line.where)) flags.push({ where: h.line.where, claim: h.claim });
+  return { flags, copy, changes, unsupported, cost };
 }

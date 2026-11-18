@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { SCRIPT_JUDGES, SCRIPT_WRITERS } from "@/lib/script-lab";
 import { PRODUCT_PHOTO_PATTERN } from "@/lib/quality-policy";
+import { SCRIPT_STYLE_IDS } from "@/lib/script-styles";
 
 const ModelId = z.string().max(120).regex(/^[\w./:-]+$/);
 
@@ -18,7 +19,16 @@ const ScriptOptions = {
   lengthSec: z.number().int().min(6).max(30),
   writer: z.enum(SCRIPT_WRITERS).optional(),
   judge: z.enum(SCRIPT_JUDGES).optional(),
+  style: z.enum(SCRIPT_STYLE_IDS).optional(),
 };
+
+/** Operator edits at the Script checkpoint: the hook (spoken and on-screen), any beat, and the CTA. */
+const ScriptEdit = z.object({
+  hook: z.string().trim().max(300).optional(),
+  hookOnScreen: z.string().trim().max(160).optional(),
+  beats: z.array(z.object({ vo: z.string().trim().max(300), onScreen: z.string().trim().max(160) })).max(6).optional(),
+  cta: z.string().trim().min(1).max(60).optional(),
+});
 
 const BriefSchema = z.object({
   objective: Field(400),
@@ -61,8 +71,9 @@ export const Body = z.discriminatedUnion("action", [
     runId: z.string().max(64),
     directionId: z.string().max(32),
     scriptId: z.string().max(64),
-    edit: z.object({ hook: z.string().trim().max(300).optional(), beats: z.array(z.object({ vo: z.string().trim().max(300), onScreen: z.string().trim().max(160) })).max(6).optional(), cta: z.string().trim().max(60).optional() }).optional(),
+    edit: ScriptEdit.optional(),
   }),
+  z.object({ action: z.literal("rescore_script"), runId: z.string().max(64), directionId: z.string().max(32), scriptId: z.string().max(64), edit: ScriptEdit.optional() }),
   z.object({ action: z.literal("redo_shot"), runId: z.string().max(64), directionId: z.string().max(32), shotId: z.string().max(8), visual: z.string().trim().min(5).max(800).optional(), refs: Refs }),
   z.object({ action: z.literal("render_video"), runId: z.string().max(64), directionId: z.string().max(32), tier: z.enum(["draft", "final"]), refs: Refs, draftModel: z.string().max(120).optional(), finalModel: z.string().max(120).optional() }),
   z.object({ action: z.literal("regenerate"), runId: z.string().max(64), directionId: z.string().max(32), refs: Refs }),

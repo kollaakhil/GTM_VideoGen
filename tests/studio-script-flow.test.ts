@@ -105,7 +105,6 @@ describe("Studio script story flow (no providers)", () => {
     const beforeApproval = await send("storyboard", { plan });
     expect(beforeApproval.status).toBe(400);
     expect((await beforeApproval.json()).error).toContain("Approve a video script");
-    expect((await send("approve_script", { scriptId: script.id, edit: { hook: "A different story." } })).status).toBe(400);
     expect((await send("approve_script", { scriptId: script.id })).status).toBe(200);
     await finish();
     expect(run.directions[0].approvedScript?.id).toBe(script.id);

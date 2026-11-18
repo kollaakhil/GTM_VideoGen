@@ -1,9 +1,11 @@
 import { chatJSON } from "./ai";
-import type { AdScript, Brief, Direction, Research, ScriptHook, ScriptProofBrief, ScriptScore, StyleDNA, VoiceOfCustomer } from "./types";
+import type { AdScript, Brief, Direction, Research, ScriptHook, ScriptProofBrief, ScriptScore, StyleDNA, Swipe, VoiceOfCustomer } from "./types";
 import { SCRIPT_RUBRIC } from "./quality-policy";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { rehearseScript, rehearsalMetrics } from "./script-rehearsal";
+import { styleTemplate } from "./script-styles";
+import { jevScriptGate } from "./jev";
 
 export const SCRIPT_TARGET = 7;
 export const WRITER = process.env.SCRIPT_WRITER_MODEL || "google/gemini-4-carbon";
@@ -36,6 +38,22 @@ export type ScriptCtx = {
   mustSay?: string[];
   lengthSec: number;
   proof?: ScriptProofBrief;
+  /** Operator-chosen script style id (see script-styles.ts); "auto" or absent adds nothing. */
+  scriptStyle?: string | null;
+  /** Saved swipe-file ads for this brand: the writer borrows structure, the judge scores inspiration match. */
+  swipes?: Swipe[];
+};
+
+/** Inspiration ads with a readable structure (swipes) plus the reference style, if any. */
+function inspirations(c: Pick<ScriptCtx, "swipes" | "style">) {
+  const swipes = (c.swipes ?? []).filter((x) => x.structure).slice(0, 6).map((x) => ({ format: x.structure!.format, hook: x.structure!.hook, beats: x.structure!.beats, whyItWorks: x.structure!.whyItWorks }));
+  const style = c.style ? { tone: c.style.tone, pacing: c.style.pacing, hookPatterns: c.style.hookPatterns } : null;
+  return swipes.length || style ? { swipes, style } : null;
+}
+
+const inspirationBlock = (c: ScriptCtx) => {
+  const i = inspirations(c);
+  return i?.swipes.length ? `\nInspiration ads (borrow hook shape, pacing and tone only; never their names, slogans or claims): ${JSON.stringify(i.swipes)}` : "";
 };
 
 const ONES: Record<string, number> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
@@ -180,7 +198,7 @@ Brief: ${JSON.stringify(c.brief)}
 Product facts (the only facts you may state): ${JSON.stringify({ brand: c.research.brand, summary: c.research.summary, valueProps: c.research.valueProps, audience: c.research.audience })}
 Brand tone: ${c.research.tone}
 Buyer objections (hypotheses, not quotes): ${JSON.stringify(c.voc?.objections ?? [])}
-${c.proof ? `Proof brief (approved by the operator): ${JSON.stringify({ tension: c.proof.tension, claim: c.proof.claim, action: c.proof.action, offer: c.proof.offer, cta: c.proof.cta, buyerQuote: c.proof.quote?.text })}. ${c.proof.asset ? "The operator attached a reference; only use their description of it." : "No proof asset is attached. The action is a proposed scene, not existing footage or evidence of any new claim."}` : ""}${c.style ? `\nBorrowed style (structure and pacing only; never ${c.style.brand}'s name, slogans or claims): ${c.style.tone}; pacing ${c.style.pacing}` : ""}${c.rules ?? ""}${c.mustSay?.length ? `\nMust say (in VO or on-screen text): ${c.mustSay.join(" | ")}` : ""}`;
+${c.proof ? `Proof brief (approved by the operator): ${JSON.stringify({ tension: c.proof.tension, claim: c.proof.claim, action: c.proof.action, offer: c.proof.offer, cta: c.proof.cta, buyerQuote: c.proof.quote?.text })}. ${c.proof.asset ? "The operator attached a reference; only use their description of it." : "No proof asset is attached. The action is a proposed scene, not existing footage or evidence of any new claim."}` : ""}${c.style ? `\nBorrowed style (structure and pacing only; never ${c.style.brand}'s name, slogans or claims): ${c.style.tone}; pacing ${c.style.pacing}` : ""}${inspirationBlock(c)}${styleTemplate(c.scriptStyle)}${c.rules ?? ""}${c.mustSay?.length ? `\nMust say (in VO or on-screen text): ${c.mustSay.join(" | ")}` : ""}`;
 
 const SCRIPT_RULES = (len: number) => `Rules:
 - Vertical 9:16 performance ad, ${len}s total. One buyer tension, one visible demonstration of a supported claim, one CTA. No extra storylines.
@@ -313,6 +331,7 @@ const JudgeOutput = z.object({
     scores: z.object({
       hook: Rating, clarity: Rating, specificity: Rating, customerLanguage: Rating, emotion: Rating,
       productEarly: Rating, cta: Rating, pacing: Rating, claims: Rating,
+      inspirationMatch: Rating.nullish(),
     }),
     notes: z.array(z.string()),
     unsupported: z.array(z.string()),
@@ -321,7 +340,15 @@ const JudgeOutput = z.object({
   })),
 });
 
+/** Judge rule for the inspiration-match dimension, or "" when there is nothing to match (no penalty, no score). */
+export function inspirationRule(c: Pick<ScriptCtx, "swipes" | "style">) {
+  const i = inspirations(c);
+  if (!i) return "";
+  return `Also score "inspirationMatch" 1–10: how well the hook shape, pacing and tone match these inspirations (${JSON.stringify(i)}). Structure and feel only; copying their names, slogans or claims scores 1. Do not let inspirationMatch change "overall".`;
+}
+
 async function judgeBatch(judge: string, scripts: AdScript[], c: ScriptCtx): Promise<{ scores: ScriptScore[]; cost: number }> {
+  const matchRule = inspirationRule(c);
   const { data, usage } = await chatJSON<unknown>(
     judge,
     "You independently review video scripts for production readiness. Grade the execution against the anchors, not against assumptions about the writer. Do not predict buyer behavior or ad performance.",
@@ -336,7 +363,7 @@ If there is a proof brief, list material "proofProblems" when the visual does no
 If there is a proof brief, also check the required story: ${STORY} Put missing or out-of-order story steps in "proofProblems"; do not require a separate shot for each story step.
 "notes": give only the biggest material blocker and one concrete, fact-supported fix. Return [] if there is none. "blockerBeat": 1-based beat to change, or omit when the problem is global or there is no blocker. Do not make up replacement claims.
 "unsupported": each claim not backed by the product facts, quoted.
-Return JSON: {"scores":[{"id","overall","scores":{"hook","clarity","specificity","customerLanguage","emotion","productEarly","cta","pacing","claims"},"notes","unsupported","blockerBeat","proofProblems"}]}`,
+${matchRule ? `${matchRule}\n` : ""}Return JSON: {"scores":[{"id","overall","scores":{"hook","clarity","specificity","customerLanguage","emotion","productEarly","cta","pacing","claims"${matchRule ? `,"inspirationMatch"` : ""}},"notes","unsupported","blockerBeat","proofProblems"}]}`,
   );
   const parsed = JudgeOutput.safeParse(data);
   if (!parsed.success || parsed.data.scores.length !== scripts.length) throw new Error("Script review did not return a complete scorecard.");
@@ -347,7 +374,7 @@ Return JSON: {"scores":[{"id","overall","scores":{"hook","clarity","specificity"
     const unsupported = r.unsupported.slice(0, 5);
     return {
       overall: unsupported.length ? Math.min(6, r.overall) : r.proofProblems.length ? Math.min(SCRIPT_TARGET - 1, r.overall) : r.overall,
-      scores: r.scores,
+      scores: Object.fromEntries(Object.entries(r.scores).filter(([k, v]) => typeof v === "number" && (k !== "inspirationMatch" || !!matchRule))) as Record<string, number>,
       notes: r.notes.length ? r.notes.slice(0, 1) : r.proofProblems.slice(0, 1),
       unsupported,
       proofProblems: r.proofProblems.slice(0, 6),
@@ -365,10 +392,28 @@ export const finalScore = (s: AdScript) => {
   return n ? Math.min(SCRIPT_TARGET - 1, base - Math.min(3, n)) : base;
 };
 
-export async function reviewScript(s: AdScript, c: ScriptCtx, writer: string, preferredJudge?: string) {
+/**
+ * Grades a script with the independent LLM judge. With JEV_GATES=1, a Jev pre-check runs first; when `prior` is a
+ * clean full review (e.g. the same script before an operator edit), Jev is confident (>= 0.8) on every question and
+ * flags nothing, the judge is skipped and the prior category scores are carried over. Otherwise the judge runs.
+ */
+export async function reviewScript(s: AdScript, c: ScriptCtx, writer: string, preferredJudge?: string, o: { prior?: AdScript | null } = {}) {
   const judge = judgeFor(writer, preferredJudge);
+  const checks = checkScript(s, c.lengthSec, c.mustSay);
+  const review = { rubric: SCRIPT_RUBRIC, writer, judge, targetSeconds: c.lengthSec };
+  const g = await jevScriptGate(s, c.research, c.proof?.offer ?? c.brief.offer);
+  const prior = o.prior?.score;
+  const carry = !!g && !g.escalate && !!prior && !prior.unsupported.length && !prior.proofProblems?.length && !checks.length && o.prior?.review?.judge === judge;
+  const gate = g ? {
+    model: g.model, cost: g.cost, answers: g.answers, skippedJudge: carry,
+    reasons: g.escalate ? g.reasons : carry ? [] : ["No earlier full review to carry; the judge grades it."],
+  } : undefined;
+  if (carry) {
+    const score: ScriptScore = { ...prior!, notes: ["Jev pre-check passed with high confidence; category scores carried from the last full review."], unsupported: [], proofProblems: [] };
+    return { script: { ...s, score, checks, review, gate }, cost: g!.cost };
+  }
   const { scores, cost } = await judgeScripts(judge, [s], c);
-  return { script: { ...s, score: scores[0], checks: checkScript(s, c.lengthSec, c.mustSay), review: { rubric: SCRIPT_RUBRIC, writer, judge, targetSeconds: c.lengthSec } }, cost };
+  return { script: { ...s, score: scores[0], checks, review, ...(gate ? { gate } : {}) }, cost: cost + (g?.cost ?? 0) };
 }
 
 /** Hooks that open the same way as a better-scored script in the set. */
@@ -398,7 +443,7 @@ Return {"beats":[{"visual":"...","vo":"...","onScreen":"..."}]}.`);
   const beats = z.object({ beats: z.array(BeatCopy).length(windows.length) }).parse(draft.data).beats;
   const initial: AdScript = {
     id: `sc_${randomUUID()}`, framework: HOOKS[hook.type].split(":")[0],
-    proofBrief: c.proof, hook: { visual: hook.visual, spoken: hook.spoken, onScreen: hook.onScreen },
+    proofBrief: c.proof, ...(c.scriptStyle && c.scriptStyle !== "auto" ? { style: c.scriptStyle } : {}), hook: { visual: hook.visual, spoken: hook.spoken, onScreen: hook.onScreen },
     beats: [{ seconds: HOOK_SECONDS, visual: hook.visual, vo: hook.spoken, onScreen: hook.onScreen }, ...beats.map((b, i) => ({ ...b, seconds: windows[i].seconds }))],
     cta: c.proof.cta,
   };
@@ -429,3 +474,38 @@ Return {"visual":"...","vo":"...","onScreen":"..."} for that one beat.`);
   }
   return { script: first.script, cost };
 }
+
+export type ScriptEdit = { hook?: string; hookOnScreen?: string; beats?: { vo: string; onScreen: string }[]; cta?: string };
+
+const replaceCopy = (line: string, from: string, to: string) =>
+  from.trim() ? line.replace(new RegExp(from.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), () => to) : line;
+
+/**
+ * Applies operator edits to a script: any beat, the hook (spoken and on-screen, kept in sync with beat 1) and the CTA
+ * (swapped into the final beat and the script's proof brief, since the operator owns the brief). Pure; returns a copy.
+ */
+export function applyScriptEdit(sc: AdScript, edit?: ScriptEdit): AdScript {
+  const next = structuredClone(sc);
+  if (!edit) return next;
+  edit.beats?.forEach((b, i) => {
+    if (next.beats[i]) Object.assign(next.beats[i], { vo: b.vo, onScreen: b.onScreen });
+  });
+  const first = next.beats[0];
+  if (first) {
+    if (edit.hook !== undefined) first.vo = edit.hook;
+    if (edit.hookOnScreen !== undefined) first.onScreen = edit.hookOnScreen;
+    Object.assign(next.hook, { spoken: first.vo, onScreen: first.onScreen });
+  }
+  if (edit.cta !== undefined && edit.cta.trim() && edit.cta !== sc.cta) {
+    const last = next.beats[next.beats.length - 1];
+    if (last) {
+      last.vo = replaceCopy(last.vo, sc.cta, edit.cta);
+      last.onScreen = replaceCopy(last.onScreen, sc.cta, edit.cta);
+    }
+    next.cta = edit.cta;
+    if (next.proofBrief) next.proofBrief = { ...next.proofBrief, cta: edit.cta };
+  }
+  return next;
+}
+
+export const scriptChanged = (a: AdScript, b: AdScript) => JSON.stringify([a.hook, a.beats, a.cta]) !== JSON.stringify([b.hook, b.beats, b.cta]);
