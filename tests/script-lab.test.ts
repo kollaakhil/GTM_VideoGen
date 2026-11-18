@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkScript, finalScore, judgeFor, sameHooks, sameSpeech, SCRIPT_TARGET, textMatch, textRecall } from "@/lib/script-lab";
+import { checkScript, finalScore, judgeFor, nearSpeech, sameHooks, sameSpeech, SCRIPT_TARGET, textMatch, textRecall } from "@/lib/script-lab";
 import { recommendedOpening, scriptReady, SCRIPT_RUBRIC } from "@/lib/quality-policy";
 import { lockScriptShots } from "@/lib/video-plan";
 import type { AdScript } from "@/lib/types";
@@ -105,6 +105,14 @@ it("matches transcription punctuation and written prices without tolerating miss
   expect(sameSpeech("Get notified at drinkolipop.com", "Get notified at drinkolipop.com.")).toBe(true);
   expect(sameSpeech("Get notified at drink lollipop dot com", "Get notified at drinkolipop.com.")).toBe(false);
   expect(sameSpeech("Now $249", "Now $249 with free shipping")).toBe(false);
+});
+
+it("voice pre-check tolerates a misheard coined domain but nothing else", () => {
+  expect(nearSpeech("Get notified at drinkallapop.com", "Get notified at drinkolipop.com.")).toBe(true);
+  expect(nearSpeech("Get notified at drink alla pop dot com", "Get notified at drinkolipop.com.")).toBe(true);
+  expect(nearSpeech("Get updates at drinkolipop.com", "Get notified at drinkolipop.com.")).toBe(false);
+  expect(nearSpeech("Get notified at sodashop.com", "Get notified at drinkolipop.com.")).toBe(false);
+  expect(nearSpeech("Get notified", "Get notified now")).toBe(false);
 });
 
 describe("sameHooks", () => {
