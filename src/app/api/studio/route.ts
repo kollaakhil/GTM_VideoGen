@@ -2,17 +2,18 @@ import { after, NextResponse } from "next/server";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { DEFAULTS, MODELS, providerConfigured, providerOf } from "@/lib/models";
-import { brief, directions, diversityScores, organic, qa, render, research, styleDNA } from "@/lib/pipeline";
+import { brief, directions, diversityScores, organic, qa, render, research, retypeset, styleDNA } from "@/lib/pipeline";
 import { audioConfigured, transcribe, generateVideo, musicBed, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
 import { CATEGORIES, keyframe, planShots, QA_PASS, reviewShotFrames } from "@/lib/video-plan";
 import { brandRules } from "@/lib/brand-rules";
 import { STATIC_FORMATS, vocBlock, voiceOfCustomer } from "@/lib/ad-wisdom";
 import { concepts, diversityIssues, selectDiverse } from "@/lib/concepts";
-import { claimsCheck, gateVerdict } from "@/lib/gate";
+import { claimsCheck, gateVerdict, preflightCopy } from "@/lib/gate";
+import { planFix } from "@/lib/qa-triage";
 import { learnings } from "@/lib/learnings";
 import { checkScript, draftHooks, judgeFor, proofAssetUrl, reviewHooks, reviewScript, sameSpeech, SCRIPT_JUDGES, SCRIPT_WRITERS, scriptLab, scriptSeconds, scriptText, WRITER, writerLabel } from "@/lib/script-lab";
 import { approvedStoryboardLength, draftVideoBlocker, hasIndependentScriptReview, PRODUCT_PHOTO_PATTERN, scriptProductionBlocker, scriptProductionBlockers, shotReady, storyboardKeyframeFixes, storyboardProofPhoto, storyboardTargets, videoAspects, videoReady } from "@/lib/quality-policy";
-import { captionVariants, END_SECONDS, expectedCopy, meanVolume, mediaDuration, stitchShots } from "@/lib/video-post";
+import { captionVariants, END_SECONDS, expectedCopy, fitOffer, meanVolume, mediaDuration, offerLine, stitchShots } from "@/lib/video-post";
 import { audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
 import { get, list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
@@ -301,13 +302,13 @@ async function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief"
       if (!run.brief || !run.research) return { error: "Write the brief first" };
       if (body.format) run.format = body.format;
       return {
-        activity: "Pitching three directions…",
+        activity: `Pitching ${(run.concepts ?? []).filter((c) => c.selected).length || 3} directions…`,
         work: async () => {
           const picked = (run.concepts ?? []).filter((c) => c.selected);
           const d = await directions(m.text, run.brief!, run.research!, run.format, run.styleDNA, (await guidance(run)) + vocBlock(run.voc), picked);
           if (picked.length) d.data = d.data.slice(0, picked.length);
           Object.assign(run, { directions: d.data, stage: "generate", progress: {}, costUsd: run.costUsd + d.cost });
-          say(run, "agent", "Here are three directions. Generate creatives when you're happy, or re-pitch.");
+          say(run, "agent", `Here ${d.data.length === 1 ? "is 1 direction" : `are ${d.data.length} directions`}. Generate creatives when you're happy, or re-pitch.`);
         },
       };
     case "generate":
@@ -604,6 +605,7 @@ async function saveCreative(
   q: QAResult,
   spent: number,
   diversity: number | null,
+  onImageOffer?: string | null,
 ): Promise<void> {
   const stamp = Date.now();
   const mediaUrl = await storeMedia(out.url, `${run.id}/${d.id}-${stamp}`);
@@ -613,7 +615,7 @@ async function saveCreative(
   const kit = await brandFor(run);
   const claims = await claimsCheck(run.models.text, {
     texts: [
-      ...(d.format === "static" && process.env.STATIC_TYPESET !== "off" ? [`On-image text: ${d.copy?.metaHeadline || d.hook} / ${(kit?.offer || run.offer || run.brief?.offer || "").split(/[.;\n]/)[0].slice(0, 60)} / ${kit?.mustSay?.join(" · ") ?? ""}`] : []),
+      ...(d.format === "static" && process.env.STATIC_TYPESET !== "off" ? [`On-image text: ${d.copy?.metaHeadline || d.hook} / ${onImageOffer !== undefined ? onImageOffer ?? "" : fitOffer(offerLine(kit?.offer || run.offer || run.brief?.offer)).text} / ${kit?.mustSay?.join(" · ") ?? ""}`] : []),
       ...(out.quality ? out.quality.shots.flatMap((s) => [s.vo, s.onScreen]) : [d.hook, d.script]),
       d.copy?.metaPrimaryText ?? "", d.copy?.metaHeadline ?? "", ...(d.copy?.googleHeadlines ?? []), ...(d.copy?.googleDescriptions ?? []),
     ],
@@ -984,7 +986,7 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
   const kit = await brandFor(run);
   const staticKit = process.env.STATIC_TYPESET === "off" ? null : {
     brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
-    offer: (kit?.offer || run.offer || run.brief?.offer || "").split(/[.;\n]/)[0].slice(0, 60) || null,
+    offer: offerLine(kit?.offer || run.offer || run.brief?.offer) || null,
     primary: kit?.colorRoles?.primary || run.research?.colors?.[0] || null,
     footer: kit?.mustSay?.length ? kit.mustSay.join(" · ") : null,
     logo: kit?.logo ? await mediaDataUrl(kit.logo).catch(() => null) : null,
@@ -998,7 +1000,20 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
   const results = await Promise.allSettled(
     dirs.map(async (d) => {
       const i = run.directions.indexOf(d);
-      const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i, brand: run.research?.brand || brandName(run.brandUrl), style: { styleRef: run.research?.styleRef, colors: run.research?.colors }, kit: staticKit };
+      let dirKit = staticKit;
+      let preSpent = 0;
+      if (d.format === "static" && staticKit) {
+        // Claims check on the on-image copy before any image is paid for (bug C).
+        const pf = await preflightCopy(m.text, { headline: d.copy?.metaHeadline || d.hook, offer: staticKit.offer ? fitOffer(staticKit.offer).text : null, research: run.research!, brief: run.brief!, offerTerms: run.offer }).catch(() => null);
+        if (pf) {
+          preSpent = pf.cost;
+          if (d.copy) d.copy = { ...d.copy, metaHeadline: pf.headline };
+          else d.hook = pf.headline;
+          dirKit = { ...staticKit, offer: pf.offer };
+          for (const c of pf.changes) say(run, "agent", `“${d.title}”: ${c}.`);
+        }
+      }
+      const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i, brand: run.research?.brand || brandName(run.brandUrl), style: { styleRef: run.research?.styleRef, colors: run.research?.colors }, kit: dirKit };
       run.progress[d.id] = "rendering";
       await save();
       const takes = d.format === "static" ? TOURNAMENT_SIZE : 1;
@@ -1008,20 +1023,28 @@ async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
       const graded = await Promise.all(candidates.map(async (c) => ({ out: c, q: await qa(m.vision, c.url, c.type, run.brief!, d.hook) })));
       graded.sort((a, b) => b.q.data.score - a.q.data.score);
       let { out, q } = graded[0];
-      let spent = graded.reduce((n, g) => n + g.out.cost + g.q.cost, 0);
+      let spent = preSpent + graded.reduce((n, g) => n + g.out.cost + g.q.cost, 0);
       if (takes > 1) q = { ...q, data: { ...q.data, notes: [`Best of ${takes} takes (scores ${graded.map((g) => g.q.data.score).join(", ")})`, ...q.data.notes] } };
+      // Bug B: text-layout notes are fixed by re-typesetting the same scene (free); only picture notes buy a new render.
+      let tighter = 0;
       for (let a = 0; a < AUTO_FIX_ATTEMPTS && !q.data.pass && out.type === "image"; a++) {
+        const plan = planFix(q.data.notes, !!opts.kit && !!out.scene);
+        if (!plan.rerender && !plan.retypeset) break;
         run.progress[d.id] = "fixing";
         await save();
-        const retry = await render(d, { ...opts, seed: i * 10 + takes + a, fixes: q.data.notes });
+        if (plan.retypeset) tighter++;
+        const retry = plan.rerender
+          ? await render(d, { ...opts, seed: i * 10 + takes + a, fixes: plan.imageFixes, tighter })
+          : { ...out, url: await retypeset(out.scene!, d, opts.kit!, tighter), cost: 0 };
         const rq = await qa(m.vision, retry.url, retry.type, run.brief!, d.hook);
         spent += retry.cost + rq.cost;
         if (rq.data.score >= q.data.score) {
-          q = { ...rq, data: { ...rq.data, notes: [`Auto-fixed after QA (was ${q.data.score}/10)`, ...rq.data.notes] } };
+          const how = plan.rerender ? "Auto-fixed after QA" : "Auto-retypeset after QA, no new render";
+          q = { ...rq, data: { ...rq.data, notes: [`${how} (was ${q.data.score}/10)`, ...rq.data.notes] } };
           out = retry;
         }
       }
-      await saveCreative(run, d, out, q.data, spent, div[i] ?? null);
+      await saveCreative(run, d, out, q.data, spent, div[i] ?? null, d.format === "static" && opts.kit ? (opts.kit.offer ? fitOffer(opts.kit.offer).text : null) : undefined);
     }),
   );
   results.forEach((r, k) => {
