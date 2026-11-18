@@ -4,7 +4,7 @@ import { CATEGORIES } from "./video-categories";
 import { VIDEO_PASS } from "./quality-policy";
 import type { Brief, Direction, Research, Shot, ShotQA, StyleDNA, VideoCategory, VideoPlan } from "./types";
 
-export { CATEGORIES, estimateCost } from "./video-categories";
+export { CATEGORIES } from "./video-categories";
 
 export const QA_PASS = VIDEO_PASS;
 
@@ -66,7 +66,7 @@ export function lockScriptShots(sc: NonNullable<Direction["approvedScript"]>, id
   }));
 }
 
-export function keyframePrompt(s: Shot, cat: VideoCategory, colors: string[] = []) {
+function keyframePrompt(s: Shot, cat: VideoCategory, colors: string[] = []) {
   return `Vertical 9:16 photoreal still frame for a video ad (${CATEGORIES[cat].label}). ${s.visual} Camera: ${s.camera}. Look: ${CATEGORIES[cat].look}.${colors.length ? ` Palette accents: ${colors.slice(0, 3).join(", ")}.` : ""}
 Absolutely no text, letters, numbers, signs, labels, price tags or logos anywhere. Keep the main subject inside the center 70% of the frame. If a product photo is attached, the product must match it exactly (shape, color, material, proportions).`;
 }
@@ -74,12 +74,6 @@ Absolutely no text, letters, numbers, signs, labels, price tags or logos anywher
 export async function keyframe(imageModel: string, s: Shot, cat: VideoCategory, refs: string[], colors?: string[], fixes?: string[]) {
   const prompt = keyframePrompt(s, cat, colors) + (fixes?.length ? `\nFix these issues from the last version: ${fixes.join(" ")}` : "");
   return generateImage(imageModel, prompt, refs.slice(0, 2));
-}
-
-/** Vision QA for a storyboard keyframe or a clip contact sheet. Compares against the product photo when given. */
-export async function shotQA(visionModel: string, image: string, s: Shot, kind: "keyframe" | "clip", productRef?: string): Promise<{ qa: ShotQA; cost: number }> {
-  const { qa, cost } = await reviewShotFrames(visionModel, [{ at: 0, url: image }], s, productRef ? [productRef] : [], undefined, kind === "clip" ? "source" : "keyframe");
-  return { qa, cost };
 }
 
 const Match = z.enum(["pass", "fail", "review"]);

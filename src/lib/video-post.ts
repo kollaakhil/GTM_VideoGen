@@ -345,7 +345,7 @@ export function offerLine(raw: string | null | undefined): string {
 
 /** Average glyph width of bold sans text as a share of the font size (DejaVu Sans Bold runs wide, so this is conservative). */
 const GLYPH_EM = 0.6;
-export const OFFER_MAX_PX = 940;
+const OFFER_MAX_PX = 940;
 
 /**
  * Fits the offer inside maxPx on at most maxLines lines. Tries the base size, then smaller sizes, then drops trailing

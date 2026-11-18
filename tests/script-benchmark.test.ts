@@ -42,7 +42,7 @@ describe("offline script benchmark", () => {
           falsePass: s.human ? g.overall >= SCRIPT_TARGET && (s.human.overall < SCRIPT_TARGET || !!blocks.length) : null,
         })) };
     }));
-    console.table(pairs.map(({ models, ...row }) => row));
+    console.table(pairs.map(({ models: _models, ...row }) => (void _models, row)));
     console.table(pairs.flatMap(({ case: id, candidate, writer, models }) =>
       models.map((m) => ({ case: id, candidate, writer, ...m }))));
     expect(pairs.length).toBeGreaterThan(0);

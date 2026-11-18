@@ -49,3 +49,11 @@ Each static direction renders `TOURNAMENT_SIZE` takes (default 2, max 4) and kee
 
 - Cheapest test run: `TOURNAMENT_SIZE=1` in `.env.local` and a single direction.
 - The pre-render claims check adds 1–3 small text-model calls per static direction (well under a cent).
+
+## 7. Refactor gotchas (PR 2: structure cleanup)
+
+- **Work in a git worktree while the dev server runs.** `next dev` hot-reloads from the working tree, so switching branches in the main checkout changes what localhost:3000 serves. Use `git worktree add ../GTM_VideoGen-refactor <branch>` and `pnpm install` there. The worktree has no `.env.local` (gitignored): symlink it in for a local smoke test and remove it afterwards. Without a session cookie `/studio` returns 307 to `/login`, so log in first to check it renders 200.
+- **knip false positives.** `scripts/*.mjs` are CLI entry points and `eslint-config-next` is loaded by name through `FlatCompat` in `eslint.config.mjs`. `knip.json` declares both, so `npx knip` should report nothing.
+- **Next.js uses route files implicitly.** `page.tsx`, `route.ts`, `layout.tsx` and `middleware.ts` have no importers. Never delete them because a tool says they're unused.
+- **Keep tests' mocks working.** The Studio tests import `POST` from `@/app/api/studio/route` and `vi.mock` `@/lib/*` modules. Mocks apply by module path, so moved code must keep importing `@/lib/store`, `@/lib/ai` and the rest, not copies.
+- **Lockfile noise.** Running `pnpm remove` with a newer pnpm 10 adds `libc:` lines to many packages in `pnpm-lock.yaml`. Strip unrelated churn so the diff shows only the dependency you removed.

@@ -39,10 +39,6 @@ function storage() {
 }
 const BUCKET = "gtm-media";
 
-export function usingDatabase() {
-  return db() !== null;
-}
-
 type Mem = { [K in TableName]: Map<string, Tables[K]> } & { metrics: MetricDay[] };
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
@@ -87,7 +83,7 @@ function persist() {
   fs.renameSync(tmp, DB_FILE);
 }
 
-export function mediaPath(rel: string) {
+function mediaPath(rel: string) {
   const root = path.join(DATA_DIR, "media");
   const full = path.resolve(root, rel);
   if (!full.startsWith(root + path.sep)) throw new Error("Invalid media path");

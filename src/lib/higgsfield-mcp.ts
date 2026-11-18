@@ -209,11 +209,8 @@ async function rpc(method: string, params: Record<string, unknown>, retry?: { re
   return msg.result;
 }
 
-export type McpTool = { name: string; description?: string; inputSchema?: Record<string, unknown> };
-export const higgsfieldTools = async () => ((await rpc("tools/list", {})) as { tools: McpTool[] }).tools;
-
-export type McpContent = { type: string; text?: string; data?: string; mimeType?: string; resource?: { uri?: string; text?: string } };
-export async function higgsfieldCall(name: string, args: Record<string, unknown>) {
+type McpContent = { type: string; text?: string; data?: string; mimeType?: string; resource?: { uri?: string; text?: string } };
+async function higgsfieldCall(name: string, args: Record<string, unknown>) {
   const r = (await rpc("tools/call", { name, arguments: args })) as { content?: McpContent[]; structuredContent?: unknown; isError?: boolean };
   if (r.isError) throw new Error(`Higgsfield: ${(r.content ?? []).map((c) => c.text).join(" ").slice(0, 300) || "tool error"}`);
   return r;
@@ -236,7 +233,7 @@ function payload(r: { content?: McpContent[]; structuredContent?: unknown }): un
 }
 
 /** First value (depth-first) whose key matches and passes the check. */
-export function pick(o: unknown, keys: RegExp, ok: (v: unknown) => boolean = (v) => typeof v === "string" && !!v): string | undefined {
+function pick(o: unknown, keys: RegExp, ok: (v: unknown) => boolean = (v) => typeof v === "string" && !!v): string | undefined {
   if (Array.isArray(o)) {
     for (const x of o) {
       const v = pick(x, keys, ok);
