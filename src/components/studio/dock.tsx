@@ -59,7 +59,7 @@ export function Dock({ elapsed, notice }: { elapsed: number; notice: string | nu
         text = "Research didn't finish.";
         buttons = [
           btn("Start over", () => router.push("/studio"), false),
-          btn("Retry research", () => act("research", { brandUrl: run.brandUrl, goal: run.goal, format: run.format, referenceUrl: run.referenceUrl ?? "", offer: run.offer ?? undefined, models: run.models }), true),
+          btn("Retry research", () => act("research", { brandUrl: run.brandUrl, goal: run.goal, format: run.format, referenceUrl: run.referenceUrl ?? "", offer: run.offer ?? undefined, models: run.models, autoBrief: run.autoBrief }), true),
         ];
         break;
       case "brief":
@@ -75,7 +75,9 @@ export function Dock({ elapsed, notice }: { elapsed: number; notice: string | nu
           ];
           break;
         }
-        text = "Approve the brief to build a concept matrix: buyers × angles × formats, checked for diversity.";
+        text = run.autoBrief
+          ? "Checkpoint 1: review the research, inspirations and brief. Edit anything, then approve to build concepts."
+          : "Approve the brief to build a concept matrix: buyers × angles × formats, checked for diversity.";
         buttons = [
           btn("Edit", () => setEditing(true), false, <Pencil />),
           btn("Rewrite", () => act("brief", { runId: run.id }), false, <RefreshCw />),

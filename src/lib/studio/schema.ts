@@ -40,6 +40,13 @@ const BriefSchema = z.object({
   kpi: Field(200),
 });
 
+/** One inspiration from the start screen: a link, or an uploaded video (≤ 30 MB) or image. */
+const Inspiration = z.object({
+  url: z.string().url().max(2048).optional(),
+  upload: z.string().max(42_000_000).regex(/^data:(video\/(mp4|quicktime|webm)|image\/(png|jpeg|webp));base64,[A-Za-z0-9+/=]+$/, "Inspiration files must be MP4, MOV, WebM, PNG, JPEG or WebP").optional(),
+  name: z.string().max(120).optional(),
+}).refine((i) => !!i.url !== !!i.upload, "Each inspiration is either a link or a file");
+
 const Plan = z.object({
   category: z.enum(["product_demo", "ugc_testimonial", "cinematic_lifestyle", "motion_graphics", "unboxing", "before_after", "problem_solution", "founder_story"]),
   lengthSec: z.number().int().min(4).max(60),
@@ -56,7 +63,7 @@ const Plan = z.object({
 });
 
 export const Body = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("research"), brandUrl: z.string().url().max(2048), goal: Field(500).refine((g) => g.length >= 3, "Goal is too short"), format: z.enum(["static", "video"]), referenceUrl: z.string().url().max(2048).optional().or(z.literal("")), offer: z.string().trim().max(600).optional(), models: Models }),
+  z.object({ action: z.literal("research"), brandUrl: z.string().url().max(2048), goal: Field(500).refine((g) => g.length >= 3, "Goal is too short"), format: z.enum(["static", "video"]), referenceUrl: z.string().url().max(2048).optional().or(z.literal("")), offer: z.string().trim().max(600).optional(), models: Models, inspirations: z.array(Inspiration).max(4).optional(), autoBrief: z.boolean().optional() }),
   z.object({ action: z.literal("brief"), runId: z.string().max(64) }),
   z.object({ action: z.literal("edit_brief"), runId: z.string().max(64), brief: BriefSchema }),
   z.object({ action: z.literal("directions"), runId: z.string().max(64), format: z.enum(["static", "video"]).optional() }),

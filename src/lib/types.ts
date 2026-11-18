@@ -63,8 +63,36 @@ export interface Swipe {
   image: string | null;
   note: string;
   structure: { hook: string; beats: string[]; format: string; whyItWorks: string } | null;
+  /** Measured structure of an inspiration video (cuts, pacing, framing); see inspiration.ts. */
+  breakdown?: InspirationBreakdown | null;
   createdBy: string;
   createdAt: string;
+}
+
+/** Structure measured from one inspiration ad. Never holds its spoken or printed lines. */
+export interface InspirationBreakdown {
+  id: string;
+  source: string;
+  kind: "video" | "image" | "page";
+  duration: number;
+  shotCount: number;
+  avgShotSec: number;
+  cutsPerSec: number;
+  firstCutSec: number | null;
+  firstWordSec: number | null;
+  wordsPerSec: number | null;
+  via: { cuts: "scenedetect" | "ffmpeg" | "none"; transcript: "whisperx" | "whisper.cpp" | "none"; ocr: "tesseract" | "none"; vision: "vlm" | "none" };
+  thumb: string | null;
+  textOnScreen: { at: number; words: number; zone: "top" | "middle" | "bottom" | null }[];
+  shots: { start: number; end: number; framing: string; lens: string; motion: string; purpose: string; textStyle: string }[];
+  format: string;
+  hook: string;
+  pacing: string;
+  textStyle: string;
+  whyItWorks: string;
+  beats: string[];
+  costUsd: number;
+  note?: string | null;
 }
 
 export interface Concept {
@@ -408,6 +436,10 @@ export interface StudioRun {
   concepts?: Concept[];
   swipeIds?: string[];
   referenceUrl?: string | null;
+  /** Inspirations from the start screen, broken down into structure (swipe ids hold the same breakdowns). */
+  inspirations?: InspirationBreakdown[];
+  /** Write the brief right after research so the operator approves both on one screen. */
+  autoBrief?: boolean;
   /** Script style the operator picked at the Script checkpoint (see script-styles.ts). */
   scriptStyle?: string | null;
   offer?: string | null;

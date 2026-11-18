@@ -8,7 +8,7 @@ import { History, MessageSquare, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Brand, Creative, StudioRun } from "@/lib/types";
-import type { Model, Modality, RunSummary, CreativeAction, Ctx, Pricing } from "./studio/types";
+import type { Model, Modality, RunSummary, CreativeAction, Ctx, Inspiration, Pricing } from "./studio/types";
 import { FlowCtx } from "./studio/context";
 import { DEFAULT_PLAN } from "./studio/constants";
 import { fullUrl, urlOk } from "./studio/utils";
@@ -29,7 +29,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
   const [notice, setNotice] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [form, setForm] = useState({ brandUrl: "https://", referenceUrl: "", offer: "", saveKit: true, kits: [] as Brand[], goal: "", format: "static" as "static" | "video", sel: defaults, refs: [] as string[], plan: DEFAULT_PLAN });
+  const [form, setForm] = useState({ brandUrl: "https://", inspirations: [] as Inspiration[], offer: "", saveKit: true, kits: [] as Brand[], goal: "", format: "static" as "static" | "video", sel: defaults, refs: [] as string[], plan: DEFAULT_PLAN });
 
   const flash = (msg: string) => {
     setNotice(msg);
@@ -126,7 +126,10 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
       }).then(loadKits);
     return startRun();
   };
-  const startRun = () => act("research", { offer: form.offer.trim() || undefined, brandUrl: fullUrl(form.brandUrl), referenceUrl: fullUrl(form.referenceUrl), goal: form.goal.trim(), format: form.format, models: form.sel });
+  const startRun = () => {
+    const inspirations = form.inspirations.flatMap((i): Inspiration[] => i.upload ? [{ upload: i.upload, name: i.name }] : i.url?.trim() && urlOk(i.url) ? [{ url: fullUrl(i.url) }] : []);
+    return act("research", { offer: form.offer.trim() || undefined, brandUrl: fullUrl(form.brandUrl), referenceUrl: inspirations.find((i) => i.url)?.url ?? "", goal: form.goal.trim(), format: form.format, models: form.sel, inspirations, autoBrief: true });
+  };
 
   const creativeAction = async (c: Creative, a: CreativeAction, ch?: "meta" | "google", reason?: string) => {
     try {
