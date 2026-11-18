@@ -2,6 +2,7 @@ import { z } from "zod";
 import { SCRIPT_JUDGES, SCRIPT_WRITERS } from "@/lib/script-lab";
 import { PRODUCT_PHOTO_PATTERN } from "@/lib/quality-policy";
 import { SCRIPT_STYLE_IDS } from "@/lib/script-styles";
+import { LENS_IDS, MUSIC_STYLE_IDS, VISUAL_STYLE_IDS } from "@/lib/video-looks";
 
 const ModelId = z.string().max(120).regex(/^[\w./:-]+$/);
 
@@ -47,6 +48,11 @@ const Plan = z.object({
   voice: z.string().max(40).optional(),
   music: z.boolean().optional(),
   budgetUsd: z.number().min(0.5).max(500).optional(),
+  lens: z.enum(LENS_IDS).optional(),
+  visualStyle: z.enum(VISUAL_STYLE_IDS).optional(),
+  musicStyle: z.enum(MUSIC_STYLE_IDS).optional(),
+  takes: z.number().int().min(1).max(3).optional(),
+  realSet: z.boolean().optional(),
 });
 
 export const Body = z.discriminatedUnion("action", [
@@ -75,7 +81,9 @@ export const Body = z.discriminatedUnion("action", [
   }),
   z.object({ action: z.literal("rescore_script"), runId: z.string().max(64), directionId: z.string().max(32), scriptId: z.string().max(64), edit: ScriptEdit.optional() }),
   z.object({ action: z.literal("redo_shot"), runId: z.string().max(64), directionId: z.string().max(32), shotId: z.string().max(8), visual: z.string().trim().min(5).max(800).optional(), refs: Refs }),
-  z.object({ action: z.literal("render_video"), runId: z.string().max(64), directionId: z.string().max(32), tier: z.enum(["draft", "final"]), refs: Refs, draftModel: z.string().max(120).optional(), finalModel: z.string().max(120).optional() }),
+  z.object({ action: z.literal("render_video"), runId: z.string().max(64), directionId: z.string().max(32), tier: z.enum(["draft", "final"]), refs: Refs, draftModel: z.string().max(120).optional(), finalModel: z.string().max(120).optional(), takes: z.number().int().min(1).max(3).optional() }),
+  z.object({ action: z.literal("shot_settings"), runId: z.string().max(64), directionId: z.string().max(32), shotId: z.string().max(8), model: ModelId.optional(), lens: z.enum(LENS_IDS).optional() }),
+  z.object({ action: z.literal("approve_take"), runId: z.string().max(64), directionId: z.string().max(32), takeId: z.string().max(64) }),
   z.object({ action: z.literal("regenerate"), runId: z.string().max(64), directionId: z.string().max(32), refs: Refs }),
 ]);
 

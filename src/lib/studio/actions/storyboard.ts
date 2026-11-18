@@ -30,6 +30,11 @@ export async function planStoryboard(run: StudioRun, body: ActionBody<"storyboar
     voice: p.voice ?? DEFAULT_VIDEO_PLAN.voice,
     music: p.music ?? DEFAULT_VIDEO_PLAN.music,
     budgetUsd: p.budgetUsd ?? DEFAULT_VIDEO_PLAN.budgetUsd,
+    lens: p.lens ?? DEFAULT_VIDEO_PLAN.lens,
+    visualStyle: p.visualStyle ?? DEFAULT_VIDEO_PLAN.visualStyle,
+    musicStyle: p.musicStyle ?? DEFAULT_VIDEO_PLAN.musicStyle,
+    takes: p.takes ?? DEFAULT_VIDEO_PLAN.takes,
+    realSet: p.realSet ?? false,
   };
   return {
     activity: `Storyboarding ${targets.length === 1 ? `“${targets[0].title}”` : `${targets.length} directions`}: shot list, keyframes and keyframe QA…`,

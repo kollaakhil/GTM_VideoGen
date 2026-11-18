@@ -139,6 +139,16 @@ export interface VideoPlan {
   voice: string;
   music: boolean;
   budgetUsd: number;
+  /** Default lens for every shot (see video-looks.ts); a shot can override it. */
+  lens?: string;
+  /** Grade and lighting recipe for keyframes and clips. */
+  visualStyle?: string;
+  /** Music bed style when music is on. */
+  musicStyle?: string;
+  /** How many 480p takes one click renders (1-3). */
+  takes?: number;
+  /** Build one consistent 3D set (World Labs) and shoot every keyframe in it. */
+  realSet?: boolean;
 }
 
 export interface PromptEntry {
@@ -196,6 +206,10 @@ export interface Shot {
   clipQa?: ShotQA | null;
   clipKey?: string;
   clipModel?: string;
+  /** Operator's per-shot video model; falls back to the plan's draft model. */
+  model?: string;
+  /** Operator's per-shot lens; falls back to the plan lens. */
+  lens?: string;
   voiceTrack?: { key: string; url: string; tempo?: number };
   attempts?: number;
   status: "planned" | "keyframe" | "rendering" | "done" | "failed";
@@ -219,6 +233,38 @@ export interface Direction {
   productRefs?: string[];
   musicTrack?: { key: string; url: string };
   compactCopy?: boolean;
+  /** Every 480p preview take rendered for this storyboard, newest last. */
+  takes?: VideoTake[];
+  /** The take a human approved for upscaling (the only take that can become HD). */
+  approvedTakeId?: string | null;
+  /** The World Labs set every keyframe was shot in, when the real-set toggle is on. */
+  realSet?: RealSet | null;
+}
+
+/** One assembled 480p preview: the exact clips, narration and music it was cut from. */
+export interface VideoTake {
+  id: string;
+  storyboardKey: string;
+  creativeId: string;
+  url: string;
+  score: number;
+  pass: boolean;
+  clips: { shotId: string; url: string; model: string }[];
+  voices: { url: string; start: number; tempo?: number }[];
+  music: string | null;
+  costUsd: number;
+  createdAt: string;
+  approvedBy?: string | null;
+  upscaledCreativeId?: string | null;
+}
+
+interface RealSet {
+  key: string;
+  provider: "worldlabs";
+  worldId: string;
+  pano: string;
+  plates: Record<string, string>;
+  costUsd: number;
 }
 
 export interface ScriptProofBrief {

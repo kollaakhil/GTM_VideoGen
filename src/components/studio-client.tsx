@@ -64,7 +64,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
     () => fetchJSON("/api/brands").then((j) => setForm((f) => ({ ...f, kits: j.brands }))).catch(() => {}),
     [fetchJSON],
   );
-  const loadPricing = useCallback(() => fetchJSON("/api/video-pricing").then((j) => setPricing({ credits: j.credits ?? null, prices: j.prices ?? {} })).catch(() => {}), [fetchJSON]);
+  const loadPricing = useCallback(() => fetchJSON("/api/video-pricing").then((j) => setPricing({ credits: j.credits ?? null, prices: j.prices ?? {}, realSet: j.realSet, upscaler: j.upscaler })).catch(() => {}), [fetchJSON]);
   const runStatus = run?.status;
   useEffect(() => {
     if (runStatus !== "working") void loadPricing();

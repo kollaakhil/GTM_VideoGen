@@ -213,7 +213,7 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
       const mix = labels.length > 1 ? `${labels.join("")}amix=inputs=${labels.length}:duration=longest:normalize=0` : `${labels[0]}anull`;
       await run(
         FFMPEG,
-        ["-hide_banner", "-loglevel", "error", "-i", joined, ...extra, "-filter_complex", `${parts.join(";")};${mix},apad=whole_dur=${t},loudnorm=I=-17:LRA=7:TP=-2[a]`, "-map", "0:v", "-map", "[a]", "-t", t.toFixed(2), "-c:v", "copy", "-c:a", "aac", "-ar", "44100", "-b:a", "160k", "-y", final],
+        ["-hide_banner", "-loglevel", "error", "-i", joined, ...extra, "-filter_complex", `${parts.join(";")};${mix},apad=whole_dur=${t},loudnorm=I=-14:LRA=7:TP=-1.5[a]`, "-map", "0:v", "-map", "[a]", "-t", t.toFixed(2), "-c:v", "copy", "-c:a", "aac", "-ar", "44100", "-b:a", "160k", "-y", final],
         { timeout: 180_000 },
       );
     }

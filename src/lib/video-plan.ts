@@ -2,6 +2,7 @@ import { chatJSON, generateImage, type Part } from "./ai";
 import { z } from "zod";
 import { CATEGORIES } from "./video-categories";
 import { VIDEO_PASS } from "./quality-policy";
+import { lookLine } from "./video-looks";
 import type { Brief, Direction, Research, Shot, ShotQA, StyleDNA, VideoCategory, VideoPlan } from "./types";
 
 export { CATEGORIES } from "./video-categories";
@@ -35,7 +36,7 @@ export async function planShots(
     `Direction: ${JSON.stringify({ title: d.title, hook: d.hook, angle: d.angle, script: d.script })}
 Brief: ${JSON.stringify(b)}
 Brand tone: ${r.tone}
-Category: ${cat.label}. Look: ${cat.look}. Voice: ${cat.voice}.${rules}${style ? `\nBorrowed style: ${style.tone}; ${style.visualLanguage}; pacing ${style.pacing}. Never use ${style.brand}'s name, logo or slogans.` : ""}
+Category: ${cat.label}. Look: ${cat.look}. Voice: ${cat.voice}.${lookLine(plan) ? ` Operator look for every shot: ${lookLine(plan)}` : ""}${rules}${style ? `\nBorrowed style: ${style.tone}; ${style.visualLanguage}; pacing ${style.pacing}. Never use ${style.brand}'s name, logo or slogans.` : ""}
 ${examples.length ? `Shots that scored 8+ in this category before (borrow what made them render well: framing, light, motion; never their content):\n${examples.map((e) => `- ${e.beat}: ${e.visual} (${e.camera}) [${e.score}/10]`).join("\n")}\n` : ""}${scriptBlock}Write exactly ${beats.length} shots, beats in order: ${beats.join(", ")}.${sc ? "" : ` Each shot is ${secs}s.`}
 Rules:
 - Shot 1 must stop the scroll in the first second and show the product or the core tension immediately.
@@ -66,14 +67,14 @@ export function lockScriptShots(sc: NonNullable<Direction["approvedScript"]>, id
   }));
 }
 
-function keyframePrompt(s: Shot, cat: VideoCategory, colors: string[] = []) {
-  return `Vertical 9:16 photoreal still frame for a video ad (${CATEGORIES[cat].label}). ${s.visual} Camera: ${s.camera}. Look: ${CATEGORIES[cat].look}.${colors.length ? ` Palette accents: ${colors.slice(0, 3).join(", ")}.` : ""}
+function keyframePrompt(s: Shot, cat: VideoCategory, colors: string[] = [], look = "", set = false) {
+  return `Vertical 9:16 photoreal still frame for a video ad (${CATEGORIES[cat].label}). ${s.visual} Camera: ${s.camera}. Look: ${CATEGORIES[cat].look}.${look ? ` ${look}` : ""}${set ? " Shoot it inside the attached set plate: keep its architecture, materials and light direction exactly." : ""}${colors.length ? ` Palette accents: ${colors.slice(0, 3).join(", ")}.` : ""}
 Absolutely no text, letters, numbers, signs, labels, price tags or logos anywhere. Keep the main subject inside the center 70% of the frame. If a product photo is attached, the product must match it exactly (shape, color, material, proportions).`;
 }
 
-export async function keyframe(imageModel: string, s: Shot, cat: VideoCategory, refs: string[], colors?: string[], fixes?: string[]) {
-  const prompt = keyframePrompt(s, cat, colors) + (fixes?.length ? `\nFix these issues from the last version: ${fixes.join(" ")}` : "");
-  return generateImage(imageModel, prompt, refs.slice(0, 2));
+export async function keyframe(imageModel: string, s: Shot, cat: VideoCategory, refs: string[], colors?: string[], fixes?: string[], look = "", plate?: string | null) {
+  const prompt = keyframePrompt(s, cat, colors, look, !!plate) + (fixes?.length ? `\nFix these issues from the last version: ${fixes.join(" ")}` : "");
+  return generateImage(imageModel, prompt, plate ? [...refs.slice(0, 2), plate] : refs.slice(0, 2));
 }
 
 const Match = z.enum(["pass", "fail", "review"]);

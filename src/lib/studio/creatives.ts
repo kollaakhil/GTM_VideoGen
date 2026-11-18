@@ -16,7 +16,7 @@ export async function saveCreative(
   spent: number,
   diversity: number | null,
   onImageOffer?: string | null,
-): Promise<void> {
+): Promise<Creative | null> {
   const stamp = Date.now();
   const mediaUrl = await storeMedia(out.url, `${run.id}/${d.id}-${stamp}`);
   const variants = await Promise.all(
@@ -63,7 +63,7 @@ export async function saveCreative(
     conceptId: (run.concepts ?? []).filter((c) => c.selected)[run.directions.indexOf(d)]?.id ?? null,
     createdAt: now(),
   };
-  if (!live(run)) return;
+  if (!live(run)) return null;
   await put("creatives", creative);
   for (const old of await list("creatives")) {
     if (old.runId === run.id && old.directionId === d.id && old.id !== creative.id && old.status === "draft") await put("creatives", { ...old, status: "rejected" });
@@ -72,6 +72,7 @@ export async function saveCreative(
   run.costUsd += (out.quality ? 0 : spent) + (claims?.cost ?? 0);
   run.progress[d.id] = "done";
   await saveRun(run);
+  return creative;
 }
 
 export async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {
