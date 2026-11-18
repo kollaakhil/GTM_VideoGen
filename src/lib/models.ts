@@ -1,5 +1,5 @@
 export type Modality = "text" | "vision" | "image" | "video";
-export type Provider = "openrouter" | "fal" | "higgsfield";
+export type Provider = "openrouter" | "fal" | "higgsfield" | "hfmcp";
 
 export interface ModelOption {
   id: string;
@@ -30,6 +30,10 @@ export const MODELS: ModelOption[] = [
   { id: "higgsfield:bytedance/seedance-2.5/text-to-video", label: "Seedance 2.5 (Higgsfield)", provider: "higgsfield", modality: "video" },
   { id: "higgsfield:kling-video/v3.0/std/text-to-video", label: "Kling 3.0 Std (Higgsfield)", provider: "higgsfield", modality: "video" },
   { id: "higgsfield:kling-video/v3.0/pro/text-to-video", label: "Kling 3.0 Pro (Higgsfield)", provider: "higgsfield", modality: "video" },
+  { id: "hfmcp:seedance1_5", label: "Seedance 1.5 Pro (Higgsfield credits)", provider: "hfmcp", modality: "video" },
+  { id: "hfmcp:wan3_0", label: "Wan 3.0 (Higgsfield credits)", provider: "hfmcp", modality: "video" },
+  { id: "hfmcp:kling3_0", label: "Kling 3.0 (Higgsfield credits)", provider: "hfmcp", modality: "video" },
+  { id: "hfmcp:seedance_2_0", label: "Seedance 2.0 (Higgsfield credits)", provider: "hfmcp", modality: "video" },
   { id: "fal-ai/bytedance/seedance/v1/lite/image-to-video", label: "Seedance 1 Lite (fal)", provider: "fal", modality: "video" },
   { id: "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video", label: "Seedance 1 Pro Fast (fal)", provider: "fal", modality: "video" },
   { id: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video", label: "Kling 2.5 Turbo Pro (fal)", provider: "fal", modality: "video" },
@@ -45,11 +49,13 @@ export const DEFAULTS = {
 
 export function providerOf(modelId: string): Provider {
   if (modelId.startsWith("higgsfield:")) return "higgsfield";
+  if (modelId.startsWith("hfmcp:")) return "hfmcp";
   return MODELS.find((m) => m.id === modelId)?.provider ?? (modelId.startsWith("fal-ai/") ? "fal" : "openrouter");
 }
 
 export function providerConfigured(p: Provider): boolean {
   if (p === "openrouter") return !!process.env.OPENROUTER_API_KEY;
   if (p === "fal") return !!process.env.FAL_KEY;
+  if (p === "hfmcp") return true;
   return !!((process.env.HF_API_KEY_ID && process.env.HF_API_KEY_SECRET) || process.env.HF_API_KEY);
 }

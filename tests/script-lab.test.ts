@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { checkScript, finalScore, judgeFor, sameHooks, textMatch, textRecall } from "@/lib/script-lab";
+import { checkScript, finalScore, judgeFor, sameHooks, sameSpeech, SCRIPT_PASS, textMatch, textRecall } from "@/lib/script-lab";
+import { scriptReady, SCRIPT_RUBRIC } from "@/lib/quality-policy";
+import { lockScriptShots } from "@/lib/video-plan";
 import type { AdScript } from "@/lib/types";
 
 const base: AdScript = {
@@ -32,6 +34,10 @@ describe("checkScript", () => {
     expect(checkScript(base, 10, ["Ships across Texas"])).toEqual(['Missing or shortened must-say; use it word for word: "Ships across Texas".']);
     expect(checkScript(base, 10, ["brass urlis"])).toEqual([]);
   });
+  it("doesn't accept shortened mandatory copy or a shortened CTA", () => {
+    expect(checkScript(base, 10, ["Request your date with free delivery"])).not.toEqual([]);
+    expect(checkScript({ ...base, cta: "Request your date with free delivery" }, 10)).not.toEqual([]);
+  });
 });
 
 describe("textMatch", () => {
@@ -47,7 +53,7 @@ describe("textMatch", () => {
 describe("finalScore", () => {
   it("keeps scripts with failed checks below the pass bar", () => {
     const s = { ...base, score: { overall: 9, scores: {}, notes: [], unsupported: [], panel: { stopRate: 7, quotes: [] } }, checks: ["Runs 20s"] };
-    expect(finalScore(s)).toBe(7);
+    expect(finalScore(s)).toBe(SCRIPT_PASS - 1);
     expect(finalScore({ ...s, checks: [] })).toBe(9);
   });
 
@@ -62,6 +68,28 @@ describe("finalScore", () => {
     expect(textRecall("we rented this two ninety nine get price and ship confirmation", "Hosting a home haldi? We rented this—$299.")).toBe(0.5);
     expect(textRecall("hosting a home haldi we rented this 299 get price", "Hosting a home haldi? We rented this—$299.")).toBe(1);
   });
+});
+
+it("requires a current independent grade and blocks unsupported claims", () => {
+  const score = { overall: 9, scores: {}, notes: [], unsupported: [], panel: { stopRate: 8, quotes: [] } };
+  const script = { ...base, score, checks: [], review: { rubric: SCRIPT_RUBRIC, writer: "carbon", judge: "sol", targetSeconds: 10 } };
+  expect(scriptReady(script)).toBe(true);
+  expect(scriptReady({ ...script, score: { ...score, overall: 8 } })).toBe(false);
+  expect(scriptReady({ ...script, score: { ...score, unsupported: ["Free"] } })).toBe(false);
+  expect(scriptReady({ ...script, review: { ...script.review, judge: "carbon" } })).toBe(false);
+  expect(scriptReady({ ...script, review: undefined })).toBe(false);
+});
+
+it("locks beat timing, narration, visible copy and expected action into the storyboard", () => {
+  const shots = lockScriptShots(base, [{ visual: "Better angle of the bare wall", camera: "push in" }]);
+  expect(shots.map(({ seconds, vo, onScreen, expectedVisual }) => ({ seconds, vo, onScreen, visual: expectedVisual }))).toEqual(base.beats);
+  expect(shots[0].visual).toBe("Better angle of the bare wall");
+});
+
+it("matches transcription punctuation and written prices without tolerating missing or wrong words", () => {
+  expect(sameSpeech("Now two hundred forty-nine dollars.", "Now $249")).toBe(true);
+  expect(sameSpeech("Now $349", "Now $249")).toBe(false);
+  expect(sameSpeech("Now $249", "Now $249 with free shipping")).toBe(false);
 });
 
 describe("sameHooks", () => {

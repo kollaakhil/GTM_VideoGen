@@ -13,6 +13,20 @@ pnpm dev
 ```
 Without keys the app runs in **demo mode**: an in-memory store with sample data and placeholder creatives.
 
+## Studio video quality
+
+Video production requires an independently reviewed 9/10 script, real product photos, 9/10 storyboard frames and verified voice tracks. Studio locks the approved beats into the edit. FFmpeg scans every decoded source frame for technical defects; vision reviews timestamped samples on each shot with the approved action and product references. Every export size gets OCR and loudness checks, and wider cuts preserve the approved framing instead of cropping the action. The primary export gets shot-window speech and visual checks. Missing evidence does not pass. A verified draft unlocks HD; HD must pass again before an Inbox publishing request.
+
+Run Studio on a Node host with FFmpeg (bundled via `ffmpeg-static`) and [Tesseract](https://tesseract-ocr.github.io/). On Ubuntu, install `tesseract-ocr` and the pack for `OCR_LANG` (English: `tesseract-ocr-eng`). Set `TESSERACT_BIN` if it isn't on PATH. Make those tools available on the **runtime** host, not only during build.
+
+For offline speech QA, install [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and download a model for the video's language. Set `WHISPER_BIN`, `WHISPER_MODEL_PATH`, and `WHISPER_LANG` before starting the app. When no local model is configured, Studio uses fal Whisper; a configured but broken local adapter does not silently fall back. Voice generation still uses fal.ai and visual grading still uses the configured vision model.
+
+Use **Repair and recheck** in Studio after a QA failure. Matching verified takes and voice tracks are reused; claims, score and rendered files are checked again. A changed script, keyframe or provider configuration invalidates the affected work. FFmpeg handles overlay and caption layout, so a copy repair need not regenerate any video shot.
+
+The review and repair flow adapts [Graphed’s UGC Studio](https://github.com/graphed-inc/marketing-skills/tree/main/skills/ugc-studio) and [filmstrip review](https://github.com/graphed-inc/marketing-skills/blob/main/skills/tesseract-motion/references/filmstrip-review.md) patterns without adding a Graphed service dependency.
+
+The local `npm test` suite exercises release policy and synthetic media without calling providers. The OCR tests run when Tesseract and its language pack are present. For a real-brand rollout, validate automated grades against human judgments; a passing model score is not measured ad performance.
+
 ## Supabase
 Set `DATABASE_URL` (Supabase Postgres connection string), `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, then run `node scripts/db-migrate.mjs` to create the private `gtm` schema and `gtm-media` bucket. `node scripts/import-local.mjs` copies an existing local `.data` store (rows and media) into Supabase.
 

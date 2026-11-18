@@ -156,6 +156,28 @@ export interface PromptEntry {
 export interface ShotQA {
   score: number;
   notes: string[];
+  match?: "pass" | "fail" | "review";
+  frames?: { at: number; match: "pass" | "fail" | "review"; note: string; repair?: "source" | "layout" }[];
+}
+
+export interface QualityFinding {
+  kind: "visual" | "speech" | "copy" | "technical" | "coverage";
+  at: number;
+  aspect?: string;
+  shotId?: string;
+  expected: string;
+  observed: string;
+  status: "fail" | "review";
+}
+
+export interface VideoQuality {
+  tier: "draft" | "final";
+  storyboardKey?: string;
+  status: "pass" | "fail" | "review";
+  score: number;
+  findings: QualityFinding[];
+  shots: { id: string; start: number; end: number; visual: string; vo: string; onScreen: string; keyframe?: string | null; qa?: ShotQA | null }[];
+  aspects: string[];
 }
 
 export interface Shot {
@@ -165,10 +187,15 @@ export interface Shot {
   visual: string;
   camera: string;
   vo: string;
+  onScreen?: string;
+  expectedVisual?: string;
   keyframe?: string | null;
   keyframeQa?: ShotQA | null;
   clip?: string | null;
   clipQa?: ShotQA | null;
+  clipKey?: string;
+  clipModel?: string;
+  voiceTrack?: { key: string; url: string; tempo?: number };
   attempts?: number;
   status: "planned" | "keyframe" | "rendering" | "done" | "failed";
 }
@@ -185,6 +212,11 @@ export interface Direction {
   shots?: Shot[];
   scripts?: AdScript[];
   approvedScript?: AdScript | null;
+  passingDraft?: string | null;
+  storyboardKey?: string | null;
+  productRefs?: string[];
+  musicTrack?: { key: string; url: string };
+  compactCopy?: boolean;
 }
 
 export interface ScriptBeat {
@@ -211,6 +243,7 @@ export interface AdScript {
   score?: ScriptScore;
   checks?: string[];
   rounds?: number;
+  review?: { rubric: string; writer: string; judge: string; targetSeconds: number };
 }
 
 export interface QAResult {
@@ -247,6 +280,7 @@ export interface Creative {
   mediaType: "image" | "video";
   model: string;
   qa: QAResult | null;
+  quality?: VideoQuality | null;
   diversity: number | null;
   status: CreativeStatus;
   channel: Channel | null;

@@ -2,6 +2,9 @@ import { aiConfigured, chatJSON } from "./ai";
 import { QA_PASS_SCORE } from "./pipeline";
 import { MIN_DIVERSITY } from "./concepts";
 import type { Brief, GateResult, Research } from "./types";
+import { z } from "zod";
+
+const Claims = z.object({ unsupported: z.array(z.string()), missing: z.array(z.string()) });
 
 /** Checks every claim in the ad against known facts and confirms the brand's must-say items are present. */
 export async function claimsCheck(
@@ -9,12 +12,12 @@ export async function claimsCheck(
   o: { texts: string[]; research: Research; brief: Brief; offer?: string | null; mustSay?: string[] },
 ): Promise<{ data: { unsupported: string[]; missing: string[] }; cost: number }> {
   if (!aiConfigured()) return { cost: 0, data: { unsupported: [], missing: [] } };
-  const { data, usage } = await chatJSON<{ unsupported: string[]; missing: string[] }>(
+  const { data, usage } = await chatJSON<unknown>(
     model,
     "You are an ad compliance reviewer. Be precise: only flag concrete factual claims (prices, discounts, timings, guarantees, locations, statistics, awards, ingredients) that the facts do not support. Brand voice, opinions and emotional language are fine.",
     `Facts:\n- Research: ${JSON.stringify({ summary: o.research.summary, valueProps: o.research.valueProps })}\n- Offer: ${o.offer || o.brief.offer}\n- Brief: ${JSON.stringify(o.brief)}\nMust-say items: ${o.mustSay?.length ? o.mustSay.join(" | ") : "(none)"}\n\nAd text:\n${o.texts.filter(Boolean).join("\n")}\n\nReturn JSON: {"unsupported": string[] (each unsupported claim quoted, max 5), "missing": string[] (must-say items not present in meaning anywhere in the ad text)}`,
   );
-  return { data: { unsupported: data.unsupported ?? [], missing: data.missing ?? [] }, cost: usage.costUsd };
+  return { data: Claims.parse(data), cost: usage.costUsd };
 }
 
 /** Creative Director Gate: QA >= pass bar, distinct from the rest of the set, no unsupported claims, all must-says present. */

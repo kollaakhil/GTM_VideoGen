@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Check, RefreshCw, ShieldCheck, Shuffle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { kpis, usd } from "@/lib/format";
 import type { Creative } from "@/lib/types";
+import { strictVideoBlock } from "@/lib/quality-policy";
 
 const STATUS: Record<Creative["status"], string> = {
   draft: "bg-zinc-500/20 text-zinc-300",
@@ -20,20 +21,31 @@ export function CreativeCard({
   creative: c,
   onAction,
   onRegenerate,
+  onRepair,
   busy,
 }: {
   creative: Creative;
   onAction?: (a: "approve" | "reject" | "request_publish" | "override_qa", channel?: "meta" | "google", reason?: string) => void;
   onRegenerate?: () => void;
+  onRepair?: () => void;
   busy?: boolean;
 }) {
   const k = kpis(c.metrics);
   const [rejecting, setRejecting] = useState(false);
+  const player = useRef<HTMLVideoElement>(null);
+  const report = c.quality;
+  const releaseBlock = strictVideoBlock(c) || (c.mediaType === "video" && !c.gate?.pass ? "The Creative Director Gate has not passed." : null);
+  const seek = (at: number) => {
+    if (player.current) {
+      player.current.currentTime = at;
+      player.current.scrollIntoView({ block: "nearest" });
+    }
+  };
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
       <div className="relative aspect-[4/5] bg-muted">
         {c.mediaType === "video" ? (
-          <video src={c.mediaUrl} controls className="size-full object-cover" />
+          <video ref={player} src={c.mediaUrl} controls playsInline preload="metadata" className="size-full object-contain" />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={c.mediaUrl} alt={c.hook} className="size-full object-cover" />
@@ -119,6 +131,35 @@ export function CreativeCard({
             </div>
           </div>
         )}
+        {report && (
+          <details className="space-y-2 rounded-md border px-2 py-1.5 text-xs">
+            <summary className="cursor-pointer">
+              {report.tier === "draft" ? "Draft" : "HD"} QA · {report.status === "review" ? "Needs review" : report.status === "pass" ? "Pass" : "Fail"} · {report.score}/10
+            </summary>
+            <div className="nowheel max-h-72 space-y-2 overflow-y-auto break-words">
+              {report.findings.map((f, i) => (
+                <div key={i} className="rounded border p-1.5">
+                  <button type="button" className="font-medium text-amber-300 underline" onClick={() => seek(f.at)}>{f.at.toFixed(2)}s · {f.kind}{f.aspect ? ` · ${f.aspect}` : ""}</button>
+                  <p>Expected: {f.expected}</p>
+                  <p>Observed: {f.observed}</p>
+                </div>
+              ))}
+              {report.shots.map((s, i) => (
+                <details key={s.id} className="space-y-1 rounded border p-1.5">
+                  <summary className="cursor-pointer">Shot {i + 1} · {s.qa?.score ?? "Ungraded"}{s.qa && "/10"} · {s.qa?.match ?? "review"}</summary>
+                  <p>Action: {s.visual}</p>
+                  {s.vo && <p>Hear: {s.vo}</p>}
+                  {s.onScreen && <p>Read: {s.onScreen}</p>}
+                  {s.keyframe && <a className="block underline" href={s.keyframe} target="_blank" rel="noreferrer">Storyboard reference</a>}
+                  {s.qa?.frames?.map((f) => (
+                    <div key={f.at}><button type="button" className="underline" onClick={() => seek(f.at)}>{f.at.toFixed(2)}s</button> · {f.match}{f.note ? ` · ${f.note}` : ""}</div>
+                  ))}
+                </details>
+              ))}
+            </div>
+            {onRepair && <Button size="xs" variant="outline" disabled={busy} onClick={onRepair}><RefreshCw /> Repair and recheck</Button>}
+          </details>
+        )}
         {onAction && (c.status === "draft" || c.status === "approved") && (
           <div className="flex flex-wrap gap-1.5 pt-1">
             {c.status === "draft" && (
@@ -131,15 +172,10 @@ export function CreativeCard({
                 <RefreshCw /> Redo
               </Button>
             )}
-            {c.qa && !c.qa.pass && c.mediaType === "video" && (
-              <Button size="xs" variant="outline" disabled={busy} onClick={() => onAction("override_qa")}>
-                <ShieldCheck /> Approve QA
-              </Button>
-            )}
-            <Button size="xs" variant="outline" disabled={busy || !c.qa?.pass} title={c.qa?.pass ? "Send to Inbox for approval" : "Must pass QA first"} onClick={() => onAction("request_publish", "meta")}>
+            <Button size="xs" variant="outline" disabled={busy || !c.qa?.pass || !!releaseBlock} title={releaseBlock ?? "Send to Inbox for approval"} onClick={() => onAction("request_publish", "meta")}>
               <Check /> Meta
             </Button>
-            <Button size="xs" variant="outline" disabled={busy || !c.qa?.pass} title={c.qa?.pass ? "Send to Inbox for approval" : "Must pass QA first"} onClick={() => onAction("request_publish", "google")}>
+            <Button size="xs" variant="outline" disabled={busy || !c.qa?.pass || !!releaseBlock} title={releaseBlock ?? "Send to Inbox for approval"} onClick={() => onAction("request_publish", "google")}>
               <Check /> Google
             </Button>
           </div>

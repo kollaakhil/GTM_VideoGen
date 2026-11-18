@@ -7,6 +7,8 @@ type Msg = { role: "system" | "user" | "assistant"; content: string | Part[] };
 
 export interface Usage {
   costUsd: number;
+  /** Higgsfield subscription credits, when paid that way. */
+  credits?: number;
 }
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
@@ -234,6 +236,7 @@ export const nearest = (options: number[] | null | undefined, want: number) => (
 export async function videoPricePerSec(model: string, resolution = "720p", audio = false): Promise<number | null> {
   if (providerOf(model) === "higgsfield") return pickRate(await higgsfieldRates(model), resolution)?.rate ?? null;
   if (providerOf(model) === "fal") return falPricePerSec(model, resolution);
+  if (providerOf(model) === "hfmcp") return 0;
   if (providerOf(model) !== "openrouter") return null;
   const p = (await openrouterVideoSpec(model)).pricing;
   if (!p) return null;
@@ -250,19 +253,24 @@ export async function videoPricePerSec(model: string, resolution = "720p", audio
   return null;
 }
 
-/** Spendable OpenRouter balance: account credits left, capped by the key's own limit. */
+/** Spendable OpenRouter balance, capped by all budget scopes reported on the key. */
 export async function openrouterCredits(): Promise<number | null> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) return null;
   const auth = { Authorization: `Bearer ${key}` };
   const [c, k] = await Promise.all([
-    fetch("https://openrouter.ai/api/v1/credits", { headers: auth }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    fetch("https://openrouter.ai/api/v1/key", { headers: auth }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    fetch("https://openrouter.ai/api/v1/credits", { headers: auth, signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    fetch("https://openrouter.ai/api/v1/key", { headers: auth, signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
   ]);
   const left: number[] = [];
   if (c?.data) left.push(Number(c.data.total_credits) - Number(c.data.total_usage));
   if (k?.data?.limit_remaining != null) left.push(Number(k.data.limit_remaining));
-  return left.length ? Math.min(...left) : null;
+  const scopes = Array.isArray(k?.data?.budgets) ? k.data.budgets : [];
+  for (const budget of [...scopes, k?.data?.effective_budget]) {
+    if (budget?.remaining_usd != null) left.push(Number(budget.remaining_usd));
+  }
+  const limits = left.filter(Number.isFinite);
+  return limits.length ? Math.min(...limits) : null;
 }
 
 /** Durations a video model accepts (from OpenRouter's catalog), for planning shot lengths. */
@@ -270,6 +278,7 @@ export async function videoDurations(model: string): Promise<number[] | null> {
   const p = providerOf(model);
   if (p === "higgsfield") return higgsfieldDurations(model);
   if (p === "fal") return falDurations(model);
+  if (p === "hfmcp") return HFMCP_DURATIONS[model] ?? null;
   return p === "openrouter" ? ((await openrouterVideoSpec(model)).durations ?? null) : null;
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -463,11 +472,21 @@ async function higgsfieldVideo(model: string, prompt: string, o: VideoOpts = {})
   return { url: await downloadAsDataUrl(out), usage: { costUsd: r ? r.rate * Number(body.duration) : 0 } };
 }
 
+const HFMCP_DURATIONS: Record<string, number[]> = { "hfmcp:seedance1_5": [4, 8, 12], "hfmcp:kling3_0": [5, 10] };
+
+/** Higgsfield MCP spends subscription credits, so the USD cost is 0 and credits are reported separately. */
+async function hfmcpVideo(model: string, prompt: string, o: VideoOpts): Promise<{ url: string; usage: Usage }> {
+  const { higgsfieldMcpVideo } = await import("./higgsfield-mcp");
+  const r = await higgsfieldMcpVideo(model.replace(/^hfmcp:/, ""), prompt, { firstFrame: o.firstFrame, seconds: o.seconds, resolution: o.resolution });
+  return { url: await downloadAsDataUrl(r.url), usage: { costUsd: 0, credits: r.credits ?? undefined } };
+}
+
 export async function generateVideo(model: string, prompt: string, opts?: string | VideoOpts): Promise<{ url: string; usage: Usage }> {
   const o: VideoOpts = typeof opts === "string" ? { firstFrame: opts } : (opts ?? {});
   const provider = providerOf(model);
   if (provider === "fal") return falVideo(model, prompt, o);
   if (provider === "higgsfield") return higgsfieldVideo(model, prompt, o);
+  if (provider === "hfmcp") return hfmcpVideo(model, prompt, o);
   return openrouterVideo(model, prompt, o);
 }
 

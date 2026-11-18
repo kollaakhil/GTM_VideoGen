@@ -1,20 +1,23 @@
 import { after, NextResponse } from "next/server";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { DEFAULTS, MODELS, providerConfigured, providerOf } from "@/lib/models";
-import { brief, directions, diversityScores, filmstrip, organic, qa, render, research, styleDNA } from "@/lib/pipeline";
-import { audioConfigured, transcribe, generateVideo, musicBed, nearest, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
-import { CATEGORIES, keyframe, planShots, QA_PASS, shotQA } from "@/lib/video-plan";
+import { brief, directions, diversityScores, organic, qa, render, research, styleDNA } from "@/lib/pipeline";
+import { audioConfigured, transcribe, generateVideo, musicBed, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
+import { CATEGORIES, keyframe, planShots, QA_PASS, reviewShotFrames } from "@/lib/video-plan";
 import { brandRules } from "@/lib/brand-rules";
 import { STATIC_FORMATS, vocBlock, voiceOfCustomer } from "@/lib/ad-wisdom";
 import { concepts, diversityIssues, selectDiverse } from "@/lib/concepts";
 import { claimsCheck, gateVerdict } from "@/lib/gate";
 import { learnings } from "@/lib/learnings";
-import { checkScript, judgeFor, SCRIPT_JUDGES, SCRIPT_WRITERS, scriptLab, scriptSeconds, scriptText, textMatch, textRecall, writerLabel } from "@/lib/script-lab";
-import { captionVariants, meanVolume, mediaDuration, spokenScript, stitchShots } from "@/lib/video-post";
+import { checkScript, judgeFor, reviewScript, sameSpeech, SCRIPT_JUDGES, SCRIPT_WRITERS, scriptLab, scriptSeconds, scriptText, WRITER, writerLabel } from "@/lib/script-lab";
+import { SCRIPT_PASS, scriptReady, shotReady, videoAspects, videoReady } from "@/lib/quality-policy";
+import { captionVariants, END_SECONDS, expectedCopy, meanVolume, mediaDuration, stitchShots } from "@/lib/video-post";
+import { audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
 import { get, list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
 import { rateLimit } from "@/lib/rate-limit";
-import type { Brief, Creative, Direction, QAResult, RunEvent, Shot, ShotQA, StudioRun } from "@/lib/types";
+import type { Brief, Creative, Direction, QAResult, RunEvent, Shot, ShotQA, StudioRun, VideoQuality } from "@/lib/types";
 
 export const maxDuration = 300;
 const AUTO_FIX_ATTEMPTS = 2;
@@ -61,8 +64,8 @@ const Body = z.discriminatedUnion("action", [
     action: z.literal("approve_script"),
     runId: z.string().max(64),
     directionId: z.string().max(32),
-    scriptId: z.string().max(16),
-    edit: z.object({ hook: z.string().trim().max(200).optional(), beats: z.array(z.object({ vo: z.string().trim().max(300), onScreen: z.string().trim().max(80) })).max(6).optional(), cta: z.string().trim().max(60).optional() }).optional(),
+    scriptId: z.string().max(64),
+    edit: z.object({ hook: z.string().trim().max(300).optional(), beats: z.array(z.object({ vo: z.string().trim().max(300), onScreen: z.string().trim().max(160) })).max(6).optional(), cta: z.string().trim().max(60).optional() }).optional(),
   }),
   z.object({ action: z.literal("redo_shot"), runId: z.string().max(64), directionId: z.string().max(32), shotId: z.string().max(8), visual: z.string().trim().min(5).max(800).optional(), refs: Refs }),
   z.object({ action: z.literal("render_video"), runId: z.string().max(64), directionId: z.string().max(32), tier: z.enum(["draft", "final"]), refs: Refs, draftModel: z.string().max(120).optional(), finalModel: z.string().max(120).optional() }),
@@ -282,6 +285,7 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       };
     case "generate":
       if (!run.brief || !run.directions.length) return { error: "Pitch directions first" };
+      if (run.directions.some((d) => d.format === "video")) return { error: "Videos must go through Script Lab and the storyboard before rendering." };
       return {
         activity: `Generating ${run.directions.length} ${run.format === "video" ? "videos" : "images"} and running Vision QA…`,
         work: async () => {
@@ -327,21 +331,25 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       run.videoPlan = {
         category: p.category,
         lengthSec: p.lengthSec,
-        draftModel: p.draftModel ?? "google/veo-3.1-lite",
-        finalModel: p.finalModel ?? "google/veo-3.1-fast",
+        draftModel: p.draftModel ?? "hfmcp:seedance1_5",
+        finalModel: p.finalModel ?? "hfmcp:kling3_0",
         voice: p.voice ?? "Rachel",
         music: p.music ?? true,
         budgetUsd: p.budgetUsd ?? 3,
       };
       const all = body.directionId ? run.directions.filter((d) => d.id === body.directionId) : run.directions;
       if (!all.length) return { error: "Direction not found" };
-      const targets = run.format === "video" ? all.filter((d) => d.approvedScript) : all;
-      if (!targets.length) return { error: "Approve a script first: run Write scripts, pick the best one per direction, then build the storyboard." };
+      const targets = all.filter((d) => d.format === "video" && scriptReady(d.approvedScript));
+      if (!targets.length) return { error: `Approve an independently graded ${SCRIPT_PASS}/10 script before building a storyboard.` };
       return {
         activity: `Storyboarding ${targets.length === 1 ? `“${targets[0].title}”` : `${targets.length} directions`}: shot list, keyframes and keyframe QA…`,
         work: async () => {
           run.job = { label: "Planning shot lists", done: 0, total: 0 };
-          const res = await Promise.allSettled(targets.map((d) => storyboard(run, d, body.refs ?? [])));
+          const kit = await brandFor(run);
+          const productRefs = body.refs?.length ? body.refs : kit?.photos ?? [];
+          if (!productRefs.length) throw new Error("Upload at least one real product photo before storyboarding.");
+          const savedRefs = await Promise.all(productRefs.map((img, i) => storeMedia(img, `${run.id}/ref-${i}-${createHash("sha256").update(img).digest("hex").slice(0, 16)}`)));
+          const res = await Promise.allSettled(targets.map((d) => storyboard(run, d, productRefs, savedRefs, kit?.mustSay)));
           run.job = null;
           res.forEach((r, k) => {
             if (r.status === "rejected") {
@@ -369,7 +377,7 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
           const res = await Promise.allSettled(
             targets.map(async (d) => {
               const r = await scriptLab({ direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, rules, mustSay: kit?.mustSay, lengthSec }, { writer: body.writer, judge: judgeFor(body.writer, body.judge) });
-              Object.assign(d, { scripts: r.scripts, approvedScript: null });
+              Object.assign(d, { scripts: r.scripts });
               run.costUsd += r.cost;
               if (run.job) run.job.done++;
               await saveRun(run);
@@ -391,37 +399,65 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       const sc = d?.scripts?.find((x) => x.id === body.scriptId);
       if (!d || !sc) return { error: "Script not found" };
       return {
-        activity: `Approving the ${sc.framework} script for “${d.title}”…`,
+        activity: `Checking the ${sc.framework} script for “${d.title}”…`,
         work: async () => {
-          const next = structuredClone(sc);
-          if (body.edit?.hook) next.hook.spoken = body.edit.hook;
-          if (body.edit?.cta) next.cta = body.edit.cta;
+          let next = structuredClone(sc);
+          if (body.edit?.hook !== undefined && next.beats[0]) next.beats[0].vo = body.edit.hook;
+          if (body.edit?.cta !== undefined) next.cta = body.edit.cta;
           body.edit?.beats?.forEach((b, i) => {
             if (next.beats[i]) Object.assign(next.beats[i], b);
           });
+          if (body.edit && next.beats[0]) Object.assign(next.hook, { spoken: next.beats[0].vo, onScreen: next.beats[0].onScreen });
+          const changed = JSON.stringify([next.hook, next.beats, next.cta]) !== JSON.stringify([sc.hook, sc.beats, sc.cta]);
           const kit = await brandFor(run);
-          next.checks = checkScript(next, scriptSeconds(next), kit?.mustSay);
-          Object.assign(d, { approvedScript: next, script: scriptText(next), hook: next.hook.spoken || d.hook, shots: undefined });
-          say(run, "agent", `Approved the ${next.framework} script for “${d.title}”${next.checks.length ? ` (heads-up: ${next.checks.join(" ")})` : ""}. Build its storyboard next.`);
+          const targetSeconds = sc.review?.targetSeconds ?? run.videoPlan?.lengthSec ?? scriptSeconds(next);
+          next.checks = checkScript(next, targetSeconds, kit?.mustSay);
+          if (changed) {
+            next.score = undefined;
+            next.review = undefined;
+            d.scripts = d.scripts!.map((s) => s.id === sc.id ? next : s);
+            if (d.approvedScript?.id === sc.id) Object.assign(d, { approvedScript: null, shots: undefined, passingDraft: null, storyboardKey: null });
+            await saveRun(run);
+          }
+          if (!next.checks.length && (changed || !next.review || !next.score)) {
+            if (!run.brief || !run.research) throw new Error("Brand research and a brief are required to review this script.");
+            const result = await reviewScript(next, { direction: d, brief: run.brief, research: run.research, voc: run.voc, style: run.styleDNA, rules: brandRules(kit), mustSay: kit?.mustSay, lengthSec: targetSeconds }, sc.review?.writer ?? WRITER, sc.review?.judge);
+            next = result.script;
+            run.costUsd += result.cost;
+          }
+          d.scripts = d.scripts!.map((s) => s.id === sc.id ? next : s);
+          if (!scriptReady(next)) {
+            say(run, "error", `Script not approved. ${next.checks?.join(" ") || `Independent review: ${next.score?.overall ?? "ungraded"}/10. The script needs ${SCRIPT_PASS}/10 with no unsupported claims.`}`);
+            return;
+          }
+          if (JSON.stringify(d.approvedScript) !== JSON.stringify(next)) Object.assign(d, { approvedScript: next, script: scriptText(next), hook: next.hook.spoken, shots: undefined, passingDraft: null, storyboardKey: null });
+          say(run, "agent", `Approved the ${next.framework} script (${next.score!.overall}/10). Build its storyboard next.`);
         },
       };
     }
     case "redo_shot": {
       const d = run.directions.find((x) => x.id === body.directionId);
       const s = d?.shots?.find((x) => x.id === body.shotId);
-      if (!d || !s || !run.videoPlan) return { error: "Shot not found" };
-      if (body.visual) s.visual = body.visual;
+      if (!d || !s || !run.videoPlan || !d.storyboardKey || !scriptReady(d.approvedScript)) return { error: "Build a storyboard for an approved script first." };
       return {
         activity: `Redrawing shot ${Number(s.id.slice(1)) + 1} of “${d.title}”…`,
         work: async () => {
-          await makeKeyframe(run, d, s, body.refs ?? []);
-          say(run, "agent", `Redrew shot ${Number(s.id.slice(1)) + 1} (keyframe QA ${s.keyframeQa?.score}/10).`);
+          const productRefs = await Promise.all((d.productRefs ?? []).map(mediaDataUrl));
+          if (!productRefs.length) throw new Error("The storyboard has no locked product references. Rebuild it.");
+          d.storyboardKey = randomUUID();
+          d.passingDraft = null;
+          if (body.visual) s.visual = body.visual;
+          s.keyframeQa = null;
+          await saveRun(run);
+          const verdict = await makeKeyframe(run, d, s, productRefs);
+          say(run, "agent", `Redrew shot ${Number(s.id.slice(1)) + 1} (keyframe QA ${verdict.score}/10, ${verdict.match}).`);
         },
       };
     }
     case "render_video": {
       const d = run.directions.find((x) => x.id === body.directionId);
-      if (!d?.shots?.length || d.shots.some((s) => !s.keyframe) || !run.videoPlan) return { error: "Build the storyboard first" };
+      if (!d?.shots?.length || d.shots.some((s) => !s.keyframe) || !run.videoPlan || !d.storyboardKey || !scriptReady(d.approvedScript)) return { error: "Build a storyboard from a passing script before rendering." };
+      if (body.tier === "final" && d.passingDraft !== d.storyboardKey) return { error: "Pass draft QA for this storyboard before upgrading to HD." };
       for (const m of [body.draftModel, body.finalModel]) {
         if (m && !MODELS.some((x) => x.id === m && x.modality === "video" && providerConfigured(x.provider))) return { error: `Video model ${m} isn't available` };
       }
@@ -430,16 +466,17 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       return {
         activity: `Rendering the ${body.tier} video for “${d.title}”: ${d.shots.length} shots, shot QA, voice, music and final QA…`,
         work: async () => {
-          const r = await renderVideo(run, d, body.tier, body.refs ?? []);
+          const r = await renderVideo(run, d, body.tier);
           run.stage = "qa";
           for (const w of r.warnings) say(run, "error", w);
-          say(run, "agent", `Rendered the ${body.tier} video for “${d.title}”: final QA ${r.score}/10, $${r.spent.toFixed(2)}.${r.score >= QA_PASS ? "" : " Redo the weakest shots in the storyboard, or approve QA yourself if you disagree."}`);
+          say(run, "agent", `Saved the ${body.tier} for “${d.title}”: QA ${r.quality.status}, ${r.quality.score}/10, $${r.spent.toFixed(2)}.${videoReady(r.quality) ? "" : " Open the timestamped report for fixes."}`);
         },
       };
     }
     case "regenerate": {
       const d = run.directions.find((x) => x.id === body.directionId);
       if (!d) return { error: "Direction not found" };
+      if (d.format === "video") return { error: "Use the storyboard render controls to repair or rerender this video." };
       return {
         activity: `Regenerating “${d.title}”…`,
         work: async () => {
@@ -479,7 +516,7 @@ const saveRun = async (run: StudioRun) => {
 async function saveCreative(
   run: StudioRun,
   d: Direction,
-  out: { url: string; type: "image" | "video"; model: string; variants?: { aspect: string; url: string }[] },
+  out: { url: string; type: "image" | "video"; model: string; variants?: { aspect: string; url: string }[]; quality?: VideoQuality },
   q: QAResult,
   spent: number,
   diversity: number | null,
@@ -492,12 +529,19 @@ async function saveCreative(
   const kit = await brandFor(run);
   const claims = await claimsCheck(run.models.text, {
     texts: [
-      ...(d.format === "static" && process.env.STATIC_TYPESET !== "off" ? [`On-image text: ${d.copy?.metaHeadline || d.hook} / ${(kit?.offer || run.offer || run.brief?.offer || "").split(/[.;\n]/)[0].slice(0, 60)} / ${kit?.mustSay?.join(" · ") ?? ""}`] : []),d.hook, d.script, d.copy?.metaPrimaryText ?? "", d.copy?.metaHeadline ?? "", ...(d.copy?.googleHeadlines ?? []), ...(d.copy?.googleDescriptions ?? [])],
+      ...(d.format === "static" && process.env.STATIC_TYPESET !== "off" ? [`On-image text: ${d.copy?.metaHeadline || d.hook} / ${(kit?.offer || run.offer || run.brief?.offer || "").split(/[.;\n]/)[0].slice(0, 60)} / ${kit?.mustSay?.join(" · ") ?? ""}`] : []),
+      ...(out.quality ? out.quality.shots.flatMap((s) => [s.vo, s.onScreen]) : [d.hook, d.script]),
+      d.copy?.metaPrimaryText ?? "", d.copy?.metaHeadline ?? "", ...(d.copy?.googleHeadlines ?? []), ...(d.copy?.googleDescriptions ?? []),
+    ],
     research: run.research!, brief: run.brief!, offer: run.offer, mustSay: kit?.mustSay,
   }).catch(() => null);
   const gate = gateVerdict({ qa: q.score, diversity, unsupported: claims?.data.unsupported ?? [], missing: claims?.data.missing ?? [] });
-  spent += claims?.cost ?? 0;
-  run.costUsd += claims?.cost ?? 0;
+  if (out.quality) {
+    if (!claims) gate.reasons.push("Claims review could not be completed.");
+    if (!videoReady(out.quality)) gate.reasons.push("Video needs passing script-match and export evidence.");
+    if (out.quality.tier !== "final") gate.reasons.push("Approve a verified HD export, not a draft.");
+    gate.pass = !gate.reasons.length;
+  }
   const creative: Creative = {
     id: newId("cr"),
     runId: run.id,
@@ -512,12 +556,13 @@ async function saveCreative(
     mediaType: out.type,
     model: out.model,
     qa: q,
+    quality: out.quality,
     qaOverride: null,
     diversity,
     status: "draft",
     channel: null,
     metrics: null,
-    costUsd: spent,
+    costUsd: spent + (claims?.cost ?? 0),
     gate,
     conceptId: (run.concepts ?? []).filter((c) => c.selected)[run.directions.indexOf(d)]?.id ?? null,
     createdAt: now(),
@@ -528,17 +573,13 @@ async function saveCreative(
     if (old.runId === run.id && old.directionId === d.id && old.id !== creative.id && old.status === "draft") await put("creatives", { ...old, status: "rejected" });
   }
   run.creativeIds = [...run.creativeIds.filter((id) => id !== creative.id), creative.id];
-  run.costUsd += spent;
+  run.costUsd += (out.quality ? 0 : spent) + (claims?.cost ?? 0);
   run.progress[d.id] = "done";
   await saveRun(run);
 }
 
-// Some models (e.g. Seedance) refuse first frames containing realistic people; fall back to one that accepts them.
-const FACE_BLOCK = /SensitiveContent|PrivacyInformation/i;
-const faceFallback = (model: string) => (model.includes("kling") ? "google/veo-3.1-fast" : "kwaivgi/kling-v3.0-std");
-
 async function remember(run: StudioRun, s: Shot, kind: "keyframe" | "clip", model: string, q: ShotQA) {
-  if (q.score < QA_PASS || !run.videoPlan) return;
+  if (!shotReady(q) || !run.videoPlan) return;
   await put("prompt_library", { id: newId("pl"), category: run.videoPlan.category, kind, model, beat: s.beat, visual: s.visual, camera: s.camera, score: q.score, brandUrl: run.brandUrl, createdAt: now() });
 }
 
@@ -552,40 +593,44 @@ async function winningShots(run: StudioRun) {
 
 const KEYFRAME_TRIES = 2;
 
-async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: string[]) {
+async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: string[]): Promise<ShotQA> {
   const plan = run.videoPlan!;
-  let best: { url: string; qa: { score: number; notes: string[] } } | null = null;
+  let best: { url: string; qa: ShotQA } | null = null;
   let notes: string[] | undefined;
   for (let a = 0; a < KEYFRAME_TRIES; a++) {
+    if (!live(run)) throw new Error("Stopped before generating a keyframe.");
     const img = await keyframe(run.models.image, s, plan.category, refs, run.research?.colors, notes);
-    const q = await shotQA(run.models.vision, img.url, s, "keyframe", refs[0]);
+    const q = await reviewShotFrames(run.models.vision, [{ at: 0, url: img.url }], s, refs, undefined, "keyframe");
     run.costUsd += img.usage.costUsd + q.cost;
-    if (!best || q.qa.score > best.qa.score) best = { url: img.url, qa: q.qa };
-    if (q.qa.score >= QA_PASS) break;
-    notes = q.qa.notes;
+    if (!best || shotReady(q.qa) || (!shotReady(best.qa) && q.qa.score > best.qa.score)) best = { url: img.url, qa: q.qa };
+    if (shotReady(q.qa) || q.qa.match === "review") break;
+    notes = [...q.qa.notes, ...(q.qa.frames ?? []).filter((f) => f.match === "fail").map((f) => f.note)];
   }
   await remember(run, s, "keyframe", run.models.image, best!.qa);
   Object.assign(s, { keyframe: await storeMedia(best!.url, `${run.id}/${d.id}-${s.id}-kf-${Date.now()}`), keyframeQa: best!.qa, clip: null, clipQa: null, status: "keyframe" });
   if (run.job) run.job.done++;
   await saveRun(run);
+  return best!.qa;
 }
 
-async function storyboard(run: StudioRun, d: Direction, refs: string[]) {
+async function storyboard(run: StudioRun, d: Direction, refs: string[], savedRefs: string[], mustSay?: string[]) {
+  const issues = checkScript(d.approvedScript!, run.videoPlan!.lengthSec, mustSay);
+  if (issues.length) throw new Error(issues.join(" "));
   const p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, await winningShots(run), await guidance(run));
-  const durs = await videoDurations(run.videoPlan!.draftModel);
-  d.shots = p.shots.map((s) => ({ ...s, seconds: nearest(durs, s.seconds) }));
+  Object.assign(d, { shots: p.shots, productRefs: savedRefs, storyboardKey: randomUUID(), passingDraft: null, compactCopy: false });
   run.costUsd += p.cost;
   if (run.job) {
-    run.job.total += d.shots.length;
+    run.job.total += p.shots.length;
     run.job.label = "Drawing keyframes and running keyframe QA";
   }
   await saveRun(run);
-  await Promise.all(d.shots.map((s) => makeKeyframe(run, d, s, refs)));
+  await Promise.all(p.shots.map((s) => makeKeyframe(run, d, s, refs)));
 }
 
 const SILENT_DB = -50;
 
 async function step(run: StudioRun, d: Direction, label: string, done: number, total: number) {
+  if (!live(run)) throw new Error("Stopped before the next production step.");
   run.job = { directionId: d.id, label, done, total };
   await saveRun(run);
 }
@@ -594,167 +639,250 @@ async function step(run: StudioRun, d: Direction, label: string, done: number, t
  * Preflight (keyframes, budget, credits, voice + music made and checked) runs before any paid video;
  * then shots render one at a time under the budget cap, are QA'd, stitched, mixed and QA'd again.
  */
-async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final", refs: string[]) {
+async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final") {
   const plan = run.videoPlan!;
-  const chosen = tier === "final" ? plan.finalModel : plan.draftModel;
-  let model = chosen;
+  const model = tier === "final" ? plan.finalModel : plan.draftModel;
+  const provider = providerOf(model);
   const shots = d.shots!;
-  const tries = tier === "final" ? 2 : 1;
   const resolution = tier === "final" ? "1080p" : "480p";
-  const withAudio = audioConfigured();
+  const aspects = videoAspects(tier);
   const total = shots.length + 4;
   const warnings: string[] = [];
-  const noSpend = "No video credits were spent.";
   let spent = 0;
+  const charge = (cost: number) => { spent += cost; run.costUsd += cost; };
 
-  await step(run, d, "Preflight: keyframes, budget and credits", 0, total);
-  const weak = shots.filter((s) => !s.keyframe || (s.keyframeQa?.score ?? 0) < 6);
-  if (weak.length) throw new Error(`Preflight: redraw shot ${weak.map((s) => Number(s.id.slice(1)) + 1).join(", ")} first (keyframe QA under 6/10). ${noSpend}`);
-  const durs = await videoDurations(model);
-  for (const s of shots) s.seconds = nearest(durs, s.seconds);
-  const seconds = shots.reduce((t, s) => t + s.seconds, 0);
-  const perSec = (await videoPricePerSec(model, resolution, !withAudio)) ?? 0.12;
-  const expected = seconds * perSec + shots.length * 0.01 + (withAudio ? 0.02 + (plan.music ? 0.6 : 0) : 0);
-  if (expected > plan.budgetUsd) throw new Error(`Preflight: this ${tier} video is estimated at $${expected.toFixed(2)} (${seconds}s on ${model}), above your $${plan.budgetUsd} cap. Shorten it, pick a cheaper model or raise the cap. ${noSpend}`);
-  const credits = providerOf(model) === "openrouter" ? await openrouterCredits() : null;
-  if (credits != null && credits < expected * 1.2) throw new Error(`Preflight: your OpenRouter balance is $${credits.toFixed(2)}, below this video's estimate of $${expected.toFixed(2)}. Add credits at openrouter.ai/settings/credits or pick a cheaper model. ${noSpend}`);
-
-  const starts = shots.map((_, i) => shots.slice(0, i).reduce((t, s) => t + s.seconds, 0));
-  const voices: { url: string; start: number; tempo?: number }[] = [];
-  let music: string | null = null;
-  if (withAudio) {
-    await step(run, d, "Voiceover and music, checked before any video is generated", 1, total);
-    const lines = shots.map((s) => spokenScript(s.vo));
-    if (!lines.some(Boolean)) throw new Error(`Preflight: the storyboard has no spoken lines. Rebuild it. ${noSpend}`);
-    const vo = await Promise.all(lines.map((l) => (l ? voiceWithCheck(l, plan.voice) : null))).catch((e: Error) => {
-      throw new Error(`Preflight: ${e.message.slice(0, 220)}. ${noSpend}`);
-    });
-    for (const [i, v] of vo.entries()) {
-      if (!v) continue;
-      spent += v.usage.costUsd;
-      const [len, db] = await Promise.all([mediaDuration(v.url), meanVolume(v.url)]);
-      if (len < 0.3 || db < SILENT_DB) throw new Error(`Preflight: the voiceover for shot ${i + 1} came back silent. ${noSpend}`);
-      const room = shots[i].seconds - 0.3;
-      if (len > room * 1.5) warnings.push(`Shot ${i + 1}'s line is too long for ${shots[i].seconds}s and will be cut; shorten it in the storyboard.`);
-      voices.push({ url: v.url, start: starts[i] + 0.15, tempo: len > room ? len / room : undefined });
-    }
-    if (plan.music) {
-      try {
-        const mu = await musicBed(`Instrumental bed for a ${CATEGORIES[plan.category].label.toLowerCase()} video ad. Mood: ${run.research?.tone ?? "modern, upbeat"}. Clean, modern, builds to a lift near the end, no vocals.`, seconds + 2);
-        spent += mu.usage.costUsd;
-        if ((await meanVolume(mu.url)) < SILENT_DB) warnings.push("The music bed came back silent, so the video uses voice only.");
-        else music = mu.url;
-      } catch (e) {
-        warnings.push(`Music failed (${(e as Error).message.slice(0, 120)}), so the video uses voice only.`);
-      }
-    }
-  }
-
-  for (const [i, s] of shots.entries()) {
-    s.status = "rendering";
-    s.attempts = 0;
-    const first = await mediaDataUrl(s.keyframe!);
-    let notes: string[] = [];
-    let best: { url: string; qa: { score: number; notes: string[] } } | null = null;
-    while (s.attempts < tries) {
-      if (spent + s.seconds * perSec > plan.budgetUsd) {
-        if (best) break;
-        throw new Error(`Budget cap of $${plan.budgetUsd} reached at shot ${i + 1} ($${spent.toFixed(2)} spent). Raise the cap or shorten the video.`);
-      }
-      s.attempts++;
-      await step(run, d, `Shot ${i + 1}/${shots.length}: ${s.attempts > 1 ? "retrying from QA notes" : "rendering"} on ${model}`, 2 + i, total);
-      const prompt = `${s.visual}
-Camera: ${s.camera}. Look: ${CATEGORIES[plan.category].look}.
-Start exactly from the given first frame and keep the product, people and setting consistent. Natural, physically plausible motion, no morphing. No text, captions, logos or price tags appear.${!withAudio && s.vo ? `\nSpoken line: "${s.vo}"` : ""}${notes.length ? `\nFix from the last take: ${notes.join(" ")}` : ""}`;
-      const vopts = { firstFrame: first, seconds: s.seconds, audio: !withAudio, resolution };
-      const v = await generateVideo(model, prompt, vopts).catch(async (e: Error) => {
-        if (!FACE_BLOCK.test(e.message)) throw e;
-        if (model === chosen) {
-          model = faceFallback(chosen);
-          warnings.push(`${chosen} refuses first frames with realistic people, so this video switched to ${model}.`);
-        }
-        return generateVideo(model, prompt, vopts);
-      });
-      const sheet = await filmstrip(v.url);
-      const q = await shotQA(run.models.vision, sheet.sheet, s, "clip", refs[0]);
-      spent += v.usage.costUsd + q.cost;
-      if (!best || q.qa.score > best.qa.score) best = { url: v.url, qa: q.qa };
-      if (q.qa.score >= QA_PASS) break;
-      notes = q.qa.notes;
-    }
-    await remember(run, s, "clip", model, best!.qa);
-    Object.assign(s, { clip: await storeMedia(best!.url, `${run.id}/${d.id}-${s.id}-clip-${Date.now()}`), clipQa: best!.qa, status: "done" });
-    await saveRun(run);
-  }
-
-  await step(run, d, "Stitching shots, mixing audio, captions and end card", 2 + shots.length, total);
-  const clips = await Promise.all(shots.map((s) => mediaDataUrl(s.clip!)));
-  const st = await stitchShots(clips, { voices, music });
-  if ((voices.length || !withAudio) && (await meanVolume(st.url)) < SILENT_DB) {
-    if (voices.length) throw new Error("The mixed video came out silent, so it was not saved. Try the render again; if it repeats, this is a bug.");
-    warnings.push(`${model} returned no audio for this video.`);
-  }
-  const segments = shots.map((s, i) => ({ start: st.starts[i], end: st.starts[i + 1] ?? st.duration, text: s.vo }));
+  await step(run, d, "Preflight: script, references, QA tools and budget", 0, total);
   const kit = await brandFor(run);
+  const issues = checkScript(d.approvedScript!, plan.lengthSec, kit?.mustSay);
+  if (issues.length) throw new Error(issues.join(" "));
+  if (!audioConfigured()) throw new Error("Connect fal.ai for separate, verified voiceover before rendering.");
+  if (!await localOcrAvailable()) throw new Error("Video QA requires local Tesseract and its configured language. No video was requested.");
+  const weak = shots.filter((s) => !s.keyframe || !shotReady(s.keyframeQa));
+  if (weak.length) throw new Error(`Redraw keyframes ${weak.map((s) => Number(s.id.slice(1)) + 1).join(", ")} until each matches the approved shot and scores ${QA_PASS}/10. No video was requested.`);
+  const refs = await Promise.all((d.productRefs ?? []).slice(0, 2).map(mediaDataUrl));
+  if (!refs.length) throw new Error("Rebuild the storyboard with real product references.");
+  const durs = (await videoDurations(model))?.filter((n) => n > 0).sort((a, b) => a - b);
+  const seconds = shots.reduce((t, s) => t + s.seconds, 0);
+  const actual = shots.map((s) => durs?.length ? durs.find((n) => n >= s.seconds) : s.seconds);
+  if (actual.some((s) => s === undefined)) throw new Error("The chosen model cannot cover a locked beat. Pick a model with longer takes.");
+  const cacheKeys = shots.map((s) => shortHash(["video-qa-v1", resolution, model, plan.category, d.productRefs, s.keyframe, s.expectedVisual, s.visual, s.camera, s.seconds]));
+  const toReview = (s: Shot, i: number) => s.clipKey === cacheKeys[i] && !!s.clip && (!s.clipQa || s.clipQa.match === "review");
+  const missing = shots.flatMap((s, i) => reusableShot(s, cacheKeys[i]) || toReview(s, i) ? [] : [i]);
+  const perSec = provider === "hfmcp" ? 0 : (await videoPricePerSec(model, resolution, false)) ?? 0.12;
+  const musicKey = shortHash([plan.category, seconds, run.research?.tone]);
+  const reserve = 0.12 + shots.length * 0.035 + (plan.music && d.musicTrack?.key !== musicKey ? 0.6 : 0);
+  const dollars = missing.map((i) => actual[i]! * perSec);
+  const estimated = dollars.reduce((a, b) => a + b, reserve);
+  if (estimated > plan.budgetUsd) throw new Error(`Preflight: estimated $${estimated.toFixed(2)} exceeds the $${plan.budgetUsd} cap. No video was requested.`);
+  const router = await openrouterCredits();
+  if (router == null || router < Math.max(0.05, provider === "openrouter" ? estimated * 1.1 : 0.05)) {
+    throw new Error("OpenRouter's balance or spending budget is too low for the required review. Check Credits and Guardrails.");
+  }
+
+  let hfLeft = 0;
+  const quotes = new Map<number, number>();
+  if (provider === "hfmcp" && missing.length) {
+    const { higgsfieldCredits, higgsfieldVideoCost } = await import("@/lib/higgsfield-mcp");
+    const hf = model.replace(/^hfmcp:/, "");
+    const [left, costs] = await Promise.all([higgsfieldCredits(), Promise.all(missing.map((i) => higgsfieldVideoCost(hf, { seconds: actual[i], resolution })))]);
+    if (left == null || costs.some((c) => c == null || !Number.isFinite(c) || c <= 0)) throw new Error("Higgsfield did not confirm the balance and per-shot quote. No video was requested.");
+    hfLeft = left;
+    missing.forEach((i, j) => quotes.set(i, costs[j]!));
+    const need = costs.reduce<number>((a, b) => a + b!, 0);
+    if (hfLeft < need) throw new Error(`Higgsfield needs ${need.toFixed(1)} credits for the remaining shots; ${hfLeft.toFixed(1)} are available.`);
+    say(run, "agent", `Higgsfield quote: ${need.toFixed(1)} credits for ${missing.length} remaining shots. Subscription retries are off; use Repair to authorize another take.`);
+  }
+
+  await step(run, d, "Verifying each voiceover before motion spend", 1, total);
+  let start = 0;
+  const voices: { url: string; start: number; tempo?: number }[] = [];
+  for (const [i, s] of shots.entries()) {
+    if (!live(run)) throw new Error("Stopped before the next voiceover.");
+    const line = s.vo.trim();
+    if (line) {
+      const key = shortHash([line, plan.voice, s.seconds]);
+      if (s.voiceTrack?.key !== key) {
+        const voice = await checkedVoice(line, plan.voice, charge);
+        const [len, db] = await Promise.all([mediaDuration(voice), meanVolume(voice)]);
+        const room = s.seconds - 0.3;
+        if (len < 0.3 || db < SILENT_DB || len > room * 1.3) throw new Error(`Voice for shot ${i + 1} is silent or too long for the approved beat. Shorten the script and review it again; no video was requested.`);
+        s.voiceTrack = { key, url: await storeMedia(voice, `${run.id}/${d.id}-voice-${i}-${key}`), tempo: len > room ? len / room : undefined };
+        await saveRun(run);
+      }
+      voices.push({ url: await mediaDataUrl(s.voiceTrack.url), start: start + 0.15, tempo: s.voiceTrack.tempo });
+    }
+    start += s.seconds;
+  }
+  let music: string | null = null;
+  if (plan.music) {
+    if (!live(run)) throw new Error("Stopped before music production.");
+    try {
+      if (d.musicTrack?.key !== musicKey) {
+        const mu = await musicBed(`Clean instrumental for a ${CATEGORIES[plan.category].label}, ${run.research?.tone ?? "modern"} tone, no vocals.`, seconds + 2);
+        charge(mu.usage.costUsd);
+        if (await meanVolume(mu.url) < SILENT_DB) throw new Error("silent music bed");
+        d.musicTrack = { key: musicKey, url: await storeMedia(mu.url, `${run.id}/${d.id}-music-${musicKey}`) };
+        await saveRun(run);
+      }
+      music = await mediaDataUrl(d.musicTrack.url);
+    } catch {
+      throw new Error("The selected music bed is unavailable or silent. No video was requested. Retry or disable music in the video plan.");
+    }
+  }
+
+  const firsts = await Promise.all(shots.map((s) => mediaDataUrl(s.keyframe!)));
+  const assess = async (video: string, s: Shot, i: number): Promise<ShotQA> => {
+    try {
+      const technical = await videoTechnicalFindings(video, s.seconds, undefined, plan.category !== "motion_graphics");
+      if (technical.length) {
+        return { score: 0, match: technical.some((f) => f.status === "fail") ? "fail" : "review", notes: technical.map((f) => `${f.at.toFixed(2)}s: ${f.observed}`) };
+      }
+      const frames = await evidenceFrames(video, frameTimes(0, s.seconds), { start: 0, end: s.seconds });
+      const review = await reviewShotFrames(run.models.vision, frames, s, refs, firsts[i]);
+      charge(review.cost);
+      return review.qa;
+    } catch {
+      return { score: 0, match: "review", notes: ["The saved take could not be visually verified."] };
+    }
+  };
+  const recordTake = async (s: Shot, url: string, verdict: ShotQA) => {
+    Object.assign(s, { clip: url, clipQa: verdict, status: shotReady(verdict) ? "done" : "failed" });
+    await saveRun(run);
+    await remember(run, s, "clip", model, verdict);
+  };
+  const qCostReserve = 0.08 + shots.length * 0.025;
+  for (const [i, s] of shots.entries()) {
+    if (reusableShot(s, cacheKeys[i])) continue;
+    if (toReview(s, i)) {
+      await step(run, d, `Shot ${i + 1}/${shots.length}: verifying the saved take without regenerating`, 2 + i, total);
+      await recordTake(s, s.clip!, await assess(await mediaDataUrl(s.clip!), s, i));
+      continue;
+    }
+    const pendingUsd = shots.reduce((sum, _, j) => sum + (j > i && missing.includes(j) ? actual[j]! * perSec : 0), 0);
+    let notes = s.clipKey === cacheKeys[i] ? s.clipQa?.notes ?? [] : [];
+    let best: { url: string; qa: ShotQA } | undefined;
+    for (let attempt = 0; attempt < (provider === "hfmcp" ? 1 : 2); attempt++) {
+      if (spent + pendingUsd + actual[i]! * perSec + qCostReserve > plan.budgetUsd) {
+        if (best) break;
+        throw new Error(`Budget cap reached before shot ${i + 1}. Existing verified assets were kept.`);
+      }
+      const hCost = quotes.get(i) ?? 0;
+      if (hCost > hfLeft) throw new Error("Higgsfield quote exceeds the remaining credits.");
+      hfLeft -= hCost;
+      s.status = "rendering";
+      s.attempts = attempt + 1;
+      await step(run, d, `Shot ${i + 1}/${shots.length}: ${attempt ? "repairing the failed take" : "rendering the planned beat"}`, 2 + i, total);
+      const prompt = `Required on-screen action: ${s.expectedVisual}. Shot treatment: ${s.visual}. Camera: ${s.camera}. Look: ${CATEGORIES[plan.category].look}.
+Start from the attached frame. Preserve the exact product; no invented text or labels. Natural physical motion. ${notes.length ? `Fix these defects: ${notes.join(" ")}` : ""}`;
+      const take = await generateVideo(model, prompt, { firstFrame: firsts[i], seconds: actual[i], audio: false, resolution });
+      charge(take.usage.costUsd);
+      const stored = await storeMedia(take.url, `${run.id}/${d.id}-${s.id}-clip-${randomUUID()}`);
+      Object.assign(s, { clip: stored, clipKey: cacheKeys[i], clipModel: model, clipQa: null });
+      await saveRun(run);
+      const verdict = await assess(take.url, s, i);
+      if (!best || shotReady(verdict) || verdict.score > best.qa.score) best = { url: stored, qa: verdict };
+      await recordTake(s, best.url, best.qa);
+      if (shotReady(verdict) || verdict.match === "review") break;
+      notes = [...verdict.notes, ...(verdict.frames ?? []).filter((x) => x.match === "fail").map((x) => `${x.at}s: ${x.note}`)].slice(0, 8);
+    }
+    if (!best) throw new Error(`No take returned for shot ${i + 1}.`);
+  }
+
+  await step(run, d, "Assembling the locked edit", 2 + shots.length, total);
+  const clips = await Promise.all(shots.map((s) => mediaDataUrl(s.clip!)));
+  const st = await stitchShots(clips, { voices, music, shotSeconds: shots.map((s) => s.seconds), width: tier === "final" ? 1080 : 486 });
+  const segments = shots.map((s, i) => ({ shotId: s.id, start: st.starts[i], end: st.starts[i] + s.seconds, text: s.vo, onScreen: s.onScreen }));
   const end = {
     brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
-    line: d.copy?.metaHeadline,
-    cta: d.approvedScript?.cta?.replace(/[.!]+$/, "") || d.copy?.metaCta,
+    cta: d.approvedScript!.cta,
     color: kit?.colorRoles?.primary || run.research?.colors?.[0],
     logo: kit?.logo ? await mediaDataUrl(kit.logo).catch(() => null) : null,
     fontFile: kit?.font?.file ? await mediaFile(kit.font.file).catch(() => null) : null,
     fontFamily: kit?.font?.family ?? null,
   };
-  const variants = await captionVariants(st.url, "", end, segments).catch((e) => {
-    warnings.push(`Captions and extra sizes failed (${(e as Error).message.slice(0, 100)}).`);
-    return [];
-  });
-  const main = variants.find((x) => x.aspect === "9:16")?.url ?? st.url;
+  await step(run, d, "Reading rendered copy and checking speech and visuals", 3 + shots.length, total);
+  const cues = expectedCopy(segments, end, st.duration);
+  const inspect = async (files: { aspect: string; url: string }[]) => (await Promise.all(files.map(async (v) => [
+    ...await checkExport(v.url, v.aspect, st.duration + END_SECONDS, cues),
+    ...await audioFindings(v.url, st.duration, v.aspect),
+  ]))).flat();
+  let variants = await captionVariants(st.url, "", end, segments, aspects, d.compactCopy);
+  let findings = await inspect(variants);
+  if (!d.compactCopy && findings.some((f) => f.kind === "copy" || (f.kind === "coverage" && f.aspect))) {
+    variants = await captionVariants(st.url, "", end, segments, aspects, true);
+    findings = await inspect(variants);
+    d.compactCopy = true;
+    warnings.push("Re-typeset the export after an on-screen copy mismatch; no shots were regenerated.");
+  }
+  const main = variants.find((v) => v.aspect === "9:16")!.url;
+  const speech = await verifySpeech(main, [...segments, { start: 0, end: st.duration + END_SECONDS, text: shots.map((s) => s.vo).join(" ") }], transcribe);
+  charge(speech.cost);
+  findings.push(...speech.findings);
+  for (const finding of speech.findings) {
+    if (finding.kind !== "speech") continue;
+    const shot = shots.find((s) => s.id === finding.shotId);
+    if (shot?.vo) delete shot.voiceTrack;
+  }
 
-  await step(run, d, "Final QA on the filmstrip", 3 + shots.length, total);
-  const q = await qa(run.models.vision, main, "video", run.brief!, d.hook, shots.map((s) => s.vo).join(" "));
-  spent += q.cost;
-  if (withAudio) {
-    const m = await scriptMatch(st.url, segments).catch((e: Error) => ({ error: e.message }));
-    if ("error" in m) warnings.push(`Script match check failed (${m.error.slice(0, 100)}).`);
-    else {
-      q.data.notes.unshift(`Script match: ${Math.round(m.overall * 100)}% of the approved script is heard; per shot ${m.perShot.map((x) => `${Math.round(x * 100)}%`).join(", ")}`);
-      const off = m.perShot.flatMap((x, i) => (x < 0.8 ? [i + 1] : []));
-      if (m.overall < 0.9 || off.length) {
-        q.data.notes.unshift(`The voiceover drifts from the approved script${off.length ? ` in shot ${off.join(", ")}` : ""}.`);
-        q.data.score = Math.min(q.data.score, QA_PASS - 1);
-        q.data.pass = false;
+  const evidence: VideoQuality["shots"] = [];
+  for (const [i, s] of shots.entries()) {
+    const segment = segments[i];
+    let finalQa: ShotQA | undefined;
+    if (shotReady(s.clipQa)) {
+      try {
+        const frames = await evidenceFrames(main, frameTimes(segment.start, segment.end), segment);
+        const v = await reviewShotFrames(run.models.vision, frames, s, refs, firsts[i], "export");
+        finalQa = v.qa;
+        charge(v.cost);
+      } catch {
+        finalQa = { score: 0, match: "review", notes: ["Final visual verification could not run."] };
+      }
+      const failures = finalQa.frames?.filter((f) => f.match === "fail") ?? [];
+      if (failures.some((f) => f.repair === "layout")) d.compactCopy = true;
+      if (failures.some((f) => f.repair === "source")) {
+        s.clipQa = { ...finalQa, notes: [...finalQa.notes, ...(finalQa.frames ?? []).filter((f) => f.match === "fail").map((f) => f.note)] };
+        s.status = "failed";
       }
     }
+    const result = finalQa ?? s.clipQa;
+    if (!shotReady(result)) {
+      const mismatch = result?.frames?.find((f) => f.match === "fail");
+      const at = mismatch ? (finalQa ? mismatch.at : segment.start + mismatch.at) : segment.start;
+      const observed = mismatch?.note || result?.notes.join(" ") || "Missing visual verdict";
+      findings.push({ kind: mismatch?.repair === "layout" ? "copy" : "visual", shotId: s.id, at, expected: s.expectedVisual ?? s.visual, observed, status: !result || result.match === "review" ? "review" : "fail" });
+    }
+    const frameReport = !finalQa && result?.frames ? { ...result, frames: result.frames.map((f) => ({ ...f, at: segment.start + f.at })) } : result;
+    evidence.push({ id: s.id, start: segment.start, end: segment.end, visual: s.expectedVisual ?? s.visual, vo: segment.text, onScreen: segment.onScreen ?? "", keyframe: s.keyframe, qa: frameReport });
   }
-  await saveCreative(run, d, { url: main, type: "video", model, variants }, q.data, spent, null);
+
+  let craft: QAResult = { score: 0, pass: false, notes: [] };
+  try {
+    const review = await qa(run.models.vision, main, "video", run.brief!, d.hook, shots.map((s) => s.onScreen).join(" "));
+    craft = review.data;
+    charge(review.cost);
+  } catch {
+    findings.push({ kind: "coverage", at: 0, expected: "Independent review of the finished creative", observed: "Creative Director review could not run", status: "review" });
+  }
+  if (craft.notes.length && craft.score < QA_PASS) findings.push({ kind: "visual", at: 0, expected: "Finished creative at 9/10", observed: craft.notes.join(" "), status: "fail" });
+  const quality = { ...exportVerdict(tier, craft.score, evidence, findings, variants.map((v) => v.aspect)), storyboardKey: d.storyboardKey! };
+  const result = { score: quality.score, pass: videoReady(quality), notes: [...findings.slice(0, 5).map((f) => f.observed), ...craft.notes] };
+  await saveCreative(run, d, { url: main, type: "video", model, variants, quality }, result, spent, null);
+  if (tier === "draft") d.passingDraft = result.pass ? d.storyboardKey : null;
   run.job = null;
-  return { score: q.data.score, spent, warnings };
+  return { quality, spent, warnings };
 }
 
-/** Voiceover that is transcribed back and must match its script line before any video is rendered. */
-async function voiceWithCheck(line: string, voice: string) {
-  let last = 0, said = "";
+const shortHash = (input: unknown) => createHash("sha256").update(JSON.stringify(input)).digest("hex").slice(0, 24);
+
+async function checkedVoice(line: string, voice: string, charge: (n: number) => void) {
   for (let i = 0; i < 2; i++) {
     const v = await voiceover(line, voice);
-    const heard = await transcribe(v.url).catch(() => null);
-    if (!heard) return v;
-    last = textMatch(heard.text, line);
-    said = heard.text.trim();
-    if (last >= 0.85) return v;
+    charge(v.usage.costUsd);
+    const heard = await transcribeLine(v.url, transcribe);
+    charge(heard.usage.costUsd);
+    if (sameSpeech(heard.text, line)) return v.url;
   }
-  throw new Error(`the voiceover didn't say the approved line. Script: "${line.slice(0, 80)}", heard: "${said.slice(0, 80)}" (${Math.round(last * 100)}% match after 2 tries). Reword the line in the Script Lab and approve it again`);
-}
-
-/** Speech-to-text on the stitched video, aligned to each shot's window, compared with the approved lines. */
-async function scriptMatch(video: string, segments: { start: number; end: number; text: string }[]) {
-  const t = await transcribe(video);
-  const perShot = segments.map((s) => {
-    if (!s.text.trim()) return 1;
-    const heard = t.chunks.filter((c) => c.end > s.start - 0.4 && c.start < s.end + 0.4).map((c) => c.text).join(" ");
-    return textRecall(heard, s.text);
-  });
-  return { overall: textMatch(t.text, segments.map((s) => s.text).join(" ")), perShot };
+  throw new Error("The narration did not match an approved line after two attempts. Check pronunciation or reapprove revised wording before video spend.");
 }
 
 async function generateMany(run: StudioRun, dirs: Direction[], refs: string[]) {

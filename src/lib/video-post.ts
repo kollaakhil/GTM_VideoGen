@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
+import type { CopyCue } from "./media-qa";
 
 const run = promisify(execFile);
 const FFMPEG = ffmpegPath || "ffmpeg";
@@ -33,8 +34,8 @@ export function spokenScript(script: string) {
 }
 
 /** Splits a voiceover script into short caption chunks spread evenly over the clip. */
-export function captionCues(script: string, duration: number, wordsPerCue = 4) {
-  const words = spokenScript(script).split(" ").filter(Boolean);
+export function captionCues(script: string, duration: number, wordsPerCue = 4, verbatim = false) {
+  const words = (verbatim ? script : spokenScript(script)).trim().split(/\s+/).filter(Boolean);
   if (!words.length || duration <= 0) return [];
   // Break at punctuation first so a cue never splits a short phrase; avoid leaving a lone trailing word.
   const chunks: string[] = [];
@@ -51,10 +52,10 @@ export function captionCues(script: string, duration: number, wordsPerCue = 4) {
   return chunks.map((text, i) => ({ start: i * step, end: Math.min(duration, (i + 1) * step), text }));
 }
 
-function assFile(cues: { start: number; end: number; text: string }[], w: number, h: number) {
-  const size = Math.round(Math.min(w, h) * 0.075);
+function assFile(cues: { start: number; end: number; text: string }[], w: number, h: number, overlays: CopyCue[] = [], compact = false) {
+  const size = Math.round(Math.min(w, h) * (compact ? 0.058 : 0.075));
   const marginV = Math.round(h * 0.2);
-  const esc = (t: string) => t.replace(/[{}\\]/g, "").toUpperCase();
+  const esc = (t: string) => t.replace(/[{}\\]/g, "");
   return [
     "[Script Info]",
     "ScriptType: v4.00+",
@@ -63,11 +64,13 @@ function assFile(cues: { start: number; end: number; text: string }[], w: number
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
-    `Style: Cap,DejaVu Sans,${size},&H00FFFFFF,&H00000000,&H80000000,1,1,${Math.max(2, Math.round(size / 10))},0,2,${Math.round(w * 0.08)},${Math.round(w * 0.08)},${marginV}`,
+    `Style: Cap,DejaVu Sans,${size},&H00FFFFFF,&H00000000,&H00000000,1,3,${Math.max(3, Math.round(size * 0.22))},0,2,${Math.round(w * 0.08)},${Math.round(w * 0.08)},${marginV}`,
+    `Style: Overlay,DejaVu Sans,${Math.round(size * 0.8)},&H00FFFFFF,&H00000000,&H80000000,1,3,6,0,8,${Math.round(w * 0.12)},${Math.round(w * 0.12)},${Math.round(h * 0.14)}`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Text",
     ...cues.map((c) => `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Cap,${esc(c.text)}`),
+    ...overlays.map((c) => `Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Overlay,${esc(c.text.replace(/\s+/g, " "))}`),
   ].join("\n");
 }
 
@@ -88,6 +91,19 @@ async function probe(file: string) {
 export type EndCard = { brand: string; line?: string; cta?: string; color?: string; logo?: string | null; fontFile?: string | null; fontFamily?: string | null };
 
 const CTA_LABEL: Record<string, string> = { SHOP_NOW: "Shop now", LEARN_MORE: "Learn more", SIGN_UP: "Sign up", GET_OFFER: "Get offer", ORDER_NOW: "Order now" };
+const endCopy = (end: EndCard) => ({ brand: end.brand, line: end.line, cta: end.cta ? CTA_LABEL[end.cta] ?? end.cta : undefined });
+export const END_SECONDS = 1.5;
+
+export function expectedCopy(segments: { start: number; end: number; text: string; onScreen?: string }[], end: EndCard, duration: number): CopyCue[] {
+  return [
+    ...segments.flatMap((s): CopyCue[] => s.onScreen?.trim() ? [{ start: s.start, end: s.end, text: s.onScreen, layer: "overlay" }] : []),
+    ...timedCues(segments).map((c): CopyCue => ({ ...c, layer: "caption" })),
+    ...(["brand", "line", "cta"] as const).flatMap((position): CopyCue[] => {
+      const text = endCopy(end)[position];
+      return text ? [{ text, start: duration, end: duration + END_SECONDS, layer: "end", position }] : [];
+    }),
+  ];
+}
 
 /** Readable text colour (black/white) for a hex background. */
 function inkFor(hex: string): "black" | "white" {
@@ -99,7 +115,7 @@ function inkFor(hex: string): "black" | "white" {
 function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) {
   const c = ink === "white" ? "&H00FFFFFF" : "&H00000000";
   const clean = (t: string) => t.replace(/[{}\\\n]/g, " ").trim();
-  const line = end.line ? clean(end.line).slice(0, 40) : "";
+  const line = end.line ? clean(end.line) : "";
   const fit = (n: number, len: number) => Math.round(Math.min(n, (w * 1.7) / Math.max(len, 1)));
   const ev = (size: number, y: number, text: string, box = false) =>
     `Dialogue: 0,0:00:00.00,0:00:01.50,${box ? "Box" : "Card"},{\\an5\\pos(${Math.round(w / 2)},${y})\\fs${size}}${text}`;
@@ -118,14 +134,14 @@ function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) 
     "Format: Layer, Start, End, Style, Text",
     ev(fit(h / 11, end.brand.length), Math.round(h * 0.4), clean(end.brand)),
     ...(line ? [ev(fit(h / 28, line.length), Math.round(h * 0.52), line)] : []),
-    ...(end.cta ? [ev(Math.round(h / 26), Math.round(h * 0.64), CTA_LABEL[end.cta] ?? clean(end.cta), true)] : []),
+    ...(end.cta ? [ev(fit(h / 18, end.cta.length), Math.round(h * 0.64), CTA_LABEL[end.cta] ?? clean(end.cta))] : []),
   ].join("\n");
 }
 
 /** Burns captions, crops to each aspect and appends a typeset end card (brand, offer line, CTA) so the wordmark is always spelled right. */
 /** Caption cues timed to each shot's window instead of spread evenly over the whole video. */
 export function timedCues(segments: { start: number; end: number; text: string }[], wordsPerCue = 4) {
-  return segments.flatMap((s) => captionCues(s.text, s.end - s.start, wordsPerCue).map((c) => ({ ...c, start: c.start + s.start, end: c.end + s.start })));
+  return segments.flatMap((s) => captionCues(s.text, s.end - s.start, wordsPerCue, true).map((c) => ({ ...c, start: c.start + s.start, end: c.end + s.start })));
 }
 
 const toFile = async (dir: string, name: string, media: string) => {
@@ -138,7 +154,7 @@ const toFile = async (dir: string, name: string, media: string) => {
  * Joins shot clips into one 720x1280 30fps video. With a voiceover and/or music bed the model audio is replaced
  * by a mix (voice on top, music ducked under it); otherwise each clip's own audio is kept.
  */
-export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null } = {}): Promise<{ url: string; starts: number[]; duration: number }> {
+export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number } = {}): Promise<{ url: string; starts: number[]; duration: number }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-stitch-"));
   try {
     const norm: string[] = [];
@@ -147,20 +163,24 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
     for (const [i, c] of clips.entries()) {
       const src = await toFile(dir, `c${i}.mp4`, c);
       const info = await probe(src);
+      const duration = audio.shotSeconds?.[i] ?? info.duration;
+      if (!(duration > 0) || info.duration + 0.12 < duration) throw new Error(`Shot ${i + 1} is shorter than its planned ${duration}s.`);
+      const w = audio.width ?? 720;
+      const h = Math.round(w * 16 / 9 / 2) * 2;
       const out = path.join(dir, `n${i}.mp4`);
       await run(
         FFMPEG,
         [
           "-hide_banner", "-loglevel", "error", "-i", src,
           ...(info.audio ? [] : ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]),
-          "-vf", "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p",
-          "-map", "0:v", "-map", info.audio ? "0:a" : "1:a", "-t", String(info.duration || 5),
+          "-vf", `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1,fps=30,format=yuv420p`,
+          "-map", "0:v", "-map", info.audio ? "0:a" : "1:a", "-af", "apad", "-t", String(duration),
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-ar", "44100", "-ac", "2", "-y", out,
         ],
         { timeout: 180_000 },
       );
       starts.push(t);
-      t += info.duration || 5;
+      t += duration;
       norm.push(out);
     }
     const joined = path.join(dir, "joined.mp4");
@@ -190,10 +210,10 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
         parts.push(`[${k++}:a]aresample=44100,aformat=channel_layouts=stereo,volume=${labels.length ? 0.18 : 0.6},afade=t=out:st=${Math.max(0, t - 1).toFixed(2)}:d=1[mu]`);
         labels.push("[mu]");
       }
-      const mix = labels.length > 1 ? `${labels.join("")}amix=inputs=${labels.length}:duration=longest:normalize=0[a]` : `${labels[0]}anull[a]`;
+      const mix = labels.length > 1 ? `${labels.join("")}amix=inputs=${labels.length}:duration=longest:normalize=0` : `${labels[0]}anull`;
       await run(
         FFMPEG,
-        ["-hide_banner", "-loglevel", "error", "-i", joined, ...extra, "-filter_complex", `${parts.join(";")};${mix}`, "-map", "0:v", "-map", "[a]", "-t", t.toFixed(2), "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-y", final],
+        ["-hide_banner", "-loglevel", "error", "-i", joined, ...extra, "-filter_complex", `${parts.join(";")};${mix},apad=whole_dur=${t},loudnorm=I=-17:LRA=7:TP=-2[a]`, "-map", "0:v", "-map", "[a]", "-t", t.toFixed(2), "-c:v", "copy", "-c:a", "aac", "-ar", "44100", "-b:a", "160k", "-y", final],
         { timeout: 180_000 },
       );
     }
@@ -230,7 +250,9 @@ export async function captionVariants(
   video: string,
   script: string,
   end?: EndCard,
-  segments?: { start: number; end: number; text: string }[],
+  segments?: { start: number; end: number; text: string; onScreen?: string }[],
+  aspects: readonly (typeof ASPECTS)[number]["aspect"][] = ASPECTS.map((a) => a.aspect),
+  compactCopy = false,
 ): Promise<{ aspect: string; url: string }[]> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));
   try {
@@ -238,8 +260,9 @@ export async function captionVariants(
     await fs.writeFile(input, video.startsWith("data:") ? Buffer.from(video.split(",")[1], "base64") : await (await fetch(video)).arrayBuffer().then(Buffer.from));
     const src = await probe(input);
     const cues = segments?.length ? timedCues(segments) : captionCues(script, src.duration);
+    const overlays = (segments ?? []).flatMap((s): CopyCue[] => s.onScreen?.trim() ? [{ start: s.start, end: s.end, text: s.onScreen, layer: "overlay" }] : []);
     const results: { aspect: string; url: string }[] = [];
-    for (const a of ASPECTS) {
+    for (const a of ASPECTS.filter((row) => aspects.includes(row.aspect))) {
       let w = src.width;
       let h = Math.round((src.width * a.h) / a.w);
       if (h > src.height) {
@@ -249,9 +272,16 @@ export async function captionVariants(
       w -= w % 2;
       h -= h % 2;
       const ass = path.join(dir, `${a.w}x${a.h}.ass`);
-      await fs.writeFile(ass, assFile(cues, w, h));
+      await fs.writeFile(ass, assFile(cues, w, h, overlays, compactCopy));
       const out = path.join(dir, `${a.w}x${a.h}.mp4`);
-      const vf = `crop=${w}:${h}${cues.length ? `,subtitles=${ass}:fontsdir=${FONTS}` : ""}`;
+      const spatial = (segments?.length || compactCopy) && a.aspect !== "9:16"
+        ? `scale=${w}:${h}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=0x151515`
+        : `crop=${w}:${h}`;
+      const backing = compactCopy ? [
+        ...(cues.length ? ["drawbox=x=iw*0.055:y=ih*0.565:w=iw*0.89:h=ih*0.26:color=black:t=fill"] : []),
+        ...(overlays.length ? ["drawbox=x=iw*0.095:y=ih*0.125:w=iw*0.81:h=ih*0.32:color=black:t=fill"] : []),
+      ] : [];
+      const vf = [spatial, ...backing, ...(cues.length || overlays.length ? [`subtitles=${ass}:fontsdir=${FONTS}`] : [])].join(",");
       const enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", out];
       if (!end) {
         await run(FFMPEG, ["-hide_banner", "-loglevel", "error", "-i", input, "-vf", vf, ...enc.slice(0, 8), ...(src.audio ? ["-c:a", "copy"] : ["-an"]), ...enc.slice(8)], { timeout: 180_000 });

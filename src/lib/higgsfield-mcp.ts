@@ -168,3 +168,95 @@ export async function higgsfieldCall(name: string, args: Record<string, unknown>
   if (r.isError) throw new Error(`Higgsfield: ${(r.content ?? []).map((c) => c.text).join(" ").slice(0, 300) || "tool error"}`);
   return r;
 }
+
+/** Tool results arrive as structuredContent or as JSON inside text; read both. */
+function payload(r: { content?: McpContent[]; structuredContent?: unknown }): unknown[] {
+  const out: unknown[] = r.structuredContent ? [r.structuredContent] : [];
+  for (const c of r.content ?? []) {
+    const t = c.text ?? c.resource?.text;
+    if (!t) continue;
+    const i = t.search(/[[{]/);
+    try {
+      out.push(i >= 0 ? JSON.parse(t.slice(i)) : t);
+    } catch {
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+/** First value (depth-first) whose key matches and passes the check. */
+export function pick(o: unknown, keys: RegExp, ok: (v: unknown) => boolean = (v) => typeof v === "string" && !!v): string | undefined {
+  if (Array.isArray(o)) {
+    for (const x of o) {
+      const v = pick(x, keys, ok);
+      if (v) return v;
+    }
+  } else if (o && typeof o === "object") {
+    for (const [k, v] of Object.entries(o)) if (keys.test(k) && ok(v)) return String(v);
+    for (const v of Object.values(o)) {
+      const f = pick(v, keys, ok);
+      if (f) return f;
+    }
+  }
+  return undefined;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (v: unknown) => typeof v === "string" && UUID.test(v);
+const isHttps = (v: unknown) => typeof v === "string" && v.startsWith("https://");
+const isVideoUrl = (v: unknown) => isHttps(v) && /\.(mp4|mov|webm)(\?|$)/i.test(String(v));
+
+export async function higgsfieldCredits(): Promise<number | null> {
+  const n = Number(pick(payload(await higgsfieldCall("balance", {})), /^credits$/, (v) => typeof v === "number"));
+  return Number.isFinite(n) ? n : null;
+}
+
+async function uploadImage(dataUrl: string) {
+  const m = /^data:(image\/(png|jpe?g|webp));base64,(.+)$/.exec(dataUrl);
+  if (!m) throw new Error("Higgsfield needs the first frame as a PNG, JPEG or WebP image");
+  const up = payload(await higgsfieldCall("media_upload", { filename: `frame.${m[2] === "jpeg" ? "jpg" : m[2]}`, content_type: m[1] }));
+  const url = pick(up, /upload_?url/i, isHttps);
+  const id = pick(up, /^(media_?id|id)$/i, isUuid);
+  if (!url || !id) throw new Error("Higgsfield upload: no upload URL returned");
+  const put = await fetch(url, { method: "PUT", headers: { "content-type": m[1] }, body: Buffer.from(m[3], "base64") });
+  if (!put.ok) throw new Error(`Higgsfield upload failed (${put.status})`);
+  await higgsfieldCall("media_confirm", { type: "image", media_id: id });
+  return id;
+}
+
+export type HfVideoOpts = { firstFrame?: string; seconds?: number; resolution?: string; aspect?: string };
+const videoParams = (model: string, prompt: string, o: HfVideoOpts) => ({
+  model,
+  prompt,
+  ...(o.seconds ? { duration: Math.round(o.seconds) } : {}),
+  ...(o.resolution ? { resolution: o.resolution } : {}),
+  aspect_ratio: o.aspect ?? "9:16",
+  use_unlim: false,
+});
+
+/** Credits a generation would cost, without submitting anything. */
+export async function higgsfieldVideoCost(model: string, o: HfVideoOpts): Promise<number | null> {
+  const r = payload(await higgsfieldCall("generate_video", { params: { ...videoParams(model, "cost check", o), get_cost: true }, context: "Cost preflight for a storyboard shot" }));
+  const n = Number(pick(r, /^credits(_exact)?$/, (v) => typeof v === "number"));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** One image-to-video shot on the user's Higgsfield credits; returns the finished video URL. */
+export async function higgsfieldMcpVideo(model: string, prompt: string, o: HfVideoOpts, timeoutMs = 12 * 60_000) {
+  const medias = o.firstFrame ? [{ value: await uploadImage(o.firstFrame), role: "start_image" }] : undefined;
+  const sub = payload(await higgsfieldCall("generate_video", { params: { ...videoParams(model, prompt, o), ...(medias ? { medias } : {}) }, context: "Render one approved storyboard shot of a product ad" }));
+  const jobId = pick(sub, /^(job_?id|jobId|id)$/i, isUuid);
+  if (!jobId) throw new Error(`Higgsfield didn't start the video: ${JSON.stringify(sub).slice(0, 240)}`);
+  const credits = Number(pick(sub, /^credits(_exact)?$/, (v) => typeof v === "number")) || null;
+  const started = Date.now();
+  for (;;) {
+    const st = payload(await higgsfieldCall("job_status", { jobId, sync: true }));
+    const status = (pick(st, /^status$/i) ?? "").toLowerCase();
+    const url = pick(st, /url/i, isVideoUrl);
+    if (url && /complet|succe|done|finish/.test(status || "completed")) return { url, credits, jobId };
+    if (/fail|nsfw|cancel|error|reject/.test(status)) throw new Error(`Higgsfield ${status}: ${(pick(st, /reason|error|message/i) ?? "").slice(0, 200)} (credits are refunded on failure)`);
+    if (Date.now() - started > timeoutMs) throw new Error(`Higgsfield video timed out (job ${jobId})`);
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+}

@@ -23,6 +23,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { CreativeCard } from "@/components/creative-card";
+import { scriptReady, shotReady } from "@/lib/quality-policy";
 import { cn } from "@/lib/utils";
 import type { ModelOption } from "@/lib/models";
 import type { AdScript, Brand, Brief, Creative, CreativeProgress, Direction, Shot, StudioRun, VideoCategory, VideoPlan } from "@/lib/types";
@@ -141,7 +142,7 @@ type Pricing = { credits: number | null; prices: Record<string, { draft: number 
 const FlowCtx = createContext<Ctx | null>(null);
 const useFlow = () => useContext(FlowCtx)!;
 
-const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 10, draftModel: "fal-ai/bytedance/seedance/v1/lite/image-to-video", finalModel: "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video", voice: "Rachel", music: true, budgetUsd: 3 };
+const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 10, draftModel: "hfmcp:seedance1_5", finalModel: "hfmcp:kling3_0", voice: "Rachel", music: true, budgetUsd: 3 };
 const money = (n: number | null | undefined) => (n == null ? "?" : `$${n.toFixed(2)}`);
 const VOICE_OPTIONS = ["Rachel", "Aria", "Sarah", "Charlotte", "Jessica", "Lily", "Roger", "George", "Liam", "Will", "Eric", "Brian", "Daniel"];
 const SB_SHIFT = 430;
@@ -737,7 +738,7 @@ function VideoPlanNode() {
               <div>
                 Per video: draft ≈ <span className={cn(draft > p.budgetUsd && "text-amber-300")}>{money(draft)}</span>, final ≈ <span className={cn(final > p.budgetUsd && "text-amber-300")}>{money(final)}</span>
               </div>
-              <div className={cn(low ? "text-red-300" : "text-zinc-500")}>OpenRouter balance: {money(pricing.credits)}{low ? " · too low for a draft, add credits" : ""}</div>
+              <div className={cn(low ? "text-red-300" : "text-zinc-500")}>OpenRouter spendable: {money(pricing.credits)}{low ? " · check Credits and Guardrails" : ""}</div>
               {(draft > p.budgetUsd || final > p.budgetUsd) && <div className="text-amber-300">Over your cap: shorten the video, pick a cheaper model or raise the cap.</div>}
             </div>
           );
@@ -795,7 +796,7 @@ function JobBar({ job }: { job: NonNullable<StudioRun["job"]> }) {
   );
 }
 
-const scoreTone = (n: number) => (n >= 8 ? "bg-emerald-500/15 text-emerald-300" : n >= 6 ? "bg-amber-500/15 text-amber-300" : "bg-red-500/15 text-red-300");
+const scoreTone = (n: number) => (n >= 9 ? "bg-emerald-500/15 text-emerald-300" : n >= 6 ? "bg-amber-500/15 text-amber-300" : "bg-red-500/15 text-red-300");
 
 const WRITERS: Record<string, string> = { "google/gemini-4-carbon": "Carbon", "anthropic/claude-opus-5.5": "Opus 5.5", "openai/gpt-6.1-sol": "Sol", "openai/gpt-6-astra": "Astra" };
 const JUDGES: Record<string, string> = { "openai/gpt-6.1-sol": "Sol", "anthropic/claude-sonnet-5.5": "Sonnet 5.5" };
@@ -853,7 +854,7 @@ function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove
           {d.scripts?.length ? "Rewrite all" : ""}
         </button>
       </div>
-      {ap && (
+      {ap && scriptReady(ap) && (
         <div className="flex items-center gap-1.5 text-[11px] text-emerald-300">
           <Check className="size-3" /> Approved: {ap.framework}
           {ap.score && <span className={`rounded px-1 ${scoreTone(ap.score.overall)}`}>{ap.score.overall}/10</span>}
@@ -907,8 +908,9 @@ function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove
                     <p key={i} className="text-[10px] text-amber-200/80">• {n}</p>
                   ))}
                   {sco?.panel.quotes.map((q, i) => <p key={i} className="text-[10px] text-zinc-500">Buyer: “{q}”</p>)}
-                  <Button size="sm" className="w-full" disabled={busy} onClick={() => onApprove(sc, lines)}>
-                    <Check /> {ap?.id === sc.id ? "Re-approve with edits" : "Approve this script"}
+                  <p className="text-[10px] text-zinc-400">{sc.review ? `${sc.review.writer.split("/").at(-1)} wrote · ${sc.review.judge.split("/").at(-1)} reviewed` : "Needs independent review"} · 9/10 required</p>
+                  <Button size="sm" className="w-full" disabled={busy || (!!sc.review && !scriptReady(sc) && !lines?.some((line, i) => line.trim() !== sc.beats[i]?.vo))} onClick={() => onApprove(sc, lines)}>
+                    <Check /> {lines?.some((line, i) => line.trim() !== sc.beats[i]?.vo) || !sc.review ? "Review and approve" : "Approve this script"}
                   </Button>
                 </div>
               )}
@@ -989,14 +991,15 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
                   size="sm"
                   variant={tier === "final" ? "default" : "outline"}
                   className={cn("flex-1", tier === "final" && "bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90")}
-                  disabled={sending || run.status === "working" || d.shots!.some((s) => !s.keyframe)}
-                  onClick={() => act("render_video", { runId: run.id, directionId: d.id, tier, refs: form.refs, draftModel: pickModel.draft, finalModel: pickModel.final })}
+                  disabled={sending || run.status === "working" || !d.storyboardKey || d.shots!.some((s) => !shotReady(s.keyframeQa)) || (tier === "final" && d.passingDraft !== d.storyboardKey)}
+                  onClick={() => act("render_video", { runId: run.id, directionId: d.id, tier, draftModel: pickModel.draft, finalModel: pickModel.final })}
                 >
                   <Film /> {tier === "draft" ? "480p draft" : "Upgrade to HD"} ~$
                   {estimateCost("video", { perSec: pricing.prices[pickModel[tier]]?.[tier], lengthSec: d.shots!.reduce((t, s) => t + s.seconds, 0), shots: d.shots!.length, music: vplan.music }).toFixed(2)}
                 </Button>
               ))}
             </div>
+            <p className="text-[10px] text-zinc-400">Each keyframe needs 9/10. A passing draft unlocks HD.</p>
           </div>
         ) : null}
       </div>
@@ -1059,7 +1062,8 @@ function CreativeNode({ data }: NodeProps<Node<{ index: number }>>) {
           creative={c}
           busy={sending || run.status === "working"}
           onAction={(a, ch, r) => creativeAction(c, a, ch, r)}
-          onRegenerate={redo}
+          onRegenerate={c.mediaType === "video" ? undefined : redo}
+          onRepair={c.quality && c.quality.status !== "pass" && c.quality.storyboardKey === d.storyboardKey ? () => act("render_video", { runId: run.id, directionId: d.id, tier: c.quality!.tier }) : undefined}
         />
       </div>
       <Handles />

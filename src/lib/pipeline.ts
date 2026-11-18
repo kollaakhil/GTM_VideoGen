@@ -297,8 +297,9 @@ async function videoQA(model: string, video: string, b: Brief, hook: string, cap
       { type: "image_url", image_url: { url: strip.sheet } },
     ],
   );
-  const score = Math.max(1, Math.min(10, Math.round(data.score)));
-  return { data: { score, pass: score >= QA_PASS_SCORE, notes: [`Filmstrip QA on ${strip.frames.length} frames`, ...(data.notes ?? [])] }, cost: usage.costUsd };
+  if (!Number.isFinite(data.score) || !Array.isArray(data.notes)) throw new Error("The creative reviewer did not return a complete scorecard.");
+  const score = Math.max(1, Math.min(10, data.score));
+  return { data: { score, pass: score >= QA_PASS_SCORE, notes: [`Filmstrip QA on ${strip.frames.length} frames`, ...data.notes] }, cost: usage.costUsd };
 }
 
 function tokens(s: string) {

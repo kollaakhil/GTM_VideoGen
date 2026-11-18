@@ -1,8 +1,11 @@
 import { chatJSON } from "./ai";
 import type { AdScript, Brief, Direction, Research, ScriptScore, StyleDNA, VoiceOfCustomer } from "./types";
 import { vocBlock } from "./ad-wisdom";
+import { SCRIPT_PASS, SCRIPT_RUBRIC } from "./quality-policy";
+import { z } from "zod";
+import { randomUUID } from "node:crypto";
 
-export const SCRIPT_PASS = 8;
+export { SCRIPT_PASS } from "./quality-policy";
 export const WRITER = process.env.SCRIPT_WRITER_MODEL || "google/gemini-4-carbon";
 export const JUDGE = process.env.SCRIPT_JUDGE_MODEL || "openai/gpt-6.1-sol";
 export const SCRIPT_WRITERS = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6.1-sol", "openai/gpt-6-astra"] as const;
@@ -26,7 +29,7 @@ export const FRAMEWORKS = [
   { id: "three_reasons", label: "Three reasons why", guide: "A bold claim, three fast numbered reasons with one visual each, then the CTA." },
 ] as const;
 
-export const HOOK_LIST = ["callout (name the viewer and their situation)", "contrarian (challenge a belief they hold)", "question (one they'd answer yes to)", "POV (first-person moment they recognise)", "proof/result (show the outcome first)", "pattern interrupt (an unexpected visual or line)"];
+export const HOOK_LIST = ["result first (show a real, supported outcome)", "recognizable friction (show one concrete buyer frustration)", "proof up close (show the product doing something verifiable)", "visible contrast (show a fair and supported before/after)", "visual question (show a surprising incomplete action the ad then explains)", "human moment (show a distinctive, relatable action)"];
 export const HOOK_TYPES = HOOK_LIST.map((h) => h.split(" (")[0]).join(", ");
 
 export type ScriptCtx = {
@@ -119,27 +122,41 @@ export function textRecall(heard: string, expected: string): number {
   return lcs(words(heard), y) / y.length;
 }
 
-/** Share of a phrase's words that appear in the text (order-free), 0..1. */
-const covered = (phrase: string, text: string) => {
-  const t = new Set(words(text)), p = words(phrase);
-  return p.length ? p.filter((w) => t.has(w)).length / p.length : 1;
+export const exactCopy = (text: string) => text.normalize("NFKC").toLowerCase()
+  .replace(/[’']/gu, "").replace(/[^\p{L}\p{N}$%]+/gu, " ").trim();
+
+export function sameSpeech(heard: string, expected: string) {
+  const tokens = (text: string) => numberize(exactCopy(text.replace(/(\d),(?=\d)/g, "$1")
+    .replace(/\$(\d+)/g, "$1 dollars").replace(/(\d+)\s*%/g, "$1 percent")).split(/\s+/).filter(Boolean))
+    .map((w) => w === "dollar" || w === "bucks" ? "dollars" : w).join(" ");
+  return tokens(heard) === tokens(expected);
+}
+
+const hasPhrase = (line: string, phrase: string) => {
+  const expected = exactCopy(phrase);
+  return !!expected && ` ${exactCopy(line)} `.includes(` ${expected} `);
 };
 
 /** Deterministic script checks: timing, read-aloud pace, hook length, CTA and must-say. */
 export function checkScript(s: AdScript, lengthSec: number, mustSay: string[] = []): string[] {
   const out: string[] = [];
   const total = scriptSeconds(s);
-  if (Math.abs(total - lengthSec) > Math.max(3, lengthSec * 0.25)) out.push(`Runs ${total}s; target is ${lengthSec}s.`);
+  if (total !== lengthSec) out.push(`Runs ${total}s; target is ${lengthSec}s.`);
+  if (s.beats.length < 2 || s.beats.some((b) => !b.visual.trim())) out.push("Provide a concrete visual for every beat.");
   s.beats.forEach((b, i) => {
     const n = words(b.vo).length;
     if (n > Math.ceil(b.seconds * WORDS_PER_SEC) + 1) out.push(`Beat ${i + 1} has ${n} words for ${b.seconds}s; max ${Math.ceil(b.seconds * WORDS_PER_SEC) + 1} at a natural pace.`);
   });
   if (words(s.hook.spoken).length > 12) out.push("Hook line is over 12 words; it must land in the first 1.5–3 seconds.");
   if (s.beats[0] && s.beats[0].seconds > 4) out.push("First beat is over 4s; the hook needs a cut by 3s.");
+  const first = s.beats[0];
+  if (first && (!exactCopy(s.hook.spoken) || exactCopy(first.vo) !== exactCopy(s.hook.spoken) || exactCopy(first.onScreen) !== exactCopy(s.hook.onScreen))) {
+    out.push("Hook speech and on-screen text must match beat 1.");
+  }
   const last = s.beats[s.beats.length - 1];
-  if (!s.cta || !last || covered(s.cta, `${last.vo} ${last.onScreen}`) < 0.5) out.push("The CTA is not said or shown in the final beat.");
-  const all = [s.hook.spoken, s.hook.onScreen, ...s.beats.flatMap((b) => [b.vo, b.onScreen]), s.cta].join(" ");
-  for (const m of mustSay) if (covered(m, all) < 0.85) out.push(`Missing or shortened must-say; use it word for word: "${m}".`);
+  if (!last || ![last.vo, last.onScreen].some((line) => hasPhrase(line, s.cta))) out.push("The exact CTA is not said or shown in the final beat.");
+  const all = s.beats.flatMap((b) => [b.vo, b.onScreen]);
+  for (const m of mustSay) if (exactCopy(m) && !all.some((line) => hasPhrase(line, m))) out.push(`Missing or shortened must-say; use it word for word: "${m}".`);
   return out;
 }
 
@@ -151,13 +168,13 @@ Brand tone: ${c.research.tone}${vocBlock(c.voc)}${c.style ? `\nBorrowed style (s
 const SCRIPT_SHAPE = `{"framework","hook":{"visual","spoken","onScreen"},"beats":[{"seconds","visual","vo","onScreen"}],"cta"}`;
 const SCRIPT_RULES = (len: number) => `Rules:
 - Vertical 9:16 performance ad, ${len}s total, 3–5 beats, each 2–6s; the sum of beat seconds equals ${len}.
-- Beat 1 IS the hook: it stops the scroll in the first 1.5s, the product or the core tension is on screen immediately. Hook types: ${HOOK_TYPES}.
+- Beat 1 IS the hook: it stops the scroll in the first 1.5s, including on mute. Copy beat 1's voiceover and on-screen copy exactly into the hook fields. Hook types: ${HOOK_TYPES}.
 - The spoken hook is a human line in the buyer's words (a pain, a desire, a surprising truth), never a promo or discount line. Even when the brief says to "lead with" an offer, show that offer as beat 1 "onScreen" text and say it in a later beat.
 - "vo": only the words spoken aloud, natural speech, max ${WORDS_PER_SEC} words per second of the beat. No speaker labels or stage directions.
-- "onScreen": max 6 words of caption-style text that works with sound off.
+- "onScreen": concise text that works with sound off; never shorten mandatory offer wording. The overlay will be typeset in post.
 - "visual": one concrete filmable scene an AI video model can render; same people and product across beats; never text, logos or signs in frame.
 - Use the customer's exact phrases where they fit and answer the top objection.
-- Only facts from the product facts and brief: never invent features, numbers, guarantees, timings or inclusions.
+- Only facts from the product facts and brief: never invent features, numbers, guarantees, timings, inclusions or customer testimonials.
 - The final beat says and shows the CTA; "cta" is that line, max 40 chars.`;
 
 type Raw = Omit<AdScript, "id">;
@@ -186,7 +203,8 @@ Return JSON: ${SCRIPT_SHAPE} with "framework" set to "${f.label}".`,
   );
   const ok = res.flatMap((r, i) => (r.status === "fulfilled" ? [{ r: r.value, f: fws[i] }] : []));
   if (!ok.length) throw new Error(`The script writer failed: ${String((res[0] as PromiseRejectedResult).reason?.message ?? "").slice(0, 200)}`);
-  return { scripts: ok.map(({ r, f }) => clean({ ...r.data, framework: f.label }, `sc_${f.id}`)), cost: ok.reduce((t, x) => t + x.r.usage.costUsd, 0) };
+  const batch = randomUUID().slice(0, 8);
+  return { scripts: ok.map(({ r, f }) => clean({ ...r.data, framework: f.label }, `sc_${f.id}_${batch}`)), cost: ok.reduce((t, x) => t + x.r.usage.costUsd, 0) };
 }
 
 /** Each script is graded in its own call so one malformed answer can't sink the batch. */
@@ -197,8 +215,23 @@ export async function judgeScripts(judge: string, scripts: AdScript[], c: Script
   return { scores: res.map((r) => r?.scores[0] ?? { overall: 1, scores: {}, notes: ["The judge could not grade this script; rewrite or regrade it."], unsupported: [], panel: { stopRate: 0, quotes: [] } }), cost: ok.reduce((t, r) => t + r.cost, 0) };
 }
 
+const Rating = z.number().min(1).max(10);
+const JudgeOutput = z.object({
+  scores: z.array(z.object({
+    id: z.string(),
+    overall: Rating,
+    scores: z.object({
+      hook: Rating, clarity: Rating, specificity: Rating, customerLanguage: Rating, emotion: Rating,
+      productEarly: Rating, cta: Rating, pacing: Rating, claims: Rating,
+    }),
+    notes: z.array(z.string()),
+    unsupported: z.array(z.string()),
+    panel: z.object({ stopRate: z.number().min(0).max(10), quotes: z.array(z.string()) }),
+  })),
+});
+
 async function judgeBatch(judge: string, scripts: AdScript[], c: ScriptCtx): Promise<{ scores: ScriptScore[]; cost: number }> {
-  const { data, usage } = await chatJSON<{ scores: (ScriptScore & { id: string })[] }>(
+  const { data, usage } = await chatJSON<unknown>(
     judge,
     "You are a ruthless creative director and performance marketer grading video ad scripts before any money is spent on production. You did not write them. Most first drafts deserve 5–7; reserve 9–10 for scripts you would bet budget on.",
     `${ctxBlock(c)}
@@ -212,17 +245,19 @@ A spoken hook that is just a discount or promo line scores at most 5 on hook; of
 "panel": simulate 10 buyers from the target audience seeing only the first 1.5s (hook visual + spoken + on-screen); "stopRate" = how many of 10 keep watching (0–10); "quotes" = 2 short honest reactions.
 Return JSON: {"scores":[{"id","overall","scores":{"hook","clarity","specificity","customerLanguage","emotion","productEarly","cta","pacing","claims"},"notes","unsupported","panel":{"stopRate","quotes"}}]}`,
   );
-  const byId = new Map((data.scores ?? []).map((s) => [s.id, s]));
+  const parsed = JudgeOutput.safeParse(data);
+  if (!parsed.success || parsed.data.scores.length !== scripts.length) throw new Error("Script review did not return a complete scorecard.");
+  const byId = new Map(parsed.data.scores.map((s) => [s.id, s]));
   const scores = scripts.map((s) => {
     const r = byId.get(s.id);
-    const unsupported = (r?.unsupported ?? []).map(String).slice(0, 5);
-    const overall = Math.max(1, Math.min(10, Number(r?.overall) || 1));
+    if (!r) throw new Error("Script review did not identify the approved script.");
+    const unsupported = r.unsupported.slice(0, 5);
     return {
-      overall: unsupported.length ? Math.min(6, overall) : overall,
-      scores: Object.fromEntries(Object.entries(r?.scores ?? {}).map(([k, v]) => [k, Number(v) || 0])),
-      notes: (r?.notes ?? []).map(String).slice(0, 4),
+      overall: unsupported.length ? Math.min(6, r.overall) : r.overall,
+      scores: r.scores,
+      notes: r.notes.slice(0, 4),
       unsupported,
-      panel: { stopRate: Math.max(0, Math.min(10, Number(r?.panel?.stopRate) || 0)), quotes: (r?.panel?.quotes ?? []).map(String).slice(0, 2) },
+      panel: { stopRate: r.panel.stopRate, quotes: r.panel.quotes.slice(0, 2) },
     };
   });
   return { scores, cost: usage.costUsd };
@@ -234,6 +269,12 @@ export const finalScore = (s: AdScript) => {
   const n = s.checks?.length ?? 0;
   return n ? Math.min(SCRIPT_PASS - 1, base - Math.min(3, n)) : base;
 };
+
+export async function reviewScript(s: AdScript, c: ScriptCtx, writer: string, preferredJudge?: string) {
+  const judge = judgeFor(writer, preferredJudge);
+  const { scores, cost } = await judgeScripts(judge, [s], c);
+  return { script: { ...s, score: scores[0], checks: checkScript(s, c.lengthSec, c.mustSay), review: { rubric: SCRIPT_RUBRIC, writer, judge, targetSeconds: c.lengthSec } }, cost };
+}
 
 async function rewrite(writer: string, s: AdScript, c: ScriptCtx, extra: string[] = []): Promise<{ script: AdScript; cost: number }> {
   const fixes = [...extra, ...(s.score?.notes ?? []), ...(s.checks ?? []), ...(s.score?.unsupported ?? []).map((u) => `Remove unsupported claim: ${u}`)];
@@ -267,18 +308,16 @@ export function sameHooks(list: AdScript[]): Set<string> {
 }
 
 const SAME_HOOK = "This hook opens like another script in the set. Write a completely different spoken hook (different hook type, different first words, different moment).";
-const POLISH = 9;
-
 /** One model writes, a different one judges (with a simulated audience panel), weak scripts are rewritten up to twice. */
 export async function scriptLab(c: ScriptCtx, o: { writer?: string; judge?: string; count?: number; keep?: number } = {}): Promise<{ scripts: AdScript[]; cost: number }> {
-  const writer = o.writer ?? WRITER, judge = o.judge ?? JUDGE;
+  const writer = o.writer ?? WRITER, judge = judgeFor(writer, o.judge);
   const w = await writeScripts(writer, c, o.count ?? 5);
   let cost = w.cost;
   const grade = async (list: AdScript[]) => {
     if (!list.length) return;
     const j = await judgeScripts(judge, list, c);
     cost += j.cost;
-    list.forEach((s, i) => Object.assign(s, { score: j.scores[i], checks: checkScript(s, c.lengthSec, c.mustSay) }));
+    list.forEach((s, i) => Object.assign(s, { score: j.scores[i], checks: checkScript(s, c.lengthSec, c.mustSay), review: { rubric: SCRIPT_RUBRIC, writer, judge, targetSeconds: c.lengthSec } }));
   };
   let scripts = w.scripts.filter((s) => s.beats.length >= 2);
   if (!scripts.length) throw new Error("The script writer returned no usable scripts");
@@ -295,17 +334,10 @@ export async function scriptLab(c: ScriptCtx, o: { writer?: string; judge?: stri
   };
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const dupes = sameHooks(scripts);
-    const weak = scripts.filter((s) => finalScore(s) < SCRIPT_PASS || dupes.has(s.id));
+    const weak = [...scripts].sort((a, b) => finalScore(b) - finalScore(a))
+      .filter((s) => finalScore(s) < SCRIPT_PASS || dupes.has(s.id)).slice(0, 2);
     if (!weak.length) break;
     await improve(weak, (s) => (dupes.has(s.id) ? [SAME_HOOK] : []));
-  }
-  // Polish the leader with the judge's remaining notes until it reaches 9+.
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    const top = [...scripts].sort((a, b) => finalScore(b) - finalScore(a))[0];
-    if (!top || finalScore(top) >= POLISH || !top.score?.notes.length) break;
-    const before = finalScore(top);
-    await improve([top]);
-    if (finalScore(scripts.find((s) => s.id === top.id)!) <= before) break;
   }
   scripts.sort((a, b) => finalScore(b) - finalScore(a) || (b.score?.panel.stopRate ?? 0) - (a.score?.panel.stopRate ?? 0));
   return { scripts: scripts.slice(0, o.keep ?? 3), cost };
