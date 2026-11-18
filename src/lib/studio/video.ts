@@ -12,7 +12,7 @@ import { approvedStoryboardLength, scriptProductionBlockers, shotReady, storyboa
 import { captionVariants, END_SECONDS, expectedCopy, meanVolume, mediaDuration, stitchShots } from "@/lib/video-post";
 import { audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
 import { list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
-import type { Direction, QAResult, QualityFinding, Shot, ShotQA, StudioRun, VideoQuality, VideoTake } from "@/lib/types";
+import type { Direction, JobPhase, QAResult, QualityFinding, Shot, ShotQA, StudioRun, VideoQuality, VideoTake } from "@/lib/types";
 import { now, say, live, saveRun } from "./run-state";
 import { brandFor, guidance, brandName, shortHash, swipesFor } from "./context";
 import { inspirationGuidance } from "@/lib/inspiration";
@@ -123,11 +123,29 @@ async function buildRealSet(run: StudioRun, d: Direction, hero: Shot) {
 
 const SILENT_DB = -50;
 
-async function step(run: StudioRun, d: Direction, label: string, done: number, total: number) {
+/**
+ * Persists job progress for the UI: overall step, phase, and per-shot stages (queued → rendering → qa → done).
+ * `shot` moves one shot to a new stage; shots keep their stage between steps.
+ */
+async function step(run: StudioRun, d: Direction, label: string, done: number, total: number, phase?: JobPhase, shot?: { i: number; stage: JobPhase }) {
   if (!live(run)) throw new Error("Stopped before the next production step.");
-  run.job = { directionId: d.id, label, done, total };
+  const prev = run.job?.directionId === d.id && phase !== "preflight" ? run.job : null;
+  const shots = prev?.shots ?? d.shots!.map((s) => ({ id: s.id, stage: "queued" as JobPhase }));
+  if (shot) markShot(shots, shot.i, shot.stage);
+  run.job = { directionId: d.id, label, done, total, phase: phase ?? prev?.phase ?? "preflight", startedAt: prev?.startedAt ?? (phase === "preflight" && run.job?.directionId === d.id ? run.job.startedAt : undefined) ?? now(), shots };
   await saveRun(run);
 }
+
+function markShot(shots: NonNullable<NonNullable<StudioRun["job"]>["shots"]>, i: number, stage: JobPhase) {
+  const s = shots[i];
+  if (!s) return;
+  const t = now();
+  shots[i] = { ...s, stage, startedAt: s.startedAt ?? (stage === "queued" ? undefined : t), endedAt: stage === "done" || stage === "failed" ? t : undefined };
+}
+
+const shotDone = (run: StudioRun, i: number, ok: boolean) => {
+  if (run.job?.shots) markShot(run.job.shots, i, ok ? "done" : "failed");
+};
 
 /** The model a shot renders with: the operator's per-shot pick, else the plan's draft model. */
 const shotModel = (s: Shot, fallback: string) => s.model || fallback;
@@ -139,8 +157,8 @@ type Voice = { url: string; start: number; tempo?: number };
  * any paid video; then shots render one at a time under the budget cap, are QA'd, stitched, mixed and QA'd again.
  * Shots that already passed are reused, so later takes only re-shoot what failed.
  */
-export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final", cap = run.videoPlan!.budgetUsd) {
-  if (tier === "final") return upscaleTake(run, d, cap);
+export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final", cap = run.videoPlan!.budgetUsd, opts: { acceptWarnings?: boolean } = {}) {
+  if (tier === "final") return upscaleTake(run, d, cap, opts.acceptWarnings);
   const plan = run.videoPlan!;
   const shots = d.shots!;
   const resolution = "480p";
@@ -149,7 +167,7 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   let spent = 0;
   const charge = (cost: number) => { spent += cost; run.costUsd += cost; };
 
-  await step(run, d, "Preflight: script, references, QA tools and budget", 0, total);
+  await step(run, d, "Preflight: script, references, QA tools and budget", 0, total, "preflight");
   const kit = await brandFor(run);
   const issues = [...new Set([
     ...scriptProductionBlockers(d.approvedScript),
@@ -199,7 +217,7 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
     say(run, "agent", `Higgsfield quote: ${need.toFixed(1)} credits for ${hfShots.length} remaining shots. Subscription retries are off; use Repair to authorize another take.`);
   }
 
-  await step(run, d, "Verifying each voiceover before motion spend", 1, total);
+  await step(run, d, "Making and verifying voice and music before motion spend", 1, total, "voice");
   let start = 0;
   const voices: Voice[] = [];
   for (const [i, s] of shots.entries()) {
@@ -262,10 +280,14 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   const qCostReserve = 0.08 + shots.length * 0.025;
   const attempts = testDraft || (plan.takes ?? 1) > 1 ? 1 : 2;
   for (const [i, s] of shots.entries()) {
-    if (reusableShot(s, cacheKeys[i])) continue;
+    if (reusableShot(s, cacheKeys[i])) {
+      shotDone(run, i, true);
+      continue;
+    }
     if (toReview(s, i)) {
-      await step(run, d, `Shot ${i + 1}/${shots.length}: verifying the saved take without regenerating`, 2 + i, total);
+      await step(run, d, `Shot ${i + 1}/${shots.length}: verifying the saved take without regenerating`, 2 + i, total, "qa", { i, stage: "qa" });
       await recordTake(s, s.clip!, await assess(await mediaDataUrl(s.clip!), s, i), s.clipModel ?? models[i]);
+      shotDone(run, i, true);
       continue;
     }
     const pendingUsd = shots.reduce((sum, _, j) => sum + (j > i && missing.includes(j) ? actual[j]! * perSec(j) : 0), 0);
@@ -282,7 +304,7 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
       hfLeft -= hCost;
       s.status = "rendering";
       s.attempts = (s.attempts ?? 0) + 1;
-      await step(run, d, `Shot ${i + 1}/${shots.length}: ${attempt || notes.length ? "repairing the failed take" : "rendering the planned beat"}`, 2 + i, total);
+      await step(run, d, `Shot ${i + 1}/${shots.length}: ${attempt || notes.length ? "repairing the failed take" : "rendering the planned beat"}`, 2 + i, total, "rendering", { i, stage: "rendering" });
       const look = lookLine(plan, s);
       const prompt = `Required on-screen action: ${s.expectedVisual}. Shot treatment: ${s.visual}. Camera: ${s.camera}. Look: ${CATEGORIES[plan.category].look}.${look ? ` ${look}` : ""}
 Start from the attached frame. Preserve the exact product; no invented text or labels. Natural physical motion. ${notes.length ? `Fix these defects: ${notes.join(" ")}` : ""}`;
@@ -291,6 +313,7 @@ Start from the attached frame. Preserve the exact product; no invented text or l
       const stored = await storeMedia(take.url, `${run.id}/${d.id}-${s.id}-clip-${randomUUID()}`);
       Object.assign(s, { clip: stored, clipKey: cacheKeys[i], clipModel: models[i], clipQa: null });
       await saveRun(run);
+      await step(run, d, `Shot ${i + 1}/${shots.length}: checking frames`, 2 + i, total, "rendering", { i, stage: "qa" });
       const verdict = await assess(take.url.startsWith("data:") ? take.url : await mediaDataUrl(stored), s, i);
       if (!best || shotReady(verdict) || verdict.score > best.qa.score) best = { url: stored, qa: verdict };
       await recordTake(s, best.url, best.qa, models[i]);
@@ -298,6 +321,7 @@ Start from the attached frame. Preserve the exact product; no invented text or l
       notes = [...verdict.notes, ...(verdict.frames ?? []).filter((x) => x.match === "fail").map((x) => `${x.at}s: ${x.note}`)].slice(0, 8);
     }
     if (!best) throw new Error(`No take returned for shot ${i + 1}.`);
+    shotDone(run, i, true);
   }
 
   const clips = shots.map((s, i) => ({ shotId: s.id, url: s.clip!, model: s.clipModel ?? models[i], qa: s.clipQa ?? null }));
@@ -316,7 +340,7 @@ Start from the attached frame. Preserve the exact product; no invented text or l
  * HD from the approved 480p take: the same clips are upscaled locally (Real-ESRGAN, free) and re-cut with the same
  * narration and music, so nothing the operator approved changes. Only QA calls cost money here.
  */
-async function upscaleTake(run: StudioRun, d: Direction, cap: number) {
+async function upscaleTake(run: StudioRun, d: Direction, cap: number, acceptWarnings = false) {
   const shots = d.shots!;
   const take = d.takes?.find((t) => t.id === d.approvedTakeId);
   if (!take) throw new Error("Approve a 480p take before upscaling.");
@@ -325,12 +349,12 @@ async function upscaleTake(run: StudioRun, d: Direction, cap: number) {
   let spent = 0;
   const charge = (cost: number) => { spent += cost; run.costUsd += cost; };
   const total = shots.length + 3;
-  await step(run, d, "Preflight: approved take, QA tools and budget", 0, total);
+  await step(run, d, "Preflight: approved take, QA tools and budget", 0, total, "preflight");
   const kit = await brandFor(run);
   const issues = [...new Set([...scriptProductionBlockers(d.approvedScript), ...checkScript(d.approvedScript!, approvedStoryboardLength(d)!, kit?.mustSay)])];
-  if (issues.length) throw new Error(issues.join(" "));
+  if (issues.length && !acceptWarnings) throw new Error(issues.join(" "));
   const weak = storyboardKeyframeFixes(shots);
-  if (weak.length) throw new Error(`Redraw keyframes ${weak.join(", ")} before requesting HD.`);
+  if (weak.length && !acceptWarnings) throw new Error(`Redraw keyframes ${weak.join(", ")} before requesting HD.`);
   if (!await localOcrAvailable()) throw new Error("Video QA requires local Tesseract and its configured language.");
   const qaReserve = 0.08 + shots.length * 0.03;
   if (qaReserve > cap) throw new Error(`Preflight: HD QA needs about $${qaReserve.toFixed(2)}, over the $${cap.toFixed(2)} cap.`);
@@ -341,15 +365,16 @@ async function upscaleTake(run: StudioRun, d: Direction, cap: number) {
   const clips: { shotId: string; url: string; model: string; qa: ShotQA | null }[] = [];
   const methods = new Set<string>();
   for (const [i, c] of take.clips.entries()) {
-    await step(run, d, `Upscaling shot ${i + 1}/${take.clips.length} locally (no new generation)`, 1 + i, total);
+    await step(run, d, `Upscaling shot ${i + 1}/${take.clips.length} locally (no new generation)`, 1 + i, total, "upscaling", { i, stage: "upscaling" });
     const up = await upscaleClip(await mediaDataUrl(c.url), 1080);
+    shotDone(run, i, true);
     methods.add(up.method);
     const shot = shots.find((s) => s.id === c.shotId);
     clips.push({ shotId: c.shotId, url: await storeMedia(up.url, `${run.id}/${d.id}-${c.shotId}-hd-${randomUUID()}`), model: c.model, qa: shot?.clip === c.url ? shot.clipQa ?? null : null });
   }
   if (methods.has("lanczos")) warnings.push("Real-ESRGAN wasn't available for every shot, so a Lanczos resize was used. Install it for sharper HD.");
-  const done = await assembleAndReview(run, d, { tier: "final", clips, voices: take.voices, music: take.music, spent, charge, warnings, issues: [], weak: [], refs, firsts, upscaledFrom: take.id });
-  take.upscaledCreativeId = done.creativeId;
+  const done = await assembleAndReview(run, d, { tier: "final", clips, voices: take.voices, music: take.music, spent, charge, warnings, issues, weak, refs, firsts, upscaledFrom: take.id });
+  Object.assign(take, { upscaledCreativeId: done.creativeId, upscaledUrl: done.url, finalScore: done.quality.score });
   await saveRun(run);
   return { quality: done.quality, spent, warnings, take };
 }
@@ -377,7 +402,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   const aspects = videoAspects(tier);
   const total = shots.length + 4;
   const kit = await brandFor(run);
-  await step(run, d, tier === "final" ? "Assembling the HD cut from the approved take" : "Assembling the locked edit", 2 + shots.length, total);
+  await step(run, d, tier === "final" ? "Stitching the HD cut with the approved voice and music" : "Stitching shots, voice and music", 2 + shots.length, total, "stitching");
   const clipData = await Promise.all(a.clips.map((c) => mediaDataUrl(c.url)));
   const voiceData = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
   const st = await stitchShots(clipData, { voices: voiceData, music: a.music ? await mediaDataUrl(a.music) : null, shotSeconds: shots.map((s) => s.seconds), width: tier === "final" ? 1080 : 486 });
@@ -390,7 +415,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     fontFile: kit?.font?.file ? await mediaFile(kit.font.file).catch(() => null) : null,
     fontFamily: kit?.font?.family ?? null,
   };
-  await step(run, d, "Reading rendered copy and checking speech and visuals", 3 + shots.length, total);
+  await step(run, d, "QA: reading on-screen copy, checking speech and visuals", 3 + shots.length, total, "qa");
   const cues = expectedCopy(segments, end, st.duration);
   const inspect = async (files: { aspect: string; url: string }[]) => (await Promise.all(files.map(async (v) => [
     ...await checkExport(v.url, v.aspect, st.duration + END_SECONDS, cues),

@@ -1,4 +1,4 @@
-import { VIDEO_PASS } from "./quality-policy";
+import { scriptProductionBlockers, storyboardKeyframeFixes, VIDEO_PASS } from "./quality-policy";
 import type { AdScript, JudgeCalibration, StageId, StageScore, StudioRun, VideoTake } from "./types";
 
 /**
@@ -85,3 +85,16 @@ export function scriptStage(s?: AdScript | null): StageScore | null {
   return { ...stageScore("script", checks, s.review?.judge ?? "judge", s.rounds ?? 1, s.score.notes ?? []), score: s.score.overall, raw: s.score.overall, pass: s.score.overall >= threshold("script") && !s.score.unsupported.length };
 }
 
+
+/** Everything that blocks the HD upscale: script fixes, weak keyframes and the approved take's stage gates. */
+export function finalBlockers(run: Pick<StudioRun, "stageScores" | "directions">, directionId: string) {
+  const d = run.directions.find((x) => x.id === directionId);
+  if (!d?.shots) return [];
+  const take = d.takes?.find((t) => t.id === d.approvedTakeId);
+  const weak = storyboardKeyframeFixes(d.shots);
+  return [
+    ...scriptProductionBlockers(d.approvedScript),
+    ...(weak.length ? [`redraw keyframes ${weak.join(", ")} until they match and score ${VIDEO_PASS}/10.`] : []),
+    ...(take ? [takeStageBlock(run, d.id, take)].filter((x): x is string => !!x) : []),
+  ];
+}

@@ -37,6 +37,9 @@ export async function startJob(run: StudioRun, job: Extract<Job, { work: unknown
   run.status = "working";
   run.activity = job.activity;
   run.jobId = jobId;
+  run.failure = null;
+  const directionId = typeof job.retry?.directionId === "string" ? job.retry.directionId : undefined;
+  run.job = { label: job.activity, done: 0, total: 0, directionId, phase: "queued", startedAt: now() };
   run.updatedAt = now();
   await put("studio_runs", run);
 
@@ -46,7 +49,10 @@ export async function startJob(run: StudioRun, job: Extract<Job, { work: unknown
       run.status = "idle";
     } catch (e) {
       run.status = "error";
-      say(run, "error", `${job.activity.replace("…", "")} failed: ${(e as Error).message}`);
+      const message = (e as Error).message;
+      console.error(`[studio] job ${jobId} on ${run.id} failed: ${job.activity}`, e);
+      run.failure = { message, directionId: run.job?.directionId, retry: job.retry, at: now() };
+      say(run, "error", `${job.activity.replace("…", "")} failed: ${message}`);
     } finally {
       // Persist before releasing the job so a poll never sees "working" with no live job (would be healed as orphaned).
       if (jobs.has(jobId)) {

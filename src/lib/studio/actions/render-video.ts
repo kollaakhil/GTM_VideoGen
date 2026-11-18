@@ -1,7 +1,6 @@
 import { MODELS, providerConfigured } from "@/lib/models";
-import { QA_PASS } from "@/lib/video-plan";
-import { draftVideoBlocker, scriptProductionBlocker, storyboardKeyframeFixes, videoReady } from "@/lib/quality-policy";
-import { stageBlock, takeStageBlock } from "@/lib/stage-policy";
+import { draftVideoBlocker, videoReady } from "@/lib/quality-policy";
+import { finalBlockers, overrideStage, stageBlock, stageKey } from "@/lib/stage-policy";
 import type { StudioRun } from "@/lib/types";
 import { say } from "../run-state";
 import { renderVideo } from "../video";
@@ -19,14 +18,16 @@ export async function planRenderVideo(run: StudioRun, body: ActionBody<"render_v
   const shotGate = stageBlock(run, "shots", d.id);
   if (shotGate) return { error: shotGate };
   if (body.tier === "final") {
-    const blocker = scriptProductionBlocker(d.approvedScript);
-    if (blocker) return { error: `Before upgrading to HD: ${blocker}` };
-    const weak = storyboardKeyframeFixes(d.shots!);
-    if (weak.length) return { error: `Before upgrading to HD: redraw keyframes ${weak.join(", ")} until they match and score ${QA_PASS}/10.` };
+    const blockers = finalBlockers(run, d.id);
+    // "Make final anyway" is the human override: every failing gate is overridden on the record and the blockers
+    // become review findings on the export, so the final video exists but still can't be published until fixed.
+    if (blockers.length && !body.acceptWarnings) return { error: `Before upgrading to HD: ${blockers[0]}` };
     const take = d.takes?.find((t) => t.id === d.approvedTakeId);
     if (!take || take.storyboardKey !== d.storyboardKey) return { error: "Approve a 480p take of this storyboard before upscaling to HD." };
-    const weakStage = takeStageBlock(run, d.id, take);
-    if (weakStage) return { error: `Before upgrading to HD: ${weakStage}` };
+    if (blockers.length) {
+      for (const g of take.stages ?? []) if (!g.pass) overrideStage(run, stageKey(g.stage, d.id), "operator", "Made the final video with warnings");
+      say(run, "agent", `Making the final video with ${blockers.length} warning${blockers.length === 1 ? "" : "s"}. It stays unpublishable until they're fixed.`);
+    }
   }
   for (const m of [body.draftModel]) {
     if (m && !MODELS.some((x) => x.id === m && x.modality === "video" && providerConfigured(x.provider))) return { error: `Video model ${m} isn't available` };
@@ -34,6 +35,7 @@ export async function planRenderVideo(run: StudioRun, body: ActionBody<"render_v
   if (body.draftModel) plan.draftModel = body.draftModel;
   const takes = body.tier === "final" ? 1 : Math.max(1, Math.min(3, body.takes ?? plan.takes ?? 1));
   return {
+    retry: { ...body },
     activity: body.tier === "final"
       ? `Upscaling the approved take of “${d.title}” to HD and re-running QA…`
       : `Rendering ${takes === 1 ? "a 480p take" : `up to ${takes} 480p takes`} of “${d.title}”: ${d.shots!.length} shots, voice, music and QA…`,
@@ -44,7 +46,7 @@ export async function planRenderVideo(run: StudioRun, body: ActionBody<"render_v
           say(run, "agent", `Stopped after ${k} takes: $${left.toFixed(2)} of the cap is left.`);
           break;
         }
-        const r = await renderVideo(run, d, body.tier, left);
+        const r = await renderVideo(run, d, body.tier, left, { acceptWarnings: !!body.acceptWarnings });
         left -= r.spent;
         run.stage = "qa";
         for (const w of r.warnings) say(run, "error", w);
@@ -55,3 +57,4 @@ export async function planRenderVideo(run: StudioRun, body: ActionBody<"render_v
     },
   };
 }
+
