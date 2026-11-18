@@ -139,3 +139,6 @@ Each static direction renders `TOURNAMENT_SIZE` takes (default 2, max 4) and kee
   showed "?"). Default takes: 1.
 - **Make final video anyway** (`acceptWarnings`) overrides failing take gates on the record, turns script/keyframe
   blockers into review findings, and still produces the HD file; the creative stays unpublishable until fixed.
+- **"OpenRouter's balance … too low" with $14.9 left (E2E 3:01 PM):** the balance check had an 8 s timeout and treated
+  "no answer" as "no money". On the swapping Mac both requests timed out. Now each check retries once (10 s, then 25 s),
+  logs `[openrouter] … check failed`, and an unreachable API says so ("Nothing was spent; press Retry").

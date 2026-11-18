@@ -147,6 +147,8 @@ const shotDone = (run: StudioRun, i: number, ok: boolean) => {
   if (run.job?.shots) markShot(run.job.shots, i, ok ? "done" : "failed");
 };
 
+const ROUTER_UNREACHABLE = "Could not reach OpenRouter to check the balance (network or a busy machine). Nothing was spent; press Retry.";
+
 /** The model a shot renders with: the operator's per-shot pick, else the plan's draft model. */
 const shotModel = (s: Shot, fallback: string) => s.model || fallback;
 
@@ -199,8 +201,9 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   if (estimated > cap) throw new Error(`Preflight: estimated $${estimated.toFixed(2)} exceeds the $${cap.toFixed(2)} cap. No video was requested.`);
   const router = await openrouterCredits();
   const routerSpend = missing.reduce((sum, i) => sum + (providerOf(models[i]) === "openrouter" ? actual[i]! * perSec(i) : 0), 0);
-  if (router == null || router < Math.max(0.05, routerSpend * 1.1)) {
-    throw new Error("OpenRouter's balance or spending budget is too low for the required review. Check Credits and Guardrails.");
+  if (router == null) throw new Error(ROUTER_UNREACHABLE);
+  if (router < Math.max(0.05, routerSpend * 1.1)) {
+    throw new Error(`OpenRouter has $${router.toFixed(2)} left, too low for the required review. Check Credits and Guardrails.`);
   }
 
   let hfLeft = 0;
@@ -359,7 +362,8 @@ async function upscaleTake(run: StudioRun, d: Direction, cap: number, acceptWarn
   const qaReserve = 0.08 + shots.length * 0.03;
   if (qaReserve > cap) throw new Error(`Preflight: HD QA needs about $${qaReserve.toFixed(2)}, over the $${cap.toFixed(2)} cap.`);
   const router = await openrouterCredits();
-  if (router == null || router < 0.05) throw new Error("OpenRouter's balance or spending budget is too low for the required review. Check Credits and Guardrails.");
+  if (router == null) throw new Error(ROUTER_UNREACHABLE);
+  if (router < 0.05) throw new Error(`OpenRouter has $${router.toFixed(2)} left, too low for the required review. Check Credits and Guardrails.`);
   const refs = await Promise.all((d.productRefs ?? []).slice(0, 2).map(mediaDataUrl));
   const firsts = await Promise.all(shots.map((s) => mediaDataUrl(s.keyframe!)));
   const clips: { shotId: string; url: string; model: string; qa: ShotQA | null }[] = [];
