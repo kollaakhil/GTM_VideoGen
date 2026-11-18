@@ -534,12 +534,14 @@ async function wordLevelFindings(main: string, segments: { shotId: string; start
 }
 
 async function checkedVoice(line: string, voice: string, charge: (n: number) => void) {
+  let last = "";
   for (let i = 0; i < 2; i++) {
     const v = await voiceover(line, voice);
     charge(v.usage.costUsd);
     const heard = await transcribeLine(v.url, transcribe);
     charge(heard.usage.costUsd);
     if (sameSpeech(heard.text, line)) return v.url;
+    last = heard.text;
   }
-  throw new Error("The narration did not match an approved line after two attempts. Check pronunciation or reapprove revised wording before video spend.");
+  throw new Error(`The narration did not match an approved line after two attempts (expected “${line}”, heard “${last.slice(0, 160)}”). Check pronunciation or reapprove revised wording before video spend.`);
 }

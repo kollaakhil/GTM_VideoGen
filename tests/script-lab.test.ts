@@ -101,6 +101,9 @@ it("locks beat timing, narration, visible copy and expected action into the stor
 it("matches transcription punctuation and written prices without tolerating missing or wrong words", () => {
   expect(sameSpeech("Now two hundred forty-nine dollars.", "Now $249")).toBe(true);
   expect(sameSpeech("Now $349", "Now $249")).toBe(false);
+  expect(sameSpeech("Get notified at drink olipop dot com.", "Get notified at drinkolipop.com.")).toBe(true);
+  expect(sameSpeech("Get notified at drinkolipop.com", "Get notified at drinkolipop.com.")).toBe(true);
+  expect(sameSpeech("Get notified at drink lollipop dot com", "Get notified at drinkolipop.com.")).toBe(false);
   expect(sameSpeech("Now $249", "Now $249 with free shipping")).toBe(false);
 });
 
