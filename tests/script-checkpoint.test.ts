@@ -179,6 +179,16 @@ describe("claims preflight on the full script and body copy", () => {
     expect(pf.cost).toBeCloseTo(0.03);
   });
 
+  it("matches rewrite keys even when the model echoes extra detail in the label", async () => {
+    mocks.chatJSON
+      .mockResolvedValueOnce(result({ unsupported: ["Best Haldi kit in town"], missing: [] }))
+      .mockResolvedValueOnce(result({ fixes: { "Google headline 1 (max 30 chars)": "Haldi kit for the weekend" } }))
+      .mockResolvedValueOnce(result({ unsupported: [], missing: [] }));
+    const pf = await preflightScript("text", { script: reference, copy, research, brief });
+    expect(pf.copy?.googleHeadlines[0]).toBe("Haldi kit for the weekend");
+    expect(pf.flags).toEqual([]);
+  });
+
   it("keeps body copy flagged when the rewrite still fails the check", async () => {
     mocks.chatJSON
       .mockResolvedValueOnce(result({ unsupported: ["Best Haldi kit in town"], missing: [] }))

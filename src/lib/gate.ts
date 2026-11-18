@@ -178,12 +178,14 @@ export async function preflightScript(
     const { data, usage } = await chatJSON<unknown>(
       model,
       "You fix ad copy that makes claims the facts don't support. Keep the idea and customer language; remove or soften only the unsupported part.",
-      `Facts:\n- Research: ${JSON.stringify({ summary: o.research.summary, valueProps: o.research.valueProps })}\n- Offer: ${o.offerTerms || o.brief.offer}\nRule: ${CLAIM_RULE}\nNo comparisons with competitors or superlatives unless stated in the facts.\nFix these lines:\n${targets.map((t) => `${t.where} (max ${t.field!.max} chars): ${t.text} | unsupported: ${copyHits.filter((h) => h.line.where === t.where).map((h) => h.claim).join("; ")}`).join("\n")}\nReturn JSON: {"fixes": {"<line label exactly as given>": "<fixed text>"}}`,
+      `Facts:\n- Research: ${JSON.stringify({ summary: o.research.summary, valueProps: o.research.valueProps })}\n- Offer: ${o.offerTerms || o.brief.offer}\nRule: ${CLAIM_RULE}\nNo comparisons with competitors or superlatives unless stated in the facts.\nFix these lines:\n${JSON.stringify(targets.map((t) => ({ label: t.where, maxChars: t.field!.max, text: t.text, unsupported: copyHits.filter((h) => h.line.where === t.where).map((h) => h.claim) })))}\nReturn JSON: {"fixes": {"<label>": "<fixed text>"}} using each label exactly, e.g. {"fixes": {"${targets[0].where}": "..."}}`,
     );
     cost += usage.costUsd;
-    const fixes = Fixes.parse(data).fixes;
+    // Models sometimes echo extra detail in the key ("primary text (max 500 chars)"), so match on the label itself.
+    const label = (k: string) => k.replace(/\s*\(.*\)\s*$/, "").replace(/:$/, "").trim().toLowerCase();
+    const fixes = new Map(Object.entries(Fixes.parse(data).fixes).map(([k, v]) => [label(k), v]));
     const rewritten = targets.flatMap((t) => {
-      const next = clipWords(fixes[t.where] ?? "", t.field!.max);
+      const next = clipWords(fixes.get(t.where.toLowerCase()) ?? "", t.field!.max);
       return next && next !== t.text ? [{ ...t, text: next, old: t.text }] : [];
     });
     const again = rewritten.length ? await check(rewritten) : null;
