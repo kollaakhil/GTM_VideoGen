@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { jobSteps } from "@/lib/job-progress";
 import { providerOf } from "@/lib/models";
 import { qa } from "@/lib/pipeline";
 import { aiConfigured, audioConfigured, transcribe, generateVideo, musicBed, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
@@ -164,7 +165,7 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   const plan = run.videoPlan!;
   const shots = d.shots!;
   const resolution = "480p";
-  const total = shots.length + 4;
+  const total = jobSteps("draft", shots.length).total;
   const warnings: string[] = [];
   let spent = 0;
   const charge = (cost: number) => { spent += cost; run.costUsd += cost; };
@@ -351,7 +352,7 @@ async function upscaleTake(run: StudioRun, d: Direction, cap: number, acceptWarn
   const warnings: string[] = [];
   let spent = 0;
   const charge = (cost: number) => { spent += cost; run.costUsd += cost; };
-  const total = shots.length + 3;
+  const total = jobSteps("final", shots.length).total;
   await step(run, d, "Preflight: approved take, QA tools and budget", 0, total, "preflight");
   const kit = await brandFor(run);
   const issues = [...new Set([...scriptProductionBlockers(d.approvedScript), ...checkScript(d.approvedScript!, approvedStoryboardLength(d)!, kit?.mustSay)])];
@@ -404,9 +405,10 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   const shots = d.shots!;
   const plan = run.videoPlan!;
   const aspects = videoAspects(tier);
-  const total = shots.length + 4;
+  const steps = jobSteps(tier, shots.length);
+  const total = steps.total;
   const kit = await brandFor(run);
-  await step(run, d, tier === "final" ? "Stitching the HD cut with the approved voice and music" : "Stitching shots, voice and music", 2 + shots.length, total, "stitching");
+  await step(run, d, tier === "final" ? "Stitching the HD cut with the approved voice and music" : "Stitching shots, voice and music", steps.stitch, total, "stitching");
   const clipData = await Promise.all(a.clips.map((c) => mediaDataUrl(c.url)));
   const voiceData = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
   const st = await stitchShots(clipData, { voices: voiceData, music: a.music ? await mediaDataUrl(a.music) : null, shotSeconds: shots.map((s) => s.seconds), width: tier === "final" ? 1080 : 486 });
@@ -419,7 +421,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     fontFile: kit?.font?.file ? await mediaFile(kit.font.file).catch(() => null) : null,
     fontFamily: kit?.font?.family ?? null,
   };
-  await step(run, d, "QA: reading on-screen copy, checking speech and visuals", 3 + shots.length, total, "qa");
+  await step(run, d, "QA: reading on-screen copy, checking speech and visuals", steps.qa, total, "qa");
   const cues = expectedCopy(segments, end, st.duration);
   const inspect = async (files: { aspect: string; url: string }[]) => (await Promise.all(files.map(async (v) => [
     ...await checkExport(v.url, v.aspect, st.duration + END_SECONDS, cues),

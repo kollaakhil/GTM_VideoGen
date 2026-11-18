@@ -52,8 +52,16 @@ export function captionCues(script: string, duration: number, wordsPerCue = 4, v
   return chunks.map((text, i) => ({ start: i * step, end: Math.min(duration, (i + 1) * step), text }));
 }
 
-function assFile(cues: { start: number; end: number; text: string }[], w: number, h: number, overlays: CopyCue[] = [], compact = false) {
+/**
+ * Captions and overlays as ASS. Every line sits on its own tight box (BorderStyle 3: the box hugs the text, padded by
+ * the outline width) that exists only while that line is on screen. Compact copy (the OCR-safe re-typeset) uses a
+ * slightly darker box and smaller type; it never paints fixed full-frame panels over the product.
+ */
+export function assFile(cues: { start: number; end: number; text: string }[], w: number, h: number, overlays: CopyCue[] = [], compact = false) {
   const size = Math.round(Math.min(w, h) * (compact ? 0.058 : 0.075));
+  // ASS alpha: 00 opaque … FF clear. ~70% (compact ~80%) opaque keeps white text readable for OCR and viewers.
+  const box = compact ? "&H30000000" : "&H48000000";
+  const pad = (s: number) => Math.max(4, Math.round(s * 0.28));
   const marginV = Math.round(h * 0.2);
   const esc = (t: string) => t.replace(/[{}\\]/g, "");
   return [
@@ -64,8 +72,8 @@ function assFile(cues: { start: number; end: number; text: string }[], w: number
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
-    `Style: Cap,DejaVu Sans,${size},&H00FFFFFF,&H00000000,&H00000000,1,3,${Math.max(3, Math.round(size * 0.22))},0,2,${Math.round(w * 0.08)},${Math.round(w * 0.08)},${marginV}`,
-    `Style: Overlay,DejaVu Sans,${Math.round(size * 0.8)},&H00FFFFFF,&H00000000,&H80000000,1,3,6,0,8,${Math.round(w * 0.12)},${Math.round(w * 0.12)},${Math.round(h * 0.14)}`,
+    `Style: Cap,DejaVu Sans,${size},&H00FFFFFF,${box},&H00000000,1,3,${pad(size)},0,2,${Math.round(w * 0.08)},${Math.round(w * 0.08)},${marginV}`,
+    `Style: Overlay,DejaVu Sans,${Math.round(size * 0.8)},&H00FFFFFF,${box},&H00000000,1,3,${pad(size * 0.8)},0,8,${Math.round(w * 0.12)},${Math.round(w * 0.12)},${Math.round(h * 0.14)}`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Text",
@@ -277,11 +285,7 @@ export async function captionVariants(
       const spatial = (segments?.length || compactCopy) && a.aspect !== "9:16"
         ? `scale=${w}:${h}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=0x151515`
         : `crop=${w}:${h}`;
-      const backing = compactCopy ? [
-        ...(cues.length ? ["drawbox=x=iw*0.055:y=ih*0.565:w=iw*0.89:h=ih*0.26:color=black:t=fill"] : []),
-        ...(overlays.length ? ["drawbox=x=iw*0.095:y=ih*0.125:w=iw*0.81:h=ih*0.32:color=black:t=fill"] : []),
-      ] : [];
-      const vf = [spatial, ...backing, ...(cues.length || overlays.length ? [`subtitles=${ass}:fontsdir=${FONTS}`] : [])].join(",");
+      const vf = [spatial, ...(cues.length || overlays.length ? [`subtitles=${ass}:fontsdir=${FONTS}`] : [])].join(",");
       const enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", out];
       if (!end) {
         await run(FFMPEG, ["-hide_banner", "-loglevel", "error", "-i", input, "-vf", vf, ...enc.slice(0, 8), ...(src.audio ? ["-c:a", "copy"] : ["-an"]), ...enc.slice(8)], { timeout: 180_000 });

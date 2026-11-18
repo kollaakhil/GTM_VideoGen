@@ -23,3 +23,12 @@ export function jobView(job: JobProgress, nowMs: number) {
   return { pct, eta, elapsed, shots };
 }
 
+
+/**
+ * Stable step numbering for one video job, so the counter never jumps (e.g. 4/7 → 6/8).
+ * Draft: preflight, voice, one per shot, stitch, QA. Final: preflight, one upscale per shot, stitch, QA.
+ */
+export function jobSteps(tier: "draft" | "final", shots: number) {
+  const total = shots + (tier === "final" ? 3 : 4);
+  return { total, shot: (i: number) => (tier === "final" ? 1 : 2) + i, stitch: total - 2, qa: total - 1 };
+}
