@@ -13,6 +13,34 @@ pnpm dev
 ```
 Without keys the app runs in **demo mode**: an in-memory store with sample data and placeholder creatives.
 
+## Structure
+```
+src/
+  app/                    Next.js routes (pages + /api); route files stay thin
+    api/studio/route.ts   validates the request, loads the run, dispatches to src/lib/studio
+  components/
+    studio-client.tsx     Studio state, API calls and polling (provides FlowCtx)
+    studio/               one file per canvas step: brand-node (start), research-node,
+                          concepts-node, brief-node, direction-node, script-lab,
+                          video-plan-node, video-controls, creative-node, publish-node,
+                          plus graph (layout), canvas, dock, chrome (node shell), history-panel,
+                          context, types, constants, utils
+    ui/                   shadcn primitives in use (button, badge, input, textarea)
+  lib/
+    studio/               server side of Studio
+      schema.ts           request schemas (zod)
+      run-state.ts        run events, in-process job registry, startJob
+      runs.ts             GET responses and new-run creation
+      actions/            one handler per action (research, brief, concepts, directions,
+                          generate, organic, storyboard, script, render-video, immediate)
+      creatives.ts        static generation: takes, QA, auto-fix, save
+      video.ts            storyboard keyframes, video render and export QA
+    pipeline.ts, ai.ts, script-lab.ts, video-post.ts, media-qa.ts, gate.ts …  model calls, QA and media
+scripts/                  db-migrate, import-local, e2e-static (run with node)
+tests/                    vitest suite (no provider calls)
+```
+`npx knip` lists unused files, exports and dependencies (`knip.json` marks the scripts as entry points).
+
 ## Script Lab
 
 In a video direction, confirm one buyer tension, one claim from saved research, a proposed scene that demonstrates the claim, exact offer terms, and one CTA. A proof attachment is optional for scripts. Storyboards reuse real product photos saved to the brand kit; an uploaded proof photo is an optional extra reference. External links are for operator review and are not fetched by Studio. Inferred objections are not testimonials. Only use buyer quotes matched to a source excerpt.

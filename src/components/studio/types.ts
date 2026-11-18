@@ -1,9 +1,9 @@
-import type { ModelOption } from "@/lib/models";
+import type { Modality, ModelOption } from "@/lib/models";
 import type { AdScript, Brand, Creative, StudioRun, VideoPlan } from "@/lib/types";
 
 export type Model = ModelOption & { ready: boolean };
 
-export type Modality = "text" | "vision" | "image" | "video";
+export type { Modality };
 
 export type RunSummary = Pick<StudioRun, "id" | "brandUrl" | "goal" | "stage" | "status" | "costUsd" | "createdAt" | "format" | "updatedAt"> & {
   thumb: { url: string; type: "image" | "video" } | null;

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { storyboardProofPhoto, storyboardTargets } from "@/lib/quality-policy";
 import { mediaDataUrl } from "@/lib/store";
 import type { StudioRun } from "@/lib/types";
+import { DEFAULT_VIDEO_PLAN } from "@/lib/video-categories";
 import { say, saveRun } from "../run-state";
 import { brandFor, saveStoryboardPhotos } from "../context";
 import { makeKeyframe, storyboard } from "../video";
@@ -24,11 +25,11 @@ export async function planStoryboard(run: StudioRun, body: ActionBody<"storyboar
   run.videoPlan = {
     category: p.category,
     lengthSec: p.lengthSec,
-    draftModel: p.draftModel ?? "hfmcp:seedance1_5",
-    finalModel: p.finalModel ?? "hfmcp:kling3_0",
-    voice: p.voice ?? "Rachel",
-    music: p.music ?? true,
-    budgetUsd: p.budgetUsd ?? 3,
+    draftModel: p.draftModel ?? DEFAULT_VIDEO_PLAN.draftModel,
+    finalModel: p.finalModel ?? DEFAULT_VIDEO_PLAN.finalModel,
+    voice: p.voice ?? DEFAULT_VIDEO_PLAN.voice,
+    music: p.music ?? DEFAULT_VIDEO_PLAN.music,
+    budgetUsd: p.budgetUsd ?? DEFAULT_VIDEO_PLAN.budgetUsd,
   };
   return {
     activity: `Storyboarding ${targets.length === 1 ? `“${targets[0].title}”` : `${targets.length} directions`}: shot list, keyframes and keyframe QA…`,

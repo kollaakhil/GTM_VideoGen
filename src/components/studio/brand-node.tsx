@@ -7,16 +7,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Modality } from "./types";
 import { useFlow } from "./context";
-import { urlOk } from "./utils";
+import { hostName, urlOk } from "./utils";
 import { Shell, Label } from "./chrome";
 
 export function BrandNode() {
   const { run, form, start, sending, models } = useFlow();
   if (run) {
-    let host = run.brandUrl;
-    try {
-      host = new URL(run.brandUrl).hostname.replace(/^www\./, "");
-    } catch {}
+    const host = hostName(run.brandUrl);
     return (
       <Shell step={1} label="Brand & goal" icon={Globe} state="done" width={360}>
         <div className="space-y-3">

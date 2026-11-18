@@ -87,10 +87,6 @@ export async function generateMany(run: StudioRun, dirs: Direction[], refs: stri
     fontFile: kit?.font?.file ? await mediaFile(kit.font.file).catch(() => null) : null,
     fontFamily: kit?.font?.family ?? null,
   };
-  const save = async () => {
-    if (!live(run)) throw new Error("Stopped");
-    await put("studio_runs", { ...run, updatedAt: now() });
-  };
   const results = await Promise.allSettled(
     dirs.map(async (d) => {
       const i = run.directions.indexOf(d);
@@ -109,11 +105,11 @@ export async function generateMany(run: StudioRun, dirs: Direction[], refs: stri
       }
       const opts = { imageModel: m.image, videoModel: m.video, refs, seed: i, brand: run.research?.brand || brandName(run.brandUrl), style: { styleRef: run.research?.styleRef, colors: run.research?.colors }, kit: dirKit };
       run.progress[d.id] = "rendering";
-      await save();
+      await saveRun(run);
       const takes = d.format === "static" ? TOURNAMENT_SIZE : 1;
       const candidates = await Promise.all(Array.from({ length: takes }, (_, t) => render(d, { ...opts, seed: i * 10 + t })));
       run.progress[d.id] = "qa";
-      await save();
+      await saveRun(run);
       const graded = await Promise.all(candidates.map(async (c) => ({ out: c, q: await qa(m.vision, c.url, c.type, run.brief!, d.hook) })));
       graded.sort((a, b) => b.q.data.score - a.q.data.score);
       let { out, q } = graded[0];
@@ -125,7 +121,7 @@ export async function generateMany(run: StudioRun, dirs: Direction[], refs: stri
         const plan = planFix(q.data.notes, !!opts.kit && !!out.scene);
         if (!plan.rerender && !plan.retypeset) break;
         run.progress[d.id] = "fixing";
-        await save();
+        await saveRun(run);
         if (plan.retypeset) tighter++;
         const retry = plan.rerender
           ? await render(d, { ...opts, seed: i * 10 + takes + a, fixes: plan.imageFixes, tighter })

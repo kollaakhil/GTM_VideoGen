@@ -1,4 +1,4 @@
-type Modality = "text" | "vision" | "image" | "video";
+export type Modality = "text" | "vision" | "image" | "video";
 export type Provider = "openrouter" | "fal" | "higgsfield" | "hfmcp";
 
 export interface ModelOption {

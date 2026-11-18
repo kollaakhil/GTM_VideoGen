@@ -1,6 +1,6 @@
-import type { CreativeProgress, VideoPlan } from "@/lib/types";
+import type { CreativeProgress } from "@/lib/types";
 
-export const DEFAULT_PLAN: VideoPlan = { category: "product_demo", lengthSec: 10, draftModel: "hfmcp:seedance1_5", finalModel: "hfmcp:kling3_0", voice: "Rachel", music: true, budgetUsd: 3 };
+export { DEFAULT_VIDEO_PLAN as DEFAULT_PLAN } from "@/lib/video-categories";
 
 export const VOICE_OPTIONS = ["Rachel", "Aria", "Sarah", "Charlotte", "Jessica", "Lily", "Roger", "George", "Liam", "Will", "Eric", "Brian", "Daniel"];
 
