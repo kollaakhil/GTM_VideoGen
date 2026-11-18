@@ -54,11 +54,11 @@ export function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
             realOffer={run.offer}
             quotes={run.voc?.sourcedQuotes ?? []}
             refs={form.refs}
-            onDraft={(proof, writer, judge) => act("draft_hooks", { runId: run.id, directionId: d.id, lengthSec: form.plan.lengthSec, writer, judge, proof })}
-            onWrite={(hookId, writer, judge) => act("write_scripts", { runId: run.id, directionId: d.id, lengthSec: form.plan.lengthSec, writer, judge, hookId })}
-            onApprove={(sc, lines) => act("approve_script", { runId: run.id, directionId: d.id, scriptId: sc.id, ...(lines ? { edit: { beats: lines } } : {}) }).then((ok) => {
-              if (ok) setEdits((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== sc.id)));
-            })}
+            scriptStyle={run.scriptStyle}
+            onDraft={(proof, writer, judge, style) => act("draft_hooks", { runId: run.id, directionId: d.id, lengthSec: form.plan.lengthSec, writer, judge, style, proof })}
+            onWrite={(hookId, writer, judge, style) => act("write_scripts", { runId: run.id, directionId: d.id, lengthSec: form.plan.lengthSec, writer, judge, style, hookId })}
+            onApprove={(sc, edit) => act("approve_script", { runId: run.id, directionId: d.id, scriptId: sc.id, ...(edit ? { edit } : {}) })}
+            onRescore={(sc, edit) => act("rescore_script", { runId: run.id, directionId: d.id, scriptId: sc.id, ...(edit ? { edit } : {}) })}
             onStoryboard={(lengthSec) => act("storyboard", { runId: run.id, directionId: d.id, plan: { ...form.plan, lengthSec }, refs: photos.refs })}
           />
           </>

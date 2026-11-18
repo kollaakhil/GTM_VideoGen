@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Clapperboard, Check, ChevronDown, Lightbulb, Pencil } from "lucide-react";
+import { Clapperboard, Check, ChevronDown, Lightbulb, Pencil, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { approvedStoryboardLength, recommendedOpening, scriptProductionBlockers } from "@/lib/quality-policy";
 import { rehearsalMetrics, rehearseScript } from "@/lib/script-rehearsal";
 import { cn } from "@/lib/utils";
 import type { AdScript, Direction, StudioRun } from "@/lib/types";
 import { estimateCost } from "@/lib/video-categories";
-import type { BeatEdit } from "./types";
+import { SCRIPT_STYLES, SCRIPT_STYLE_IDS, isScriptStyle, styleLabel, type ScriptStyleId } from "@/lib/script-styles";
+import type { BeatEdit, ScriptEditBody } from "./types";
 import { WRITERS, JUDGES, hookLabels } from "./constants";
 import { money, scoreTone, savedWriter, savedJudge, judgeOf } from "./utils";
 
@@ -95,7 +96,9 @@ function ApprovedStoryboard({ script, busy, needsPhoto, hasKeyframes, lengthSec,
   );
 }
 
-export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto, lengthSec, research, brief, realOffer, quotes, refs, onDraft, onWrite, onApprove, onStoryboard }: {
+const SCORE_LABELS: Record<string, string> = { customerLanguage: "customer language", productEarly: "product early", inspirationMatch: "inspiration match" };
+
+export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto, lengthSec, research, brief, realOffer, quotes, refs, scriptStyle, onDraft, onWrite, onApprove, onRescore, onStoryboard }: {
   d: Direction;
   open: string | null;
   setOpen: (id: string | null) => void;
@@ -109,14 +112,18 @@ export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto,
   realOffer?: string | null;
   quotes: { text: string; url: string }[];
   refs: string[];
-  onDraft: (proof: { tension: string; claim: string; action: string; asset?: string; offer: string; cta: string; quoteIndex?: number }, writer: string, judge: string) => void;
-  onWrite: (hookId: string, writer: string, judge: string) => void;
-  onApprove: (sc: AdScript, lines?: BeatEdit[]) => void;
+  scriptStyle?: string | null;
+  onDraft: (proof: { tension: string; claim: string; action: string; asset?: string; offer: string; cta: string; quoteIndex?: number }, writer: string, judge: string, style: ScriptStyleId) => void;
+  onWrite: (hookId: string, writer: string, judge: string, style: ScriptStyleId) => void;
+  onApprove: (sc: AdScript, edit?: ScriptEditBody) => Promise<boolean>;
+  onRescore: (sc: AdScript, edit?: ScriptEditBody) => Promise<boolean>;
   onStoryboard: (lengthSec: number) => void;
 }) {
   const ap = d.approvedScript;
   const storyboardLength = approvedStoryboardLength(d);
   const [writer, setWriter] = useState(savedWriter);
+  const [style, setStyle] = useState<ScriptStyleId>(isScriptStyle(scriptStyle) ? scriptStyle : "auto");
+  const [ctas, setCtas] = useState<Record<string, string>>({});
   const [judge, setJudge] = useState(savedJudge);
   const lab = d.hookLab;
   const facts = Array.from(new Set([...(research?.valueProps ?? []), ...(realOffer?.split("\n") ?? [])].map((s) => s.trim()).filter(Boolean)));
@@ -171,6 +178,10 @@ export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto,
         <summary className="cursor-pointer font-semibold">{lab?.hooks.length ? "Edit script brief" : "1. Confirm the script brief"}</summary>
         <fieldset disabled={busy} className="mt-2 space-y-1.5">
           <p className="text-zinc-400">Goal: {brief?.kpi || brief?.objective || "Not set"} · {lengthSec}s</p>
+          <label className="block">Script style<select className={field} value={style} aria-label="Script style" onChange={(e) => setStyle(e.target.value as ScriptStyleId)}>
+            {SCRIPT_STYLE_IDS.map((id) => <option key={id} value={id}>{SCRIPT_STYLES[id].label}</option>)}
+          </select></label>
+          {style !== "auto" && <p className="text-zinc-400">{SCRIPT_STYLES[style].structure}</p>}
           <label className="block">One buyer tension<textarea className={field} maxLength={400} rows={2} value={tension} onChange={(e) => setTension(e.target.value)} /></label>
           <label className="block">Claim from saved research<select className={field} value={claim} onChange={(e) => setClaim(e.target.value)}>
             <option value="">Select one supported claim</option>
@@ -191,7 +202,7 @@ export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto,
           </select></label> : <p className="text-zinc-400">No verified buyer wording saved. Treat objections as hypotheses, not quotes.</p>}
           <p className="text-zinc-400">Drafting uses saved research. Storyboards reuse saved brand photos; no need to attach them here.</p>
           <Button size="sm" variant="secondary" className="w-full" disabled={!tension.trim() || !claim || !action.trim() || !cta.trim()} onClick={() => {
-            onDraft({ tension, claim, action, ...(asset.trim() ? { asset } : {}), offer, cta, ...(quoteIndex >= 0 ? { quoteIndex } : {}) }, writer, grader);
+            onDraft({ tension, claim, action, ...(asset.trim() ? { asset } : {}), offer, cta, ...(quoteIndex >= 0 ? { quoteIndex } : {}) }, writer, grader, style);
           }}><Lightbulb /> {lab?.hooks.length ? "Draft new openings" : "Draft openings"}</Button>
         </fieldset>
       </details>
@@ -230,7 +241,7 @@ export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto,
             </details>
             {chosen && <Button size="sm" className="w-full" disabled={busy || !canUse} onClick={() => {
               setShowOpenings(false);
-              onWrite(chosen.id, writer, grader);
+              onWrite(chosen.id, writer, grader, style);
             }}><Pencil /> Write script</Button>}
           </>}
         </section>
@@ -241,7 +252,14 @@ export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto,
           {drafts.map((sc, index) => {
           const isOpen = open === sc.id;
           const lines = edits[sc.id];
-          const edited = lines?.some((line, i) => line.vo.trim() !== sc.beats[i].vo || line.onScreen.trim() !== sc.beats[i].onScreen);
+          const ctaEdit = ctas[sc.id];
+          const ctaEdited = ctaEdit !== undefined && ctaEdit.trim() !== "" && ctaEdit.trim() !== sc.cta;
+          const edited = !!lines?.some((line, i) => line.vo.trim() !== sc.beats[i].vo || line.onScreen.trim() !== sc.beats[i].onScreen) || ctaEdited;
+          const editBody: ScriptEditBody | undefined = edited ? { ...(lines ? { beats: lines } : {}), ...(ctaEdited ? { cta: ctaEdit.trim() } : {}) } : undefined;
+          const clearEdit = () => {
+            setEdits(Object.fromEntries(Object.entries(edits).filter(([id]) => id !== sc.id)));
+            setCtas(Object.fromEntries(Object.entries(ctas).filter(([id]) => id !== sc.id)));
+          };
           const updateBeat = (index: number, patch: Partial<BeatEdit>) => {
             const next = (lines ?? sc.beats).map(({ vo, onScreen }, i) => i === index ? { vo, onScreen, ...patch } : { vo, onScreen });
             setEdits({ ...edits, [sc.id]: next });
@@ -265,9 +283,14 @@ export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto,
                 </button>
                 {approved && !edited
                   ? <span className="flex items-center gap-1 text-xs font-medium text-emerald-300"><Check className="size-3.5" /> Approved</span>
-                  : <Button type="button" size="sm" aria-label={`Approve draft ${index + 1} for ${d.title}`} disabled={busy} onClick={() => onApprove(sc, edited ? lines : undefined)}>
-                      <Check /> Approve
-                    </Button>}
+                  : <span className="flex gap-1">
+                      {savedDraft && <Button type="button" size="sm" variant="secondary" aria-label={`Re-score draft ${index + 1} for ${d.title}`} disabled={busy} title="Re-run the checks and the score with your edits, without approving" onClick={() => onRescore(sc, editBody).then((ok) => ok && clearEdit())}>
+                        <RefreshCw /> Re-score
+                      </Button>}
+                      <Button type="button" size="sm" aria-label={`Approve draft ${index + 1} for ${d.title}`} disabled={busy} onClick={() => onApprove(sc, editBody).then((ok) => ok && clearEdit())}>
+                        <Check /> Approve
+                      </Button>
+                    </span>}
               </div>
               {approved && ap && storyboardLength !== undefined && (
                 <div className="mt-2">
@@ -281,7 +304,7 @@ export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto,
                       <div className="text-[10px] text-zinc-400">{i + 1}. {b.seconds}s · {b.visual}</div>
                       <textarea
                         aria-label={`Beat ${i + 1} voiceover`}
-                        readOnly={!savedDraft || (!!sc.proofBrief && i === 0)}
+                        readOnly={!savedDraft}
                         placeholder="Spoken line"
                         maxLength={300}
                         className={field}
@@ -291,7 +314,7 @@ export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto,
                       />
                       <input
                         aria-label={`Beat ${i + 1} on-screen copy`}
-                        readOnly={!savedDraft || (!!sc.proofBrief && i === 0)}
+                        readOnly={!savedDraft}
                         placeholder="On-screen copy"
                         maxLength={160}
                         className={field}
@@ -300,20 +323,29 @@ export function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto,
                       />
                     </div>
                   ))}
-                  <div className="text-[10px] text-zinc-400">CTA: {sc.cta}</div>
+                  <label className="block text-[10px] text-zinc-400">CTA (said and shown in the last beat)
+                    <input aria-label="CTA" readOnly={!savedDraft} maxLength={60} className={field} value={ctaEdit ?? sc.cta} onChange={(e) => setCtas({ ...ctas, [sc.id]: e.target.value })} />
+                  </label>
+                  {sc.style && <div className="text-[10px] text-zinc-400">Style: {styleLabel(sc.style)}</div>}
                   {sco && (
                     <div className="flex flex-wrap gap-1">
                       <span className="text-[9px] text-zinc-400">Category scores:</span>
                       {Object.entries(sco.scores).map(([k, v]) => (
-                        <span key={k} className={`rounded px-1 text-[9px] ${scoreTone(v)}`}>{k} {v}</span>
+                        <span key={k} className={`rounded px-1 text-[9px] ${scoreTone(v)}`}>{SCORE_LABELS[k] ?? k} {v}</span>
                       ))}
+                      {sco.scores.inspirationMatch === undefined && <span className="rounded bg-white/5 px-1 text-[9px] text-zinc-500" title="Add a reference URL or swipe-file ads, then re-score, to compare against inspirations. No penalty without them.">inspiration match skipped (no inspirations)</span>}
                     </div>
                   )}
-                  {[...(sco?.unsupported ?? []).map((u) => `Unsupported: ${u}`), ...(sc.checks ?? []), ...(sco?.notes ?? [])].map((n, i) => (
+                  {sc.gate && (
+                    <p className="text-[10px] text-zinc-400" title={sc.gate.answers.map((a) => `${a.id}: yes ${a.yes.toFixed(2)} (conf ${a.confidence.toFixed(2)})`).join("\n")}>
+                      Jev pre-check: {sc.gate.skippedJudge ? "passed, full judge skipped" : sc.gate.reasons[0] ?? "escalated to the full judge"} · {money(sc.gate.cost)}
+                    </p>
+                  )}
+                  {[...(sc.claimFlags ?? []).map((f) => `Claim check, ${f.where}: ${f.claim}`), ...(sco?.unsupported ?? []).map((u) => `Unsupported: ${u}`), ...(sc.checks ?? []), ...(sco?.notes ?? [])].map((n, i) => (
                     <p key={i} className="text-[10px] text-amber-200/80">• {n}</p>
                   ))}
                   <ReadThrough script={{ ...sc, beats: sc.beats.map((b, i) => ({ ...b, ...lines?.[i] })) }} />
-                  {edited && <p className="text-[10px] text-zinc-400">Approving will save your edits and refresh the review.</p>}
+                  {edited && <p className="text-[10px] text-zinc-400">Re-score to check your edits (claims, timing, score) before approving. Approving also saves and re-checks them.</p>}
                 </div>
               )}
             </div>

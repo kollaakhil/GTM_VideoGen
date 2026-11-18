@@ -15,6 +15,7 @@ export function scriptProductionBlockers(s?: AdScript | null): string[] {
     ...(s.checks ?? []),
     ...(s.score?.unsupported.map((claim) => `Unsupported claim: ${claim}`) ?? []),
     ...(s.score?.proofProblems ?? []),
+    ...(s.claimFlags?.map((f) => `Unsupported claim in ${f.where}: ${f.claim}`) ?? []),
   ]);
   if (!blockers.size && (!hasIndependentScriptReview(s) || !s.checks)) {
     blockers.add("The script needs an independent production check.");

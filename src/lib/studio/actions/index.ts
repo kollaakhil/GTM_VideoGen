@@ -7,7 +7,7 @@ import { planDirections } from "./directions";
 import { planGenerate, planRegenerate } from "./generate";
 import { planOrganic } from "./organic";
 import { planStoryboard, planRedoShot } from "./storyboard";
-import { planDraftHooks, planWriteScripts, planApproveScript } from "./script";
+import { planDraftHooks, planWriteScripts, planApproveScript, planRescoreScript } from "./script";
 import { planRenderVideo } from "./render-video";
 
 type Handler<A extends PlannedBody["action"]> = (run: StudioRun, body: ActionBody<A>) => Promise<Job>;
@@ -24,6 +24,7 @@ const HANDLERS: { [A in PlannedBody["action"]]: Handler<A> } = {
   draft_hooks: planDraftHooks,
   write_scripts: planWriteScripts,
   approve_script: planApproveScript,
+  rescore_script: planRescoreScript,
   redo_shot: planRedoShot,
   render_video: planRenderVideo,
   regenerate: planRegenerate,
