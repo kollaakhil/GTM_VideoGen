@@ -145,7 +145,10 @@ export function sameSpeech(heard: string, expected: string) {
   const tokens = (text: string) => numberize(exactCopy(text.replace(/(\d),(?=\d)/g, "$1")
     .replace(/\$(\d+)/g, "$1 dollars").replace(/(\d+)\s*%/g, "$1 percent")).split(/\s+/).filter(Boolean))
     .map((w) => w === "dollar" || w === "bucks" ? "dollars" : w).join(" ");
-  return tokens(heard) === tokens(expected);
+  if (tokens(heard) === tokens(expected)) return true;
+  // Domains and compounds: "drinkolipop.com" is heard as "drink olipop dot com"; compare without spaces or "dot".
+  const collapsed = (text: string) => tokens(text.replace(/\.(?=[a-z])/gi, " dot ")).replace(/\bdot\b/g, "").replace(/\s+/g, "");
+  return collapsed(heard) === collapsed(expected);
 }
 
 const hasPhrase = (line: string, phrase: string) => {
