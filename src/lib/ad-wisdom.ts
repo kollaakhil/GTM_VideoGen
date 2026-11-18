@@ -53,13 +53,20 @@ export async function voiceOfCustomer(model: string, brandUrl: string, r: Resear
   const brand = r.brand || new URL(brandUrl).hostname.replace(/^www\./, "");
   const category = r.angles?.[0] ? `${r.audience}` : brand;
   const [byBrand, byCategory, reviews] = await Promise.all([redditText(brand), redditText(category.split(/[,.;]/)[0].slice(0, 60)), reviewText(brandUrl)]);
-  const corpus = [byBrand.text, byCategory.text, reviews.text].filter(Boolean).join("\n\n");
+  const excerpts = [byBrand, byCategory, reviews].filter((source) => source.source && source.text);
+  const corpus = excerpts.map((source) => source.text).join("\n\n");
   const { data, usage } = await chatJSON<Omit<VoiceOfCustomer, "sources">>(
     model,
     "You are a direct-response researcher. Extract real customer language. Quote or closely paraphrase actual phrasing; never invent testimonials or statistics.",
     `Brand: ${brand}\nWhat the brand sells: ${r.summary}\nAudience: ${r.audience}\n${corpus ? `Customer discussions and reviews:\n${corpus}` : "(No public discussions found; infer likely customer language from the audience and say nothing that sounds like a quote.)"}\n\nReturn JSON: {"phrases": string[] (6-10 short phrases customers actually use about this problem/category), "pains": string[] (4-6), "desires": string[] (4-6), "objections": string[] (3-5 reasons people hesitate to buy), "quotes": string[] (4-8 full sentences copied word for word from the discussions above, the most vivid ones about the problem or the product; [] when there are no discussions)}`,
   );
-  return { data: { ...data, sources: [byBrand.source, byCategory.source, reviews.source].filter((s): s is string => !!s) }, cost: usage.costUsd };
+  const sourcedQuotes = (Array.isArray(data.quotes) ? data.quotes : []).flatMap((quote) => {
+    if (typeof quote !== "string" || quote.trim().length < 12) return [];
+    const text = quote.trim();
+    const url = excerpts.find((e) => e.text.includes(text))?.source;
+    return url ? [{ text, url }] : [];
+  }).slice(0, 8);
+  return { data: { ...data, quotes: sourcedQuotes.map((q) => q.text), sourcedQuotes, sources: excerpts.map((e) => e.source!) }, cost: usage.costUsd };
 }
 
 export const vocBlock = (v?: VoiceOfCustomer | null) =>

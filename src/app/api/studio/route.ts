@@ -10,14 +10,14 @@ import { STATIC_FORMATS, vocBlock, voiceOfCustomer } from "@/lib/ad-wisdom";
 import { concepts, diversityIssues, selectDiverse } from "@/lib/concepts";
 import { claimsCheck, gateVerdict } from "@/lib/gate";
 import { learnings } from "@/lib/learnings";
-import { checkScript, judgeFor, reviewScript, sameSpeech, SCRIPT_JUDGES, SCRIPT_WRITERS, scriptLab, scriptSeconds, scriptText, WRITER, writerLabel } from "@/lib/script-lab";
-import { SCRIPT_PASS, scriptReady, shotReady, videoAspects, videoReady } from "@/lib/quality-policy";
+import { checkScript, draftHooks, judgeFor, proofAssetUrl, reviewHooks, reviewScript, sameSpeech, SCRIPT_JUDGES, SCRIPT_WRITERS, scriptLab, scriptSeconds, scriptText, WRITER, writerLabel } from "@/lib/script-lab";
+import { approvedStoryboardLength, draftVideoBlocker, hasIndependentScriptReview, PRODUCT_PHOTO_PATTERN, scriptProductionBlocker, scriptProductionBlockers, shotReady, storyboardKeyframeFixes, storyboardProofPhoto, storyboardTargets, videoAspects, videoReady } from "@/lib/quality-policy";
 import { captionVariants, END_SECONDS, expectedCopy, meanVolume, mediaDuration, stitchShots } from "@/lib/video-post";
 import { audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
 import { get, list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
 import { currentUser } from "@/lib/session";
 import { rateLimit } from "@/lib/rate-limit";
-import type { Brief, Creative, Direction, QAResult, RunEvent, Shot, ShotQA, StudioRun, VideoQuality } from "@/lib/types";
+import type { Brief, Creative, Direction, QAResult, RunEvent, ScriptProofBrief, Shot, ShotQA, StudioRun, VideoQuality } from "@/lib/types";
 
 export const maxDuration = 300;
 const AUTO_FIX_ATTEMPTS = 2;
@@ -26,9 +26,16 @@ const TOURNAMENT_SIZE = Math.max(1, Math.min(4, Number(process.env.TOURNAMENT_SI
 
 const ModelId = z.string().max(120).regex(/^[\w./:-]+$/);
 const Models = z.object({ text: ModelId, vision: ModelId, image: ModelId, video: ModelId }).partial().optional();
-const Ref = z.string().max(7_000_000).regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, "Product photos must be PNG, JPEG or WebP");
+const Ref = z.string().max(7_000_000).regex(PRODUCT_PHOTO_PATTERN, "Product photos must be PNG, JPEG or WebP");
 const Refs = z.array(Ref).max(4).optional();
 const Field = (n: number) => z.string().trim().min(1).max(n);
+const ScriptOptions = {
+  runId: z.string().max(64),
+  directionId: z.string().max(32),
+  lengthSec: z.number().int().min(6).max(30),
+  writer: z.enum(SCRIPT_WRITERS).optional(),
+  judge: z.enum(SCRIPT_JUDGES).optional(),
+};
 const BriefSchema = z.object({
   objective: Field(400),
   audience: Field(400),
@@ -59,7 +66,12 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("pick_concepts"), runId: z.string().max(64), ids: z.array(z.string().max(16)).min(1).max(5) }),
   z.object({ action: z.literal("cancel"), runId: z.string().max(64) }),
   z.object({ action: z.literal("storyboard"), runId: z.string().max(64), directionId: z.string().max(32).optional(), plan: Plan, refs: Refs }),
-  z.object({ action: z.literal("write_scripts"), runId: z.string().max(64), directionId: z.string().max(32).optional(), lengthSec: z.number().int().min(6).max(30).optional(), writer: z.enum(SCRIPT_WRITERS).optional(), judge: z.enum(SCRIPT_JUDGES).optional() }),
+  z.object({ action: z.literal("save_storyboard_photos"), runId: z.string().max(64), refs: z.array(Ref).min(1).max(4) }),
+  z.object({ action: z.literal("draft_hooks"), ...ScriptOptions, proof: z.object({
+    tension: Field(400), claim: Field(800), action: Field(500), asset: z.string().trim().max(2048).or(Ref).optional(), offer: z.string().trim().max(400), cta: Field(40),
+    quoteIndex: z.number().int().min(0).max(7).optional(),
+  }) }),
+  z.object({ action: z.literal("write_scripts"), ...ScriptOptions, hookId: z.string().uuid() }),
   z.object({
     action: z.literal("approve_script"),
     runId: z.string().max(64),
@@ -186,6 +198,17 @@ export async function POST(req: Request) {
   }
   if (run.status === "working") return NextResponse.json({ error: "This run is already working on a step" }, { status: 409 });
 
+  if (body.action === "save_storyboard_photos") {
+    try {
+      run.storyboardPhotos = await saveStoryboardPhotos(run.id, body.refs);
+      run.updatedAt = now();
+      await put("studio_runs", run);
+      return NextResponse.json({ run });
+    } catch {
+      return NextResponse.json({ error: "Couldn’t save product photos. Try uploading them again." }, { status: 503 });
+    }
+  }
+
   if (body.action === "edit_brief") {
     if (!run.brief) return NextResponse.json({ error: "No brief to edit yet" }, { status: 400 });
     run.brief = body.brief as Brief;
@@ -210,7 +233,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ run });
   }
 
-  const job = plan(run, body);
+  const job = await plan(run, body);
   if ("error" in job) return NextResponse.json({ error: job.error }, { status: 400 });
   const jobId = newId("job");
   jobs.set(jobId, new AbortController());
@@ -246,7 +269,11 @@ const brandName = (url: string) => {
 
 type Parsed = z.infer<typeof Body>;
 
-function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "cancel" | "pick_concepts" }>): { activity: string; work: () => Promise<void> } | { error: string } {
+function saveStoryboardPhotos(runId: string, refs: string[]) {
+  return Promise.all(refs.map((img, i) => storeMedia(img, `${runId}/ref-${i}-${createHash("sha256").update(img).digest("hex").slice(0, 16)}`)));
+}
+
+async function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "cancel" | "pick_concepts" | "save_storyboard_photos" }>): Promise<{ activity: string; work: () => Promise<void> } | { error: string }> {
   const m = run.models;
   switch (body.action) {
     case "research":
@@ -328,6 +355,17 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
     case "storyboard": {
       if (!run.brief || !run.research || !run.directions.length) return { error: "Pitch directions first" };
       const p = body.plan;
+      const all = body.directionId ? run.directions.filter((d) => d.id === body.directionId) : run.directions;
+      if (!all.length) return { error: "Direction not found" };
+      const approved = storyboardTargets(all);
+      if (!approved.length) return { error: "Approve a video script with a valid duration before building its storyboard." };
+      const targets = storyboardTargets(approved, p.lengthSec);
+      if (!targets.length) return { error: `No script is approved for ${p.lengthSec}s. Build from its direction card to use the approved duration.` };
+      const productRefs = body.refs?.length ? body.refs : run.storyboardPhotos?.length ? run.storyboardPhotos : (await brandFor(run))?.photos ?? [];
+      const proofs = targets.map((d) => storyboardProofPhoto(run.id, d));
+      if (!productRefs.length && proofs.some((photo) => !photo)) {
+        return { error: "Add a real product photo in Video plan before building storyboards. A website link is not a product photo." };
+      }
       run.videoPlan = {
         category: p.category,
         lengthSec: p.lengthSec,
@@ -337,60 +375,90 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
         music: p.music ?? true,
         budgetUsd: p.budgetUsd ?? 3,
       };
-      const all = body.directionId ? run.directions.filter((d) => d.id === body.directionId) : run.directions;
-      if (!all.length) return { error: "Direction not found" };
-      const targets = all.filter((d) => d.format === "video" && scriptReady(d.approvedScript));
-      if (!targets.length) return { error: `Approve an independently graded ${SCRIPT_PASS}/10 script before building a storyboard.` };
       return {
         activity: `Storyboarding ${targets.length === 1 ? `“${targets[0].title}”` : `${targets.length} directions`}: shot list, keyframes and keyframe QA…`,
         work: async () => {
           run.job = { label: "Planning shot lists", done: 0, total: 0 };
-          const kit = await brandFor(run);
-          const productRefs = body.refs?.length ? body.refs : kit?.photos ?? [];
-          if (!productRefs.length) throw new Error("Upload at least one real product photo before storyboarding.");
-          const savedRefs = await Promise.all(productRefs.map((img, i) => storeMedia(img, `${run.id}/ref-${i}-${createHash("sha256").update(img).digest("hex").slice(0, 16)}`)));
-          const res = await Promise.allSettled(targets.map((d) => storyboard(run, d, productRefs, savedRefs, kit?.mustSay)));
+          const savedRefs = await saveStoryboardPhotos(run.id, productRefs);
+          const shared = await Promise.all(productRefs.map((photo) => mediaDataUrl(photo)));
+          if (body.refs?.length) run.storyboardPhotos = savedRefs;
+          const res = await Promise.allSettled(targets.map(async (d, i) => {
+            const asset = proofs[i];
+            const refs = asset ? [await mediaDataUrl(asset), ...shared.slice(0, 3)] : shared;
+            const saved = asset ? [asset, ...savedRefs.slice(0, 3)] : savedRefs;
+            return storyboard(run, d, refs, saved);
+          }));
           run.job = null;
           res.forEach((r, k) => {
             if (r.status === "rejected") {
               say(run, "error", `Storyboard for “${targets[k].title}” failed: ${String(r.reason?.message ?? r.reason).slice(0, 300)}`);
             }
           });
-          say(run, "agent", "Storyboards are ready. Check the keyframes, redo or edit any shot, then render a draft video for the directions you like.");
+          const first = res[0];
+          if (first?.status === "rejected" && res.every((r) => r.status === "rejected")) {
+            throw new Error(String(first.reason?.message ?? first.reason).slice(0, 300));
+          }
+          say(run, "agent", "Storyboards are ready. Open Video controls to generate a 480p draft. Script and keyframe checks still apply to HD.");
+        },
+      };
+    }
+    case "draft_hooks": {
+      const d = run.directions.find((x) => x.id === body.directionId && x.format === "video");
+      if (!run.brief || !run.research || !d) return { error: "Pitch a video direction first." };
+      const { asset, quoteIndex, ...fields } = body.proof;
+      const savedAsset = d.hookLab?.brief.asset === asset && asset?.startsWith("/api/media/") ? asset : null;
+      const photo = Ref.safeParse(asset).success;
+      const external = asset?.startsWith("https://") ? proofAssetUrl(asset) : null;
+      if (asset && !photo && !external && !savedAsset) return { error: "Leave the optional asset blank or use a product photo or HTTPS link." };
+      if (![...run.research.valueProps, ...(run.offer?.split("\n") ?? [])].some((fact) => fact.trim() === fields.claim)) return { error: "Choose a claim from this run’s saved product facts." };
+      const quote = quoteIndex === undefined ? undefined : run.voc?.sourcedQuotes?.[quoteIndex];
+      if (quoteIndex !== undefined && !quote) return { error: "Select a sourced customer quote or leave it blank." };
+      const writer = body.writer ?? WRITER;
+      const judge = judgeFor(writer, body.judge);
+      return {
+        activity: `Hook Lab: drafting and reviewing three openings for “${d.title}”…`,
+        work: async () => {
+          const evidence = savedAsset ?? external ?? (photo && asset ? await storeMedia(asset, `${run.id}/proof-${randomUUID()}`) : undefined);
+          const proof: ScriptProofBrief = { ...fields, ...(evidence ? { asset: evidence } : {}), quote };
+          const lab: NonNullable<Direction["hookLab"]> = { id: randomUUID(), brief: proof, hooks: [], writer, lengthSec: body.lengthSec };
+          d.hookLab = lab;
+          run.job = { directionId: d.id, label: "Drafting distinct openings", done: 0, total: 2 };
+          await saveRun(run);
+          const c = { direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, lengthSec: body.lengthSec, proof };
+          const drafts = await draftHooks(writer, c, () => {
+            if (!live(run)) throw new Error("Stopped before retrying missing openings.");
+          });
+          run.costUsd += drafts.cost;
+          if (!drafts.hooks.length) throw new Error(`No usable openings after one repair attempt. ${drafts.issues.join(" ")} The proof brief is saved; retry Draft openings.`);
+          run.job = { directionId: d.id, label: "Reviewing openings independently", done: 1, total: 2 };
+          await saveRun(run);
+          const reviewed = await reviewHooks(judge, c, drafts.hooks);
+          run.costUsd += reviewed.cost;
+          lab.hooks = reviewed.hooks;
+          const partial = reviewed.hooks.length < 3 ? `Only ${reviewed.hooks.length} of 3 openings met the format and timing checks after one repair attempt. ` : "";
+          say(run, "agent", partial + (reviewed.hooks.every((h) => h.review.blockers.length) ? "Every reviewed opening has a blocker. Check the notes and revise the proof brief before trying again." : "The best reviewed opening is ready. Click Write script to use it, or see the alternatives."));
         },
       };
     }
     case "write_scripts": {
-      if (!run.brief || !run.research || !run.directions.length) return { error: "Pitch directions first" };
-      const targets = body.directionId ? run.directions.filter((d) => d.id === body.directionId) : run.directions;
-      if (!targets.length) return { error: "Direction not found" };
-      const lengthSec = body.lengthSec ?? run.videoPlan?.lengthSec ?? 15;
+      const d = run.directions.find((x) => x.id === body.directionId && x.format === "video");
+      if (!run.brief || !run.research || !d) return { error: "Pitch a video direction first." };
+      const lab = d.hookLab;
+      const hook = lab?.hooks.find((h) => h.id === body.hookId);
+      if (!lab || !hook?.review || hook.review.blockers.length) return { error: "Select a reviewed opening with no blockers first." };
+      if (lab.lengthSec !== body.lengthSec) return { error: "Rebuild the openings for the current video duration." };
+      const writer = body.writer ?? WRITER;
+      const judge = judgeFor(writer, body.judge);
       return {
-        activity: `Script Lab: ${writerLabel(body.writer)} is writing 5 scripts per direction, ${writerLabel(judgeFor(body.writer, body.judge))} is grading them…`,
+        activity: `Script Lab: ${writerLabel(writer)} writes from the chosen opening; ${writerLabel(judge)} reviews…`,
         work: async () => {
-          run.job = { label: `Writing and grading scripts for ${targets.length} direction${targets.length === 1 ? "" : "s"}`, done: 0, total: targets.length };
+          run.job = { directionId: d.id, label: "Writing, rehearsing and reviewing the script", done: 0, total: 1 };
           const [kit, rules] = await Promise.all([brandFor(run), guidance(run)]);
-          if (!run.voc) {
-            const voc = await voiceOfCustomer(run.models.text, run.brandUrl, run.research!).catch(() => null);
-            if (voc) Object.assign(run, { voc: voc.data, costUsd: run.costUsd + voc.cost });
-          }
-          const res = await Promise.allSettled(
-            targets.map(async (d) => {
-              const r = await scriptLab({ direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, rules, mustSay: kit?.mustSay, lengthSec }, { writer: body.writer, judge: judgeFor(body.writer, body.judge) });
-              Object.assign(d, { scripts: r.scripts });
-              run.costUsd += r.cost;
-              if (run.job) run.job.done++;
-              await saveRun(run);
-              return r;
-            }),
-          );
-          run.job = null;
-          res.forEach((r, k) => {
-            if (r.status === "rejected") say(run, "error", `Script Lab for “${targets[k].title}” failed: ${String(r.reason?.message ?? r.reason).slice(0, 300)}`);
-          });
-          const best = targets.filter((d) => d.scripts?.length).map((d) => d.scripts![0].score?.overall ?? 0);
-          if (!best.length) return;
-          say(run, "agent", `Scripts are ready (best scores ${best.join(", ")}/10). Edit any line, then approve one script per direction. Storyboards, voice and video only use approved scripts.`);
+          const r = await scriptLab({ direction: d, brief: run.brief!, research: run.research!, voc: run.voc, style: run.styleDNA, rules, mustSay: kit?.mustSay, lengthSec: body.lengthSec, proof: lab.brief }, hook, writer, judge);
+          lab.selectedId = hook.id;
+          d.scripts = [r.script, ...(d.scripts ?? [])].slice(0, 3);
+          run.costUsd += r.cost;
+          say(run, "agent", "Your draft and score are ready. Approve the script you want to use.");
         },
       };
     }
@@ -398,8 +466,13 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
       const d = run.directions.find((x) => x.id === body.directionId);
       const sc = d?.scripts?.find((x) => x.id === body.scriptId);
       if (!d || !sc) return { error: "Script not found" };
+      if (sc.proofBrief && ((body.edit?.hook !== undefined && body.edit.hook !== sc.hook.spoken) ||
+        (body.edit?.cta !== undefined && body.edit.cta !== sc.cta) ||
+        (body.edit?.beats?.[0] && (body.edit.beats[0].vo !== sc.hook.spoken || body.edit.beats[0].onScreen !== sc.hook.onScreen)))) {
+        return { error: "The opening and CTA are locked. Pick another hook or revise the proof brief instead." };
+      }
       return {
-        activity: `Checking the ${sc.framework} script for “${d.title}”…`,
+        activity: `Saving script approval for “${d.title}”…`,
         work: async () => {
           let next = structuredClone(sc);
           if (body.edit?.hook !== undefined && next.beats[0]) next.beats[0].vo = body.edit.hook;
@@ -415,30 +488,32 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
           if (changed) {
             next.score = undefined;
             next.review = undefined;
-            d.scripts = d.scripts!.map((s) => s.id === sc.id ? next : s);
-            if (d.approvedScript?.id === sc.id) Object.assign(d, { approvedScript: null, shots: undefined, passingDraft: null, storyboardKey: null });
-            await saveRun(run);
           }
-          if (!next.checks.length && (changed || !next.review || !next.score)) {
+          const saveApproval = () => {
+            d.scripts = d.scripts!.map((s) => s.id === sc.id ? next : s);
+            d.approvedScript = next;
+            d.script = scriptText(next);
+            d.hook = next.hook.spoken;
+          };
+          if (changed || d.approvedScript?.id !== sc.id) Object.assign(d, { shots: undefined, passingDraft: null, storyboardKey: null });
+          saveApproval();
+          if (!next.checks.length && !hasIndependentScriptReview(next)) {
+            await saveRun(run);
             if (!run.brief || !run.research) throw new Error("Brand research and a brief are required to review this script.");
-            const result = await reviewScript(next, { direction: d, brief: run.brief, research: run.research, voc: run.voc, style: run.styleDNA, rules: brandRules(kit), mustSay: kit?.mustSay, lengthSec: targetSeconds }, sc.review?.writer ?? WRITER, sc.review?.judge);
+            const result = await reviewScript(next, { direction: d, brief: run.brief, research: run.research, voc: run.voc, style: run.styleDNA, rules: brandRules(kit), mustSay: kit?.mustSay, lengthSec: targetSeconds, proof: sc.proofBrief }, sc.review?.writer ?? WRITER, sc.review?.judge);
             next = result.script;
             run.costUsd += result.cost;
+            saveApproval();
           }
-          d.scripts = d.scripts!.map((s) => s.id === sc.id ? next : s);
-          if (!scriptReady(next)) {
-            say(run, "error", `Script not approved. ${next.checks?.join(" ") || `Independent review: ${next.score?.overall ?? "ungraded"}/10. The script needs ${SCRIPT_PASS}/10 with no unsupported claims.`}`);
-            return;
-          }
-          if (JSON.stringify(d.approvedScript) !== JSON.stringify(next)) Object.assign(d, { approvedScript: next, script: scriptText(next), hook: next.hook.spoken, shots: undefined, passingDraft: null, storyboardKey: null });
-          say(run, "agent", `Approved the ${next.framework} script (${next.score!.overall}/10). Build its storyboard next.`);
+          const blocker = scriptProductionBlocker(next);
+          say(run, "agent", blocker ? `Script approved. Build its storyboard now. Before upgrading to HD: ${blocker}` : "Script approved. Build its storyboard next.");
         },
       };
     }
     case "redo_shot": {
       const d = run.directions.find((x) => x.id === body.directionId);
       const s = d?.shots?.find((x) => x.id === body.shotId);
-      if (!d || !s || !run.videoPlan || !d.storyboardKey || !scriptReady(d.approvedScript)) return { error: "Build a storyboard for an approved script first." };
+      if (!d || !s || !run.videoPlan || !d.storyboardKey || !d.approvedScript) return { error: "Build a storyboard for an approved script first." };
       return {
         activity: `Redrawing shot ${Number(s.id.slice(1)) + 1} of “${d.title}”…`,
         work: async () => {
@@ -456,15 +531,24 @@ function plan(run: StudioRun, body: Exclude<Parsed, { action: "edit_brief" | "ca
     }
     case "render_video": {
       const d = run.directions.find((x) => x.id === body.directionId);
-      if (!d?.shots?.length || d.shots.some((s) => !s.keyframe) || !run.videoPlan || !d.storyboardKey || !scriptReady(d.approvedScript)) return { error: "Build a storyboard from a passing script before rendering." };
-      if (body.tier === "final" && d.passingDraft !== d.storyboardKey) return { error: "Pass draft QA for this storyboard before upgrading to HD." };
+      const plan = run.videoPlan;
+      if (!d || !plan) return { error: "Build a storyboard with keyframes before rendering." };
+      const missing = draftVideoBlocker(d, plan);
+      if (missing) return { error: missing };
+      if (body.tier === "final") {
+        const blocker = scriptProductionBlocker(d.approvedScript);
+        if (blocker) return { error: `Before upgrading to HD: ${blocker}` };
+        const weak = storyboardKeyframeFixes(d.shots!);
+        if (weak.length) return { error: `Before upgrading to HD: redraw keyframes ${weak.join(", ")} until they match and score ${QA_PASS}/10.` };
+        if (d.passingDraft !== d.storyboardKey) return { error: "Pass draft QA for this storyboard before upgrading to HD." };
+      }
       for (const m of [body.draftModel, body.finalModel]) {
         if (m && !MODELS.some((x) => x.id === m && x.modality === "video" && providerConfigured(x.provider))) return { error: `Video model ${m} isn't available` };
       }
-      if (body.draftModel) run.videoPlan.draftModel = body.draftModel;
-      if (body.finalModel) run.videoPlan.finalModel = body.finalModel;
+      if (body.draftModel) plan.draftModel = body.draftModel;
+      if (body.finalModel) plan.finalModel = body.finalModel;
       return {
-        activity: `Rendering the ${body.tier} video for “${d.title}”: ${d.shots.length} shots, shot QA, voice, music and final QA…`,
+        activity: `Rendering the ${body.tier} video for “${d.title}”: ${d.shots!.length} shots, voice, music and QA…`,
         work: async () => {
           const r = await renderVideo(run, d, body.tier);
           run.stage = "qa";
@@ -613,9 +697,7 @@ async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: string[
   return best!.qa;
 }
 
-async function storyboard(run: StudioRun, d: Direction, refs: string[], savedRefs: string[], mustSay?: string[]) {
-  const issues = checkScript(d.approvedScript!, run.videoPlan!.lengthSec, mustSay);
-  if (issues.length) throw new Error(issues.join(" "));
+async function storyboard(run: StudioRun, d: Direction, refs: string[], savedRefs: string[]) {
   const p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, await winningShots(run), await guidance(run));
   Object.assign(d, { shots: p.shots, productRefs: savedRefs, storyboardKey: randomUUID(), passingDraft: null, compactCopy: false });
   run.costUsd += p.cost;
@@ -653,12 +735,16 @@ async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final"
 
   await step(run, d, "Preflight: script, references, QA tools and budget", 0, total);
   const kit = await brandFor(run);
-  const issues = checkScript(d.approvedScript!, plan.lengthSec, kit?.mustSay);
-  if (issues.length) throw new Error(issues.join(" "));
+  const issues = [...new Set([
+    ...scriptProductionBlockers(d.approvedScript),
+    ...checkScript(d.approvedScript!, approvedStoryboardLength(d)!, kit?.mustSay),
+  ])];
+  const weak = storyboardKeyframeFixes(shots);
+  if (tier === "final" && issues.length) throw new Error(issues.join(" "));
+  if (tier === "final" && weak.length) throw new Error(`Redraw keyframes ${weak.join(", ")} before requesting HD.`);
+  const testDraft = tier === "draft" && (issues.length > 0 || weak.length > 0);
   if (!audioConfigured()) throw new Error("Connect fal.ai for separate, verified voiceover before rendering.");
   if (!await localOcrAvailable()) throw new Error("Video QA requires local Tesseract and its configured language. No video was requested.");
-  const weak = shots.filter((s) => !s.keyframe || !shotReady(s.keyframeQa));
-  if (weak.length) throw new Error(`Redraw keyframes ${weak.map((s) => Number(s.id.slice(1)) + 1).join(", ")} until each matches the approved shot and scores ${QA_PASS}/10. No video was requested.`);
   const refs = await Promise.all((d.productRefs ?? []).slice(0, 2).map(mediaDataUrl));
   if (!refs.length) throw new Error("Rebuild the storyboard with real product references.");
   const durs = (await videoDurations(model))?.filter((n) => n > 0).sort((a, b) => a - b);
@@ -761,7 +847,7 @@ async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | "final"
     const pendingUsd = shots.reduce((sum, _, j) => sum + (j > i && missing.includes(j) ? actual[j]! * perSec : 0), 0);
     let notes = s.clipKey === cacheKeys[i] ? s.clipQa?.notes ?? [] : [];
     let best: { url: string; qa: ShotQA } | undefined;
-    for (let attempt = 0; attempt < (provider === "hfmcp" ? 1 : 2); attempt++) {
+    for (let attempt = 0; attempt < (testDraft || provider === "hfmcp" ? 1 : 2); attempt++) {
       if (spent + pendingUsd + actual[i]! * perSec + qCostReserve > plan.budgetUsd) {
         if (best) break;
         throw new Error(`Budget cap reached before shot ${i + 1}. Existing verified assets were kept.`);
@@ -864,6 +950,13 @@ Start from the attached frame. Preserve the exact product; no invented text or l
     findings.push({ kind: "coverage", at: 0, expected: "Independent review of the finished creative", observed: "Creative Director review could not run", status: "review" });
   }
   if (craft.notes.length && craft.score < QA_PASS) findings.push({ kind: "visual", at: 0, expected: "Finished creative at 9/10", observed: craft.notes.join(" "), status: "fail" });
+  if (testDraft) {
+    findings.push(...issues.map((issue) => ({ kind: "preflight" as const, at: 0, expected: "Script ready for HD", observed: issue, status: "review" as const })));
+    for (const n of weak) {
+      const segment = segments[n - 1];
+      findings.push({ kind: "preflight", at: segment.start, shotId: segment.shotId, expected: `Keyframe match and ${QA_PASS}/10 before HD`, observed: `Keyframe ${n} still needs review.`, status: "review" });
+    }
+  }
   const quality = { ...exportVerdict(tier, craft.score, evidence, findings, variants.map((v) => v.aspect)), storyboardKey: d.storyboardKey! };
   const result = { score: quality.score, pass: videoReady(quality), notes: [...findings.slice(0, 5).map((f) => f.observed), ...craft.notes] };
   await saveCreative(run, d, { url: main, type: "video", model, variants, quality }, result, spent, null);

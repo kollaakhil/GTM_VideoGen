@@ -40,6 +40,7 @@ export interface VoiceOfCustomer {
   desires: string[];
   objections: string[];
   sources: string[];
+  sourcedQuotes?: { text: string; url: string }[];
 }
 
 /** OAuth connection to a third-party account; tokens are AES-GCM sealed. */
@@ -161,7 +162,7 @@ export interface ShotQA {
 }
 
 export interface QualityFinding {
-  kind: "visual" | "speech" | "copy" | "technical" | "coverage";
+  kind: "visual" | "speech" | "copy" | "technical" | "coverage" | "preflight";
   at: number;
   aspect?: string;
   shotId?: string;
@@ -211,12 +212,32 @@ export interface Direction {
   copy?: AdCopy;
   shots?: Shot[];
   scripts?: AdScript[];
+  hookLab?: { id: string; brief: ScriptProofBrief; hooks: ScriptHook[]; writer: string; lengthSec: number; selectedId?: string };
   approvedScript?: AdScript | null;
   passingDraft?: string | null;
   storyboardKey?: string | null;
   productRefs?: string[];
   musicTrack?: { key: string; url: string };
   compactCopy?: boolean;
+}
+
+export interface ScriptProofBrief {
+  tension: string;
+  claim: string;
+  action: string;
+  asset?: string;
+  offer: string;
+  cta: string;
+  quote?: { text: string; url: string };
+}
+
+export interface ScriptHook {
+  id: string;
+  type: "goal" | "friction" | "proof";
+  visual: string;
+  spoken: string;
+  onScreen: string;
+  review?: { score: number; note: string; blockers: string[] };
 }
 
 export interface ScriptBeat {
@@ -231,7 +252,9 @@ export interface ScriptScore {
   scores: Record<string, number>;
   notes: string[];
   unsupported: string[];
+  proofProblems?: string[];
   panel: { stopRate: number; quotes: string[] };
+  blockerBeat?: number;
 }
 
 export interface AdScript {
@@ -244,6 +267,7 @@ export interface AdScript {
   checks?: string[];
   rounds?: number;
   review?: { rubric: string; writer: string; judge: string; targetSeconds: number };
+  proofBrief?: ScriptProofBrief;
 }
 
 export interface QAResult {
@@ -321,6 +345,7 @@ export interface StudioRun {
   jobId?: string | null;
   job?: { label: string; done: number; total: number; directionId?: string } | null;
   videoPlan?: VideoPlan | null;
+  storyboardPhotos?: string[];
   brandId?: string | null;
   events: RunEvent[];
   progress: Record<string, CreativeProgress>;

@@ -1,11 +1,11 @@
 import { chatJSON } from "./ai";
-import type { AdScript, Brief, Direction, Research, ScriptScore, StyleDNA, VoiceOfCustomer } from "./types";
-import { vocBlock } from "./ad-wisdom";
-import { SCRIPT_PASS, SCRIPT_RUBRIC } from "./quality-policy";
+import type { AdScript, Brief, Direction, Research, ScriptHook, ScriptProofBrief, ScriptScore, StyleDNA, VoiceOfCustomer } from "./types";
+import { SCRIPT_RUBRIC } from "./quality-policy";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
+import { rehearseScript, rehearsalMetrics } from "./script-rehearsal";
 
-export { SCRIPT_PASS } from "./quality-policy";
+export const SCRIPT_TARGET = 7;
 export const WRITER = process.env.SCRIPT_WRITER_MODEL || "google/gemini-4-carbon";
 export const JUDGE = process.env.SCRIPT_JUDGE_MODEL || "openai/gpt-6.1-sol";
 export const SCRIPT_WRITERS = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6.1-sol", "openai/gpt-6-astra"] as const;
@@ -18,19 +18,13 @@ export const judgeFor = (writer?: string, judge?: string) => {
   return j !== w ? j : [...SCRIPT_JUDGES, "google/gemini-4-carbon"].find((m) => m !== w)!;
 };
 const WORDS_PER_SEC = 2.5;
-const MAX_ROUNDS = 2;
+const HOOKS = {
+  goal: "Goal first: show the person attempting something specific.",
+  friction: "Buyer friction: open on a concrete obstacle to the goal.",
+  proof: "Proof teased: show a real detail of the plan in motion without spoiling the outcome.",
+} as const;
 
-export const FRAMEWORKS = [
-  { id: "pas", label: "Problem → agitation → solution", guide: "Name the pain in their words, twist the knife with a specific consequence, then reveal the product as the fix." },
-  { id: "before_after", label: "Before → after", guide: "Show the frustrating before, a hard cut to the after with the product, then why it works." },
-  { id: "hook_story_offer", label: "Hook → story → offer", guide: "A pattern-interrupt hook, a tiny relatable story, then the offer and CTA." },
-  { id: "ugc", label: "UGC testimonial", guide: "First person, a real customer talking to camera, casual and specific, like a creator post, not an ad." },
-  { id: "objection", label: "Objection first", guide: "Open with the top objection out loud, then dismantle it with facts from the research." },
-  { id: "three_reasons", label: "Three reasons why", guide: "A bold claim, three fast numbered reasons with one visual each, then the CTA." },
-] as const;
-
-export const HOOK_LIST = ["result first (show a real, supported outcome)", "recognizable friction (show one concrete buyer frustration)", "proof up close (show the product doing something verifiable)", "visible contrast (show a fair and supported before/after)", "visual question (show a surprising incomplete action the ad then explains)", "human moment (show a distinctive, relatable action)"];
-export const HOOK_TYPES = HOOK_LIST.map((h) => h.split(" (")[0]).join(", ");
+const STORY = "Goal → Stakes → Obstacle → Plan → Show the action and payoff → CTA. The audience should know what the person wants, why it matters to them, and what might stop them. Give a specific plan that makes the viewer want to see what happens, then actually show the result. Permit a goal and its stakes in the same beat; different roles can live in the VO while the visual shows one action. Keep stakes plausible, never invent a deadline, customer story, or product guarantee. For low-stakes products, use an everyday consequence.";
 
 export type ScriptCtx = {
   direction: Pick<Direction, "title" | "hook" | "angle">;
@@ -41,6 +35,7 @@ export type ScriptCtx = {
   rules?: string;
   mustSay?: string[];
   lengthSec: number;
+  proof?: ScriptProofBrief;
 };
 
 const ONES: Record<string, number> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
@@ -133,8 +128,10 @@ export function sameSpeech(heard: string, expected: string) {
 }
 
 const hasPhrase = (line: string, phrase: string) => {
-  const expected = exactCopy(phrase);
-  return !!expected && ` ${exactCopy(line)} `.includes(` ${expected} `);
+  const matchCopy = (s: string) => exactCopy(s.normalize("NFKC").replace(/(\d)([.,])(?=\d)/g, (_, digit: string, separator: string) => `${digit}${separator === "." ? "decimalpoint" : ""}`)
+    .replace(/(\d)\+/g, "$1 plus").replace(/£(?=\s?\d)/g, "pounds ").replace(/€(?=\s?\d)/g, "euros "));
+  const expected = matchCopy(phrase);
+  return !!expected && ` ${matchCopy(line)} `.includes(` ${expected} `);
 };
 
 /** Deterministic script checks: timing, read-aloud pace, hook length, CTA and must-say. */
@@ -157,54 +154,147 @@ export function checkScript(s: AdScript, lengthSec: number, mustSay: string[] = 
   if (!last || ![last.vo, last.onScreen].some((line) => hasPhrase(line, s.cta))) out.push("The exact CTA is not said or shown in the final beat.");
   const all = s.beats.flatMap((b) => [b.vo, b.onScreen]);
   for (const m of mustSay) if (exactCopy(m) && !all.some((line) => hasPhrase(line, m))) out.push(`Missing or shortened must-say; use it word for word: "${m}".`);
+  if (s.proofBrief) {
+    out.push(...rehearseScript(s));
+    if (exactCopy(s.cta) !== exactCopy(s.proofBrief.cta)) out.push("Keep the exact CTA from the proof brief.");
+    if (last && (!hasPhrase(last.onScreen, s.cta) || !hasPhrase(last.vo, s.cta))) out.push("Say and show the exact CTA in the final beat.");
+    if (!first || first.seconds !== HOOK_SECONDS || first.visual !== s.hook.visual || first.vo !== s.hook.spoken || first.onScreen !== s.hook.onScreen) out.push("Keep the selected opening intact.");
+    for (const term of s.proofBrief.offer.split("\n").map((x) => x.trim()).filter(Boolean)) {
+      if (!all.some((line) => hasPhrase(line, term))) out.push(`Keep the exact offer term: "${term}".`);
+    }
+  }
   return out;
 }
 
-const ctxBlock = (c: ScriptCtx) => `Concept: ${JSON.stringify(c.direction)}
+export const proofAssetUrl = (input: string) => {
+  if (/^\/api\/media\/[\w./%-]+$/.test(input)) return input;
+  try {
+    const url = new URL(input);
+    if (url.protocol === "https:" && !url.username && !url.password) return url.href;
+  } catch {}
+  return null;
+};
+
+const ctxBlock = (c: ScriptCtx) => `Concept (creative input, not evidence): ${JSON.stringify({ title: c.direction.title, angle: c.direction.angle })}
 Brief: ${JSON.stringify(c.brief)}
 Product facts (the only facts you may state): ${JSON.stringify({ brand: c.research.brand, summary: c.research.summary, valueProps: c.research.valueProps, audience: c.research.audience })}
-Brand tone: ${c.research.tone}${vocBlock(c.voc)}${c.style ? `\nBorrowed style (structure and pacing only; never ${c.style.brand}'s name, slogans or claims): ${c.style.tone}; pacing ${c.style.pacing}` : ""}${c.rules ?? ""}${c.mustSay?.length ? `\nMust say (in VO or on-screen text): ${c.mustSay.join(" | ")}` : ""}`;
+Brand tone: ${c.research.tone}
+Buyer objections (hypotheses, not quotes): ${JSON.stringify(c.voc?.objections ?? [])}
+${c.proof ? `Proof brief (approved by the operator): ${JSON.stringify({ tension: c.proof.tension, claim: c.proof.claim, action: c.proof.action, offer: c.proof.offer, cta: c.proof.cta, buyerQuote: c.proof.quote?.text })}. ${c.proof.asset ? "The operator attached a reference; only use their description of it." : "No proof asset is attached. The action is a proposed scene, not existing footage or evidence of any new claim."}` : ""}${c.style ? `\nBorrowed style (structure and pacing only; never ${c.style.brand}'s name, slogans or claims): ${c.style.tone}; pacing ${c.style.pacing}` : ""}${c.rules ?? ""}${c.mustSay?.length ? `\nMust say (in VO or on-screen text): ${c.mustSay.join(" | ")}` : ""}`;
 
-const SCRIPT_SHAPE = `{"framework","hook":{"visual","spoken","onScreen"},"beats":[{"seconds","visual","vo","onScreen"}],"cta"}`;
 const SCRIPT_RULES = (len: number) => `Rules:
-- Vertical 9:16 performance ad, ${len}s total, 3–5 beats, each 2–6s; the sum of beat seconds equals ${len}.
-- Beat 1 IS the hook: it stops the scroll in the first 1.5s, including on mute. Copy beat 1's voiceover and on-screen copy exactly into the hook fields. Hook types: ${HOOK_TYPES}.
-- The spoken hook is a human line in the buyer's words (a pain, a desire, a surprising truth), never a promo or discount line. Even when the brief says to "lead with" an offer, show that offer as beat 1 "onScreen" text and say it in a later beat.
+- Vertical 9:16 performance ad, ${len}s total. One buyer tension, one visible demonstration of a supported claim, one CTA. No extra storylines.
+- Story: ${STORY}
 - "vo": only the words spoken aloud, natural speech, max ${WORDS_PER_SEC} words per second of the beat. No speaker labels or stage directions.
-- "onScreen": concise text that works with sound off; never shorten mandatory offer wording. The overlay will be typeset in post.
-- "visual": one concrete filmable scene an AI video model can render; same people and product across beats; never text, logos or signs in frame.
-- Use the customer's exact phrases where they fit and answer the top objection.
+- "onScreen": one readable message that fits the window; give mandatory terms their own time instead of shrinking or shortening them. Empty text is allowed.
+- "visual": one filmable action per beat; never compress several setup steps into one. No invented text or signage in generated shots. Use only established product details.
 - Only facts from the product facts and brief: never invent features, numbers, guarantees, timings, inclusions or customer testimonials.
-- The final beat says and shows the CTA; "cta" is that line, max 40 chars.`;
+- Say and show the exact CTA in the final beat.`;
 
-type Raw = Omit<AdScript, "id">;
-const clean = (r: Raw, id: string): AdScript => ({
-  id,
-  framework: String(r.framework ?? ""),
-  hook: { visual: String(r.hook?.visual ?? ""), spoken: String(r.hook?.spoken ?? ""), onScreen: String(r.hook?.onScreen ?? "") },
-  beats: (r.beats ?? []).slice(0, 6).map((b) => ({ seconds: Math.max(1, Math.min(8, Math.round(Number(b.seconds) || 3))), visual: String(b.visual ?? ""), vo: String(b.vo ?? ""), onScreen: String(b.onScreen ?? "") })),
-  cta: String(r.cta ?? "").slice(0, 60),
+const BeatCopy = z.object({ visual: z.string().trim().min(1).max(800), vo: z.string().trim().max(300), onScreen: z.string().trim().max(160) });
+const Hook = z.object({
+  type: z.enum(["goal", "friction", "proof"]),
+  visual: BeatCopy.shape.visual,
+  spoken: z.string().trim().min(1).max(120),
+  onScreen: BeatCopy.shape.onScreen.nullish().transform((value) => value ?? ""),
 });
+const HookBatch = z.object({ hooks: z.array(z.unknown()).max(12) });
+export const HOOK_SECONDS = 3;
 
-export async function writeScripts(writer: string, c: ScriptCtx, count = 5): Promise<{ scripts: AdScript[]; cost: number }> {
-  const fws = FRAMEWORKS.slice(0, Math.min(count, FRAMEWORKS.length));
-  const res = await Promise.allSettled(
-    fws.map((f, i) =>
-      chatJSON<Raw>(
-        writer,
-        "You are a top direct-response video ad scriptwriter. You write scripts that stop the scroll, sound like real people and sell with specifics.",
-        `${ctxBlock(c)}
-Write one script for this concept using the framework "${f.label}": ${f.guide}
-Open with a ${HOOK_LIST[i % HOOK_LIST.length]} hook.
-${SCRIPT_RULES(c.lengthSec)}
-Return JSON: ${SCRIPT_SHAPE} with "framework" set to "${f.label}".`,
-      ),
-    ),
-  );
-  const ok = res.flatMap((r, i) => (r.status === "fulfilled" ? [{ r: r.value, f: fws[i] }] : []));
-  if (!ok.length) throw new Error(`The script writer failed: ${String((res[0] as PromiseRejectedResult).reason?.message ?? "").slice(0, 200)}`);
-  const batch = randomUUID().slice(0, 8);
-  return { scripts: ok.map(({ r, f }) => clean({ ...r.data, framework: f.label }, `sc_${f.id}_${batch}`)), cost: ok.reduce((t, x) => t + x.r.usage.costUsd, 0) };
+function openingChecks(hook: Pick<ScriptHook, "spoken" | "onScreen">) {
+  const m = rehearsalMetrics({ vo: hook.spoken, onScreen: hook.onScreen });
+  const issues: string[] = [];
+  if (!exactCopy(hook.spoken)) issues.push("The opening needs a spoken line.");
+  if (words(hook.spoken).length > 8 || m.speakingSeconds > HOOK_SECONDS) issues.push("The spoken line is too long for 3 seconds. Use at most 8 short words.");
+  if (!m.fits || m.readingSeconds > HOOK_SECONDS) issues.push("The overlay is too crowded for the opening.");
+  return issues;
+}
+
+export async function draftHooks(writer: string, c: ScriptCtx, beforeRepair?: () => void) {
+  const accepted = new Map<ScriptHook["type"], z.infer<typeof Hook>>();
+  const types = Hook.shape.type.options;
+  const issues: string[] = [];
+  let cost = 0;
+
+  const request = async (wanted: ScriptHook["type"][], repairNotes = "") => {
+    const result = await chatJSON<unknown>(writer, "Write openings, not full scripts. Treat supplied facts as evidence and creative input as suggestions.", `${ctxBlock(c)}
+Write exactly ${wanted.length} opening shot(s), one per requested type: ${wanted.map((type) => `${type}: ${HOOKS[type]}`).join(" ")}
+${STORY}
+Each opening must establish the goal and signal why it matters across its shot, line and overlay. Do not reveal the full payoff in the opening.
+The shot must make sense on mute and earn attention in the first second. Show one moment in ${HOOK_SECONDS}s. Aim for 4–6 spoken words, never more than 8; speak naturally, not like a discount. Use a short overlay or set "onScreen" to "". Don't claim a customer experience, show an invented mechanism, or repeat the same opening under different labels.
+${repairNotes}
+Match this JSON shape, using the requested type keys exactly:
+${JSON.stringify({ hooks: wanted.map((type) => ({ type, visual: "<one visible moment>", spoken: "<4–6 words>", onScreen: "" })) })}`);
+    cost += result.usage.costUsd;
+    const batch = HookBatch.safeParse(result.data);
+    if (!batch.success) {
+      issues.push("The writer did not return an openings list.");
+      return;
+    }
+    for (const raw of batch.data.hooks) {
+      const parsed = Hook.safeParse(raw);
+      if (!parsed.success) {
+        const field = parsed.error.issues[0]?.path[0];
+        issues.push(`An opening had ${typeof field === "string" ? `an invalid "${field}" field` : "an invalid format"}.`);
+        continue;
+      }
+      const h = parsed.data;
+      if (!wanted.includes(h.type) || accepted.has(h.type)) continue;
+      const note = !exactCopy(h.visual) ? "The shot description was empty." : openingChecks(h)[0];
+      if (note) {
+        issues.push(`${h.type}: ${note}`);
+      } else if ([...accepted.values()].some((other) => exactCopy(other.visual) === exactCopy(h.visual) || exactCopy(other.spoken) === exactCopy(h.spoken))) {
+        issues.push(`${h.type}: Use a different shot and spoken line.`);
+      } else {
+        accepted.set(h.type, h);
+      }
+    }
+  };
+
+  await request(types);
+  const missing = types.filter((type) => !accepted.has(type));
+  if (missing.length) {
+    beforeRepair?.();
+    try {
+      await request(missing, `Fill missing types only. Do not repeat these accepted openings: ${JSON.stringify([...accepted.values()])}. Fix any relevant problems: ${[...new Set(issues)].slice(0, 6).join(" ")}`);
+    } catch (error) {
+      const detail = (error instanceof Error ? error.message : "").slice(0, 120);
+      issues.push(`The repair request failed${detail ? `: ${detail}` : "."}`);
+    }
+  }
+  const hooks = types.flatMap((type) => {
+    const h = accepted.get(type);
+    return h ? [{ ...h, id: randomUUID() }] : [];
+  });
+  return { hooks, cost, issues: [...new Set(issues)].slice(-5) };
+}
+
+export async function reviewHooks(judge: string, c: ScriptCtx, hooks: ScriptHook[]) {
+  const result = await chatJSON<unknown>(judge, "Review ad openings independently; do not score imagined performance.", `${ctxBlock(c)}
+Openings: ${JSON.stringify(hooks)}
+Score on 0–10: distinct first shot, a goal and plausible stakes on mute, spoken specificity, and faithfulness to real product evidence. List blockers for unsupported claims, unfilmable proof, missing goal or stakes, spoiling the payoff, or an opening that only makes sense with sound. Return one review for each ID:
+{"reviews":[{"id":"...","score":0,"note":"one concrete strength or fix","blockers":["..."]}]}.`);
+  const schema = z.object({ reviews: z.array(z.object({
+    id: z.string(), score: z.number().min(0).max(10), note: z.string().max(600), blockers: z.array(z.string().max(600)).max(6),
+  })).length(hooks.length) });
+  const reviews = schema.parse(result.data).reviews;
+  const ranked = hooks.map((h) => {
+    const matches = reviews.filter((r) => r.id === h.id);
+    if (matches.length !== 1) throw new Error("Hook Lab needs an independent review of each opening.");
+    const { score, note, blockers } = matches[0];
+    const issues = [...blockers, ...openingChecks(h)];
+    return { ...h, review: { score, note, blockers: issues } };
+  });
+  ranked.sort((a, b) => Number(!!a.review.blockers.length) - Number(!!b.review.blockers.length) || b.review.score - a.review.score);
+  return { hooks: ranked, cost: result.usage.costUsd };
+}
+
+export function storyWindows(total: number) {
+  const remaining = total - HOOK_SECONDS;
+  const roles = remaining < 7 ? ["Name the obstacle and plan; show its action and visible result", "Exact CTA"]
+    : remaining < 17 ? ["Obstacle, then a concrete plan", "Show the plan in action and its visible result", "Exact CTA"]
+      : ["Obstacle", "Concrete plan", "Show the plan in action", "Reveal the visible result", "Exact CTA"];
+  return roles.map((role, i) => ({ role, seconds: Math.floor(remaining / roles.length) + Number(i >= roles.length - remaining % roles.length) }));
 }
 
 /** Each script is graded in its own call so one malformed answer can't sink the batch. */
@@ -226,24 +316,27 @@ const JudgeOutput = z.object({
     }),
     notes: z.array(z.string()),
     unsupported: z.array(z.string()),
-    panel: z.object({ stopRate: z.number().min(0).max(10), quotes: z.array(z.string()) }),
+    blockerBeat: z.number().int().min(1).nullish(),
+    proofProblems: z.array(z.string()).default([]),
   })),
 });
 
 async function judgeBatch(judge: string, scripts: AdScript[], c: ScriptCtx): Promise<{ scores: ScriptScore[]; cost: number }> {
   const { data, usage } = await chatJSON<unknown>(
     judge,
-    "You are a ruthless creative director and performance marketer grading video ad scripts before any money is spent on production. You did not write them. Most first drafts deserve 5–7; reserve 9–10 for scripts you would bet budget on.",
+    "You independently review video scripts for production readiness. Grade the execution against the anchors, not against assumptions about the writer. Do not predict buyer behavior or ad performance.",
     `${ctxBlock(c)}
 Scripts:
-${JSON.stringify(scripts.map(({ id, framework, hook, beats, cta }) => ({ id, framework, hook, beats, cta })))}
-Score each script 1–10 on: hook (stops the scroll in 1.5s), clarity (one idea, instantly understood), specificity (concrete details, not generic ad-speak), customerLanguage (sounds like the buyer), emotion, productEarly (product or result visible by 3s), cta (clear, motivating, matches the offer), pacing (fits ${c.lengthSec}s, cuts every 2–4s), claims (10 = every claim supported by the product facts).
+${JSON.stringify(scripts.map((s) => ({ id: s.id, framework: s.framework, hook: s.hook, beats: s.beats, cta: s.cta, rehearsal: checkScript(s, c.lengthSec, c.mustSay) })))}
+Score each script 1–10 on: hook (clear and distinctive in 1.5s), clarity (one idea, instantly understood), specificity (concrete details, not generic ad-speak), customerLanguage (sounds like the intended buyer, not necessarily a quote), emotion, productEarly (product or result visible by 3s), cta (clear, motivating, matches the offer), pacing (fits ${c.lengthSec}s and the allotted beat lengths), claims (10 = every claim supported by the product facts).
 "overall" is your honest weighted verdict (hook and specificity weigh most); any unsupported claim caps it at 6.
-A spoken hook that is just a discount or promo line scores at most 5 on hook; offers belong on screen in beat 1 and in later VO. Never tell the writer to move a promo line into the spoken hook.
-"notes": up to 4 concrete rewrite instructions ("Replace X with Y"), not praise.
+A spoken hook that is just a discount or promo line scores at most 5 on hook. Never tell the writer to move a promo line into the spoken hook.
+Anchors: 7 = the offer is clear but one issue still hurts the ad (generic opening, rushed proof, or cluttered copy). 9 = a specific buyer tension lands on mute, a credible and filmable action proves the claim, the pacing leaves room for exact offer terms, and there is one clear next action. 10 = exceptional execution with no material improvement needed.
+If there is a proof brief, list material "proofProblems" when the visual does not support the selected claim, contradicts narration, or crams multiple actions into too little time. Otherwise return []. Flag invented facts even if they appear in the concept or suggested proof scene.
+If there is a proof brief, also check the required story: ${STORY} Put missing or out-of-order story steps in "proofProblems"; do not require a separate shot for each story step.
+"notes": give only the biggest material blocker and one concrete, fact-supported fix. Return [] if there is none. "blockerBeat": 1-based beat to change, or omit when the problem is global or there is no blocker. Do not make up replacement claims.
 "unsupported": each claim not backed by the product facts, quoted.
-"panel": simulate 10 buyers from the target audience seeing only the first 1.5s (hook visual + spoken + on-screen); "stopRate" = how many of 10 keep watching (0–10); "quotes" = 2 short honest reactions.
-Return JSON: {"scores":[{"id","overall","scores":{"hook","clarity","specificity","customerLanguage","emotion","productEarly","cta","pacing","claims"},"notes","unsupported","panel":{"stopRate","quotes"}}]}`,
+Return JSON: {"scores":[{"id","overall","scores":{"hook","clarity","specificity","customerLanguage","emotion","productEarly","cta","pacing","claims"},"notes","unsupported","blockerBeat","proofProblems"}]}`,
   );
   const parsed = JudgeOutput.safeParse(data);
   if (!parsed.success || parsed.data.scores.length !== scripts.length) throw new Error("Script review did not return a complete scorecard.");
@@ -253,42 +346,29 @@ Return JSON: {"scores":[{"id","overall","scores":{"hook","clarity","specificity"
     if (!r) throw new Error("Script review did not identify the approved script.");
     const unsupported = r.unsupported.slice(0, 5);
     return {
-      overall: unsupported.length ? Math.min(6, r.overall) : r.overall,
+      overall: unsupported.length ? Math.min(6, r.overall) : r.proofProblems.length ? Math.min(SCRIPT_TARGET - 1, r.overall) : r.overall,
       scores: r.scores,
-      notes: r.notes.slice(0, 4),
+      notes: r.notes.length ? r.notes.slice(0, 1) : r.proofProblems.slice(0, 1),
       unsupported,
-      panel: { stopRate: r.panel.stopRate, quotes: r.panel.quotes.slice(0, 2) },
+      proofProblems: r.proofProblems.slice(0, 6),
+      blockerBeat: r.blockerBeat ?? undefined,
+      panel: { stopRate: 0, quotes: [] },
     };
   });
   return { scores, cost: usage.costUsd };
 }
 
-/** Judge score adjusted for deterministic failures: one point per issue, capped below the pass bar. */
+/** Rank repair candidates without changing the displayed score. */
 export const finalScore = (s: AdScript) => {
   const base = s.score?.overall ?? 0;
   const n = s.checks?.length ?? 0;
-  return n ? Math.min(SCRIPT_PASS - 1, base - Math.min(3, n)) : base;
+  return n ? Math.min(SCRIPT_TARGET - 1, base - Math.min(3, n)) : base;
 };
 
 export async function reviewScript(s: AdScript, c: ScriptCtx, writer: string, preferredJudge?: string) {
   const judge = judgeFor(writer, preferredJudge);
   const { scores, cost } = await judgeScripts(judge, [s], c);
   return { script: { ...s, score: scores[0], checks: checkScript(s, c.lengthSec, c.mustSay), review: { rubric: SCRIPT_RUBRIC, writer, judge, targetSeconds: c.lengthSec } }, cost };
-}
-
-async function rewrite(writer: string, s: AdScript, c: ScriptCtx, extra: string[] = []): Promise<{ script: AdScript; cost: number }> {
-  const fixes = [...extra, ...(s.score?.notes ?? []), ...(s.checks ?? []), ...(s.score?.unsupported ?? []).map((u) => `Remove unsupported claim: ${u}`)];
-  const { data, usage } = await chatJSON<Raw>(
-    writer,
-    "You are a top direct-response video ad scriptwriter revising a script from a creative director's notes.",
-    `${ctxBlock(c)}
-Current script (${s.framework}): ${JSON.stringify({ hook: s.hook, beats: s.beats, cta: s.cta })}
-Fix every note, keep the framework and what already works, make the hook sharper:
-${fixes.map((f) => `- ${f}`).join("\n")}
-${SCRIPT_RULES(c.lengthSec)}
-Return JSON: ${SCRIPT_SHAPE}`,
-  );
-  return { script: { ...clean({ ...data, framework: s.framework }, s.id), rounds: (s.rounds ?? 0) + 1 }, cost: usage.costUsd };
 }
 
 /** Hooks that open the same way as a better-scored script in the set. */
@@ -307,38 +387,45 @@ export function sameHooks(list: AdScript[]): Set<string> {
   return out;
 }
 
-const SAME_HOOK = "This hook opens like another script in the set. Write a completely different spoken hook (different hook type, different first words, different moment).";
-/** One model writes, a different one judges (with a simulated audience panel), weak scripts are rewritten up to twice. */
-export async function scriptLab(c: ScriptCtx, o: { writer?: string; judge?: string; count?: number; keep?: number } = {}): Promise<{ scripts: AdScript[]; cost: number }> {
-  const writer = o.writer ?? WRITER, judge = judgeFor(writer, o.judge);
-  const w = await writeScripts(writer, c, o.count ?? 5);
-  let cost = w.cost;
-  const grade = async (list: AdScript[]) => {
-    if (!list.length) return;
-    const j = await judgeScripts(judge, list, c);
-    cost += j.cost;
-    list.forEach((s, i) => Object.assign(s, { score: j.scores[i], checks: checkScript(s, c.lengthSec, c.mustSay), review: { rubric: SCRIPT_RUBRIC, writer, judge, targetSeconds: c.lengthSec } }));
+export async function scriptLab(c: ScriptCtx & { proof: ScriptProofBrief }, hook: ScriptHook, writer = WRITER, judge?: string) {
+  const windows = storyWindows(c.lengthSec);
+  const draft = await chatJSON<unknown>(writer, "Write a direct-response script from a chosen opening and real product proof.", `${ctxBlock(c)}
+The first ${HOOK_SECONDS}s are locked: ${JSON.stringify({ visual: hook.visual, spoken: hook.spoken, onScreen: hook.onScreen })}.
+Write exactly ${windows.length} following beats in this order. Do not repeat the opening.
+${windows.map((b, i) => `Beat ${i + 2}, ${b.seconds}s: ${b.role}`).join("\n")}
+${SCRIPT_RULES(c.lengthSec)}
+Return {"beats":[{"visual":"...","vo":"...","onScreen":"..."}]}.`);
+  const beats = z.object({ beats: z.array(BeatCopy).length(windows.length) }).parse(draft.data).beats;
+  const initial: AdScript = {
+    id: `sc_${randomUUID()}`, framework: HOOKS[hook.type].split(":")[0],
+    proofBrief: c.proof, hook: { visual: hook.visual, spoken: hook.spoken, onScreen: hook.onScreen },
+    beats: [{ seconds: HOOK_SECONDS, visual: hook.visual, vo: hook.spoken, onScreen: hook.onScreen }, ...beats.map((b, i) => ({ ...b, seconds: windows[i].seconds }))],
+    cta: c.proof.cta,
   };
-  let scripts = w.scripts.filter((s) => s.beats.length >= 2);
-  if (!scripts.length) throw new Error("The script writer returned no usable scripts");
-  await grade(scripts);
-  const improve = async (weak: AdScript[], extra: (s: AdScript) => string[] = () => []) => {
-    const redo = await Promise.all(weak.map((s) => rewrite(writer, s, c, extra(s))));
-    cost += redo.reduce((t, r) => t + r.cost, 0);
-    const fresh = redo.map((r) => r.script);
-    await grade(fresh);
-    scripts = scripts.map((s) => {
-      const n = fresh.find((f) => f.id === s.id);
-      return n && finalScore(n) >= finalScore(s) ? n : s;
-    });
-  };
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    const dupes = sameHooks(scripts);
-    const weak = [...scripts].sort((a, b) => finalScore(b) - finalScore(a))
-      .filter((s) => finalScore(s) < SCRIPT_PASS || dupes.has(s.id)).slice(0, 2);
-    if (!weak.length) break;
-    await improve(weak, (s) => (dupes.has(s.id) ? [SAME_HOOK] : []));
+  const first = await reviewScript(initial, c, writer, judge);
+  let cost = draft.usage.costUsd + first.cost;
+  const score = first.script.score;
+  const i = (score.blockerBeat ?? 0) - 1;
+  const blocker = score.notes[0];
+  if (score.overall >= SCRIPT_TARGET && !first.script.checks.length && !score.unsupported.length) return { script: first.script, cost };
+  if (i < 1 || i >= initial.beats.length || !blocker) return { script: first.script, cost };
+
+  try {
+    const revision = await chatJSON<unknown>(writer, "Repair exactly one beat without adding facts or changing the selected hook.", `${ctxBlock(c)}
+Script: ${JSON.stringify(initial.beats)}
+Rewrite only beat ${i + 1}, with the same ${initial.beats[i].seconds}s window. Address this blocker: ${blocker}
+Its story role: ${windows[i - 1].role}
+${SCRIPT_RULES(c.lengthSec)}
+Return {"visual":"...","vo":"...","onScreen":"..."} for that one beat.`);
+    cost += revision.usage.costUsd;
+    const revised = initial.beats.map((b, j) => j === i ? { ...b, ...BeatCopy.parse(revision.data) } : b);
+    const second = await reviewScript({ ...initial, beats: revised, rounds: 1 }, c, writer, judge);
+    cost += second.cost;
+    const blockers = (s: AdScript) => (s.score?.unsupported.length ?? 0) + (s.score?.proofProblems?.length ?? 0) + (s.checks?.length ?? 0);
+    if (blockers(second.script) <= blockers(first.script) && !second.script.score.unsupported.some((u) => !score.unsupported.includes(u)) &&
+      (blockers(second.script) < blockers(first.script) || finalScore(second.script) > finalScore(first.script))) return { script: second.script, cost };
+  } catch {
+    // Keep the already graded draft if an optional repair fails.
   }
-  scripts.sort((a, b) => finalScore(b) - finalScore(a) || (b.score?.panel.stopRate ?? 0) - (a.score?.panel.stopRate ?? 0));
-  return { scripts: scripts.slice(0, o.keep ?? 3), cost };
+  return { script: first.script, cost };
 }

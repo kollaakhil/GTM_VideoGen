@@ -23,7 +23,8 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { CreativeCard } from "@/components/creative-card";
-import { scriptReady, shotReady } from "@/lib/quality-policy";
+import { approvedStoryboardLength, draftVideoBlocker, recommendedOpening, scriptProductionBlockers, shotReady, storyboardKeyframeFixes, storyboardProofPhoto, storyboardTargets, VIDEO_PASS } from "@/lib/quality-policy";
+import { rehearsalMetrics, rehearseScript } from "@/lib/script-rehearsal";
 import { cn } from "@/lib/utils";
 import type { ModelOption } from "@/lib/models";
 import type { AdScript, Brand, Brief, Creative, CreativeProgress, Direction, Shot, StudioRun, VideoCategory, VideoPlan } from "@/lib/types";
@@ -186,6 +187,7 @@ function Shell({
   width,
   children,
   action,
+  showCaption = true,
 }: {
   step?: number;
   label: string;
@@ -194,16 +196,17 @@ function Shell({
   width: number;
   children: React.ReactNode;
   action?: React.ReactNode;
+  showCaption?: boolean;
 }) {
   return (
     <div style={{ width }} className="relative animate-in fade-in slide-in-from-left-6 duration-500">
-      <div className="absolute -top-7 left-1 right-1 flex items-center justify-between">
+      {showCaption && <div className="absolute -top-7 left-1 right-1 flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
           {step !== undefined && <span className="text-zinc-600">{String(step).padStart(2, "0")}</span>}
           {label}
         </div>
         <StateChip state={state} />
-      </div>
+      </div>}
       <div
         className={cn(
           "relative overflow-hidden rounded-2xl border bg-zinc-900/95 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] transition-[border-color,box-shadow] duration-300",
@@ -666,8 +669,18 @@ function BriefNode() {
   );
 }
 
+function storyboardPhotos(run: StudioRun, form: { refs: string[]; brandUrl: string; kits: { id: string; url: string; photos?: string[] }[] }) {
+  if (run.storyboardPhotos?.length) return { count: run.storyboardPhotos.length };
+  const refs = hostName(fullUrl(form.brandUrl)) === hostName(run.brandUrl) ? form.refs : [];
+  if (refs.length) return { count: refs.length, refs };
+  const kit = form.kits.find((b) => b.id === run.brandId) ?? form.kits.find((b) => hostName(b.url) === hostName(run.brandUrl));
+  return { count: kit?.photos?.length ?? 0 };
+}
+
 function VideoPlanNode() {
   const { run, form, models, act, sending, pricing } = useFlow();
+  const photoInput = useRef<HTMLInputElement>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   if (!run) return null;
   const p = form.plan;
   const set = (patch: Partial<VideoPlan>) => form.set({ plan: { ...p, ...patch } });
@@ -675,6 +688,10 @@ function VideoPlanNode() {
   const video = models.filter((m) => m.modality === "video" && (m.provider === "openrouter" || m.id in pricing.prices));
   const sel = "w-full rounded-md border border-white/10 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200";
   const has = run.directions.some((d) => d.shots?.length);
+  const hasApproval = run.directions.some((d) => d.format === "video" && d.approvedScript);
+  const eligible = storyboardTargets(run.directions, p.lengthSec);
+  const photos = storyboardPhotos(run, form);
+  const needsPhoto = !photos.count && eligible.some((d) => !storyboardProofPhoto(run.id, d));
   return (
     <Shell label="Video plan" icon={Clapperboard} state={has ? "done" : "active"} width={360}>
       <div className="space-y-2.5">
@@ -734,7 +751,7 @@ function VideoPlanNode() {
           const low = pricing.credits != null && pricing.credits < draft * 1.2;
           return (
             <div className="space-y-1 rounded-lg bg-white/[0.03] p-2 text-[11px] leading-snug text-zinc-400">
-              <div>Storyboards ≈ {money(estimateCost("storyboard", { lengthSec: p.lengthSec, shots: shots * run.directions.length }))}</div>
+              {eligible.length > 0 && <div>Storyboards ≈ {money(estimateCost("storyboard", { lengthSec: p.lengthSec, shots: eligible.reduce((sum, d) => sum + (d.approvedScript?.beats.length ?? 0), 0) }))}</div>}
               <div>
                 Per video: draft ≈ <span className={cn(draft > p.budgetUsd && "text-amber-300")}>{money(draft)}</span>, final ≈ <span className={cn(final > p.budgetUsd && "text-amber-300")}>{money(final)}</span>
               </div>
@@ -743,9 +760,53 @@ function VideoPlanNode() {
             </div>
           );
         })()}
-        <Button size="sm" className="w-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90" disabled={sending || run.status === "working"} onClick={() => act("storyboard", { runId: run.id, plan: p, refs: form.refs })}>
-          <Clapperboard /> {has ? "Rebuild storyboards" : "Build storyboards"}
+        <div className="nodrag space-y-1">
+          <div className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+            <span>Product photos · {photos.count}{run.storyboardPhotos?.length ? " saved" : ""}</span>
+            <Button type="button" variant="outline" size="sm" disabled={sending || run.status === "working"} onClick={() => photoInput.current?.click()}>
+              <Upload /> {run.storyboardPhotos?.length ? "Replace photos" : "Add product photos"}
+            </Button>
+            <input
+              ref={photoInput}
+              type="file"
+              aria-label="Product photos for storyboards"
+              accept="image/png,image/jpeg,image/webp"
+              multiple
+              hidden
+              onChange={async (e) => {
+                const files = Array.from(e.currentTarget.files ?? []);
+                e.currentTarget.value = "";
+                if (!files.length) return;
+                if (files.length > 4 || files.some((f) => f.size > 5_000_000 || !/^image\/(png|jpeg|webp)$/.test(f.type))) {
+                  setPhotoError("Choose up to four PNG, JPEG or WebP photos under 5 MB each.");
+                  return;
+                }
+                try {
+                  const refs = await Promise.all(files.map((f) => new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(String(reader.result));
+                    reader.onerror = reject;
+                    reader.readAsDataURL(f);
+                  })));
+                  const saved = await act("save_storyboard_photos", { runId: run.id, refs });
+                  setPhotoError(saved ? null : "Couldn’t save the photos. Try uploading them again.");
+                } catch {
+                  setPhotoError("Couldn’t read the photos. Choose them again.");
+                }
+              }}
+            />
+          </div>
+          {photoError && <p role="alert" className="text-xs text-amber-200">{photoError}</p>}
+          {needsPhoto && <p className="text-[11px] text-amber-200">Add a real product photo to build these storyboards. A homepage link isn’t a photo.</p>}
+        </div>
+        <Button size="sm" className="nodrag w-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90" disabled={sending || run.status === "working" || !eligible.length || needsPhoto} onClick={() => act("storyboard", { runId: run.id, plan: p, refs: photos.refs })}>
+          <Clapperboard /> {eligible.length > 0 && eligible.every((d) => d.shots?.length) ? "Rebuild storyboards" : "Build storyboards"}
         </Button>
+        <p className="text-[11px] text-zinc-400">{hasApproval
+          ? eligible.length
+            ? `Generates image keyframes for ${eligible.length} approved ${p.lengthSec}s ${eligible.length === 1 ? "script" : "scripts"}. No video is rendered.`
+            : "No approved script at this length. Build directly from an approved draft to use its length."
+          : "Approve a script to unlock its storyboard."}</p>
       </div>
     </Shell>
   );
@@ -766,13 +827,13 @@ function ShotThumb({ d, s }: { d: Direction; s: Shot }) {
       ) : (
         img
       )}
-      {score != null && <span className={cn("absolute left-1 top-1 rounded px-1 text-[9px] font-semibold text-black", score >= 8 ? "bg-emerald-400" : "bg-amber-300")}>{score}</span>}
+      {score != null && <span className={cn("absolute left-1 top-1 rounded px-1 text-[9px] font-semibold text-black", shotReady(s.clipQa ?? s.keyframeQa) ? "bg-emerald-400" : "bg-amber-300")}>{score}</span>}
       {s.clip && <Film className="absolute bottom-5 left-1 size-3 text-white drop-shadow" />}
       <button
         aria-label="Redraw shot"
         disabled={sending || run?.status === "working"}
         onClick={() => act("redo_shot", { runId: run!.id, directionId: d.id, shotId: s.id, refs: form.refs })}
-        className="absolute right-1 top-1 hidden rounded bg-black/70 p-0.5 text-white group-hover:block disabled:opacity-40"
+        className="absolute right-1 top-1 rounded bg-black/70 p-0.5 text-white disabled:opacity-40"
       >
         <RefreshCw className="size-3" />
       </button>
@@ -809,19 +870,136 @@ const savedJudge = () => saved("gtm.judge", JUDGES);
 /** Mirrors judgeFor on the server: nobody grades their own scripts. */
 const judgeOf = (w: string, j: string) => (j !== w ? j : Object.keys(JUDGES).find((m) => m !== w)!);
 
-function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove }: {
+const hookLabels = { goal: "Goal first", friction: "Buyer friction", proof: "Tease the proof" };
+type BeatEdit = Pick<AdScript["beats"][number], "vo" | "onScreen">;
+
+function PhoneOverlay({ onScreen, vo, seconds }: { onScreen: string; vo: string; seconds: number }) {
+  const m = rehearsalMetrics({ vo, onScreen });
+  return (
+    <div className="mx-auto flex aspect-[9/16] w-32 flex-col justify-end rounded-2xl border border-zinc-700 bg-zinc-950 px-2 pb-7 text-center" aria-label="9:16 overlay preview">
+      <span className="mb-auto mt-3 text-[9px] uppercase text-zinc-500">Overlay only · {seconds}s</span>
+      <span className={`break-words text-[10px] font-semibold ${m.fits ? "text-white" : "text-amber-300"}`}>
+        {m.lines.length ? m.lines.map((line, i) => <span key={i} className="block">{line}</span>) : "No overlay"}
+      </span>
+    </div>
+  );
+}
+
+function ReadThrough({ script }: { script: AdScript }) {
+  const [selected, setSelected] = useState(0);
+  const [started, setStarted] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const total = script.beats.reduce((sum, b) => sum + b.seconds, 0);
+  useEffect(() => {
+    if (started === null) return;
+    const timer = window.setInterval(() => {
+      const next = Math.min(total, (performance.now() - started) / 1000);
+      setElapsed(next);
+      if (next >= total) setStarted(null);
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [started, total]);
+  let end = 0;
+  const playing = script.beats.findIndex((b) => { end += b.seconds; return elapsed < end; });
+  const index = started !== null ? Math.max(0, playing) : selected;
+  const beat = script.beats[index];
+  if (!beat) return null;
+  const m = rehearsalMetrics(beat);
+  const issues = rehearseScript(script);
+  return (
+    <section className="space-y-2 rounded border border-white/10 p-2 text-[11px]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <strong>Phone rehearsal</strong>
+        <Button size="sm" variant="secondary" onClick={() => {
+          if (started !== null) { setSelected(index); setStarted(null); }
+          else { setElapsed(0); setStarted(performance.now()); }
+        }}>{started !== null ? "Stop" : "Timed read-aloud"}</Button>
+      </div>
+      <p className="text-zinc-400">Read the narration as each beat appears. On mute, judge the shot and overlay without reading the VO.</p>
+      <div className="flex flex-wrap gap-1" aria-label="Preview beat">
+        {script.beats.map((_, i) => <button type="button" className={`rounded px-2 py-1 ${i === index ? "bg-indigo-500/30" : "bg-white/5"}`} key={i} aria-pressed={i === index} onClick={() => { setSelected(i); setStarted(null); setElapsed(0); }}>{i + 1}</button>)}
+      </div>
+      <PhoneOverlay {...beat} />
+      <p className="break-words text-zinc-300">{beat.visual}</p>
+      <p className="break-words text-zinc-400">VO ({m.speakingSeconds}s est.): {beat.vo || "—"}</p>
+      <progress className="h-1 w-full" value={elapsed} max={total} aria-label="Read-aloud progress" />
+      {issues.map((issue) => <p key={issue} className="text-amber-200">{issue}</p>)}
+    </section>
+  );
+}
+
+function ApprovedStoryboard({ script, busy, needsPhoto, hasKeyframes, lengthSec, onBuild }: {
+  script: AdScript;
+  busy: boolean;
+  needsPhoto: boolean;
+  hasKeyframes: boolean;
+  lengthSec: number;
+  onBuild: (lengthSec: number) => void;
+}) {
+  const blockers = scriptProductionBlockers(script);
+  return (
+    <div className="space-y-1.5">
+      <Button type="button" size="sm" className="w-full" disabled={busy || needsPhoto} onClick={() => onBuild(lengthSec)}>
+        <Clapperboard /> {hasKeyframes ? "Rebuild" : "Build"} {lengthSec}s storyboard
+      </Button>
+      {needsPhoto && <p className="text-[11px] text-amber-200">Add a product photo in Video plan to build keyframes.</p>}
+      <p className="text-[10px] text-zinc-400">Image keyframes ≈ {money(estimateCost("storyboard", { lengthSec, shots: script.beats.length }))} · no video</p>
+      {blockers.length > 0 && (
+        <details className="text-xs text-amber-200">
+          <summary className="cursor-pointer">{blockers.length} script {blockers.length === 1 ? "fix" : "fixes"} before HD</summary>
+          <ul className="mt-1 list-disc space-y-1 pl-4">
+            {blockers.map((reason) => <li key={reason}>{reason}</li>)}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function ScriptLab({ d, open, setOpen, edits, setEdits, busy, needsPhoto, lengthSec, research, brief, realOffer, quotes, refs, onDraft, onWrite, onApprove, onStoryboard }: {
   d: Direction;
   open: string | null;
   setOpen: (id: string | null) => void;
-  edits: Record<string, string[]>;
-  setEdits: (e: Record<string, string[]>) => void;
+  edits: Record<string, BeatEdit[]>;
+  setEdits: (e: Record<string, BeatEdit[]>) => void;
   busy: boolean;
-  onWrite: (writer: string, judge: string) => void;
-  onApprove: (sc: AdScript, lines?: string[]) => void;
+  needsPhoto: boolean;
+  lengthSec: number;
+  research: StudioRun["research"];
+  brief: StudioRun["brief"];
+  realOffer?: string | null;
+  quotes: { text: string; url: string }[];
+  refs: string[];
+  onDraft: (proof: { tension: string; claim: string; action: string; asset?: string; offer: string; cta: string; quoteIndex?: number }, writer: string, judge: string) => void;
+  onWrite: (hookId: string, writer: string, judge: string) => void;
+  onApprove: (sc: AdScript, lines?: BeatEdit[]) => void;
+  onStoryboard: (lengthSec: number) => void;
 }) {
   const ap = d.approvedScript;
+  const storyboardLength = approvedStoryboardLength(d);
   const [writer, setWriter] = useState(savedWriter);
   const [judge, setJudge] = useState(savedJudge);
+  const lab = d.hookLab;
+  const facts = Array.from(new Set([...(research?.valueProps ?? []), ...(realOffer?.split("\n") ?? [])].map((s) => s.trim()).filter(Boolean)));
+  const [tension, setTension] = useState(lab?.brief.tension ?? brief?.insight ?? "");
+  const [claim, setClaim] = useState(lab?.brief.claim ?? facts[0] ?? "");
+  const [action, setAction] = useState(lab?.brief.action ?? "");
+  const [asset, setAsset] = useState(lab?.brief.asset ?? "");
+  const [offer, setOffer] = useState(lab?.brief.offer ?? realOffer ?? brief?.offer ?? "");
+  const [cta, setCta] = useState(lab?.brief.cta ?? "");
+  const [quoteIndex, setQuoteIndex] = useState(() => quotes.findIndex((quote) => quote.text === lab?.brief.quote?.text && quote.url === lab?.brief.quote?.url));
+  const [selected, setSelected] = useState<string | undefined>(lab?.selectedId);
+  const [showOpenings, setShowOpenings] = useState(false);
+  const opening = recommendedOpening(lab?.hooks ?? []);
+  const chosen = lab?.hooks.find((h) => h.id === selected && h.review?.blockers.length === 0) ?? opening;
+  const scripts = d.scripts ?? [];
+  const drafts = ap && !scripts.some((s) => s.id === ap.id) ? [ap, ...scripts] : scripts;
+  const hasDrafts = drafts.length > 0;
+  const savedQuote = lab?.brief.quote?.text;
+  const changed = !!lab && (tension.trim() !== lab.brief.tension || claim !== lab.brief.claim || action.trim() !== lab.brief.action || asset.trim() !== (lab.brief.asset ?? "") || offer.trim() !== lab.brief.offer || cta.trim() !== lab.brief.cta || quotes[quoteIndex]?.text !== savedQuote || lengthSec !== lab.lengthSec);
+  const [proofOpen, setProofOpen] = useState(!lab?.hooks.length);
+  const canUse = !changed && !!chosen;
+  const field = "nowheel w-full rounded border border-white/10 bg-zinc-950 p-1.5 text-[11px] text-zinc-200";
   const pickWriter = (w: string) => {
     setWriter(w);
     localStorage.setItem("gtm.writer", w);
@@ -831,12 +1009,11 @@ function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove
     localStorage.setItem("gtm.judge", j);
   };
   const grader = judgeOf(writer, judge);
-  const write = () => onWrite(writer, grader);
   return (
-    <div className="nodrag space-y-1.5 rounded-lg border border-white/5 bg-white/[0.02] p-2">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-          Script Lab ·{" "}
+    <div className="nodrag flex flex-col gap-1.5">
+      <details className="text-[10px] text-zinc-400">
+        <summary className="cursor-pointer">Writer and reviewer settings</summary>
+        <div className="mt-1">
           <select className="rounded bg-zinc-900 text-zinc-300" value={writer} onChange={(e) => pickWriter(e.target.value)} disabled={busy} aria-label="Script writer">
             {Object.entries(WRITERS).map(([id, label]) => (
               <option key={id} value={id}>{label}</option>
@@ -849,88 +1026,241 @@ function ScriptLab({ d, open, setOpen, edits, setEdits, busy, onWrite, onApprove
             ))}
           </select>{" "}
           grades
-        </span>
-        <button className="text-[10px] text-indigo-300 hover:underline disabled:opacity-40" disabled={busy} onClick={write}>
-          {d.scripts?.length ? "Rewrite all" : ""}
-        </button>
-      </div>
-      {ap && scriptReady(ap) && (
-        <div className="flex items-center gap-1.5 text-[11px] text-emerald-300">
-          <Check className="size-3" /> Approved: {ap.framework}
-          {ap.score && <span className={`rounded px-1 ${scoreTone(ap.score.overall)}`}>{ap.score.overall}/10</span>}
         </div>
+      </details>
+      <details open={proofOpen} onToggle={(event) => setProofOpen(event.currentTarget.open)} className="rounded-md border border-white/10 p-2 text-[11px]">
+        <summary className="cursor-pointer font-semibold">{lab?.hooks.length ? "Edit script brief" : "1. Confirm the script brief"}</summary>
+        <fieldset disabled={busy} className="mt-2 space-y-1.5">
+          <p className="text-zinc-400">Goal: {brief?.kpi || brief?.objective || "Not set"} · {lengthSec}s</p>
+          <label className="block">One buyer tension<textarea className={field} maxLength={400} rows={2} value={tension} onChange={(e) => setTension(e.target.value)} /></label>
+          <label className="block">Claim from saved research<select className={field} value={claim} onChange={(e) => setClaim(e.target.value)}>
+            <option value="">Select one supported claim</option>
+            {facts.map((fact) => <option value={fact} key={fact}>{fact}</option>)}
+          </select></label>
+          <label className="block">Scene to show<textarea className={field} maxLength={500} rows={2} value={action} onChange={(e) => setAction(e.target.value)} placeholder="One visible action or result that supports the claim" /></label>
+          <label className="block">Proof asset link (optional)<input className={field} value={asset.startsWith("data:") ? "" : asset} onChange={(e) => setAsset(e.target.value)} placeholder="Only add a specific reference if needed" /></label>
+          {!!refs.length && <div className="flex flex-wrap gap-1">{refs.map((ref, i) => <button type="button" className="rounded border border-white/10 px-2 py-1" aria-pressed={asset === ref} key={i} onClick={() => setAsset(ref)}>Use photo {i + 1}</button>)}</div>}
+          {asset && <div className="flex flex-wrap items-center gap-2 text-zinc-400">
+            {asset.startsWith("data:") ? "Uploaded product photo selected" : asset.startsWith("https://") || asset.startsWith("/api/media/") ? <a className="underline" href={asset} target="_blank" rel="noreferrer">Review proof asset</a> : null}
+            <button type="button" className="underline" onClick={() => setAsset("")}>Remove asset</button>
+          </div>}
+          <label className="block">Exact offer terms (one per line)<textarea className={field} rows={2} maxLength={400} value={offer} onChange={(e) => setOffer(e.target.value)} /></label>
+          <label className="block">One exact CTA<input className={field} maxLength={40} value={cta} onChange={(e) => setCta(e.target.value)} placeholder="e.g. Help me choose" /></label>
+          {quotes.length ? <label className="block">Optional sourced quote<select className={field} value={quoteIndex} onChange={(e) => setQuoteIndex(Number(e.target.value))}>
+            <option value={-1}>No quote</option>
+            {quotes.map((q, i) => <option key={i} value={i}>{q.text}</option>)}
+          </select></label> : <p className="text-zinc-400">No verified buyer wording saved. Treat objections as hypotheses, not quotes.</p>}
+          <p className="text-zinc-400">Drafting uses saved research. Storyboards reuse saved brand photos; no need to attach them here.</p>
+          <Button size="sm" variant="secondary" className="w-full" disabled={!tension.trim() || !claim || !action.trim() || !cta.trim()} onClick={() => {
+            onDraft({ tension, claim, action, ...(asset.trim() ? { asset } : {}), offer, cta, ...(quoteIndex >= 0 ? { quoteIndex } : {}) }, writer, grader);
+          }}><Lightbulb /> {lab?.hooks.length ? "Draft new openings" : "Draft openings"}</Button>
+        </fieldset>
+      </details>
+      {!!lab?.hooks.length && (
+        <section className="space-y-1.5 rounded border border-white/10 p-2 text-[11px]">
+          {hasDrafts && lab.selectedId && (
+            <button type="button" className="text-zinc-400 underline" aria-expanded={showOpenings} onClick={() => setShowOpenings(!showOpenings)}>
+              {showOpenings ? "Hide openings" : "Try a different opening"}
+            </button>
+          )}
+          {(!hasDrafts || !lab.selectedId || showOpenings) && <>
+            {chosen ? (
+              <div>
+                <h3 className="font-semibold">{chosen.id === opening?.id ? "Recommended opening" : "Selected opening"}</h3>
+                <p className="text-zinc-300">“{chosen.spoken}”</p>
+                <p className="text-zinc-400">{chosen.visual}</p>
+              </div>
+            ) : <p className="text-amber-200">No opening passed review. Edit the brief and draft again.</p>}
+            {changed && <p className="text-amber-200">The brief or duration changed. Draft new openings to continue.</p>}
+            <details className="space-y-1.5">
+              <summary className="cursor-pointer text-zinc-400">{chosen ? "Compare openings" : "See why the openings were blocked"} ({lab.hooks.length})</summary>
+              {lab.hooks.map((h) => (
+                <div key={h.id} className="space-y-1 rounded border border-white/10 p-1.5">
+                  <label className="flex items-center gap-2">
+                    <input type="radio" name={`hook-${d.id}`} checked={chosen?.id === h.id} disabled={busy || changed || !h.review || !!h.review.blockers.length} onChange={() => setSelected(h.id)} />
+                    <span>{hookLabels[h.type]}{opening?.id === h.id ? " · recommended" : ""}</span>
+                    {h.review && <span className={`ml-auto rounded px-1 ${scoreTone(h.review.score)}`}>Opening: {h.review.score}/10</span>}
+                  </label>
+                  <p className="text-zinc-300">{h.visual}</p>
+                  <p className="text-zinc-400">VO: “{h.spoken}”{h.onScreen ? ` · Overlay: “${h.onScreen}”` : ""}</p>
+                  {h.review && <p className="text-zinc-400">{h.review.note}</p>}
+                  {h.review?.blockers.map((blocker, i) => <p key={i} className="text-amber-200">{blocker}</p>)}
+                  {chosen?.id === h.id && <PhoneOverlay vo={h.spoken} onScreen={h.onScreen} seconds={3} />}
+                </div>
+              ))}
+            </details>
+            {chosen && <Button size="sm" className="w-full" disabled={busy || !canUse} onClick={() => {
+              setShowOpenings(false);
+              onWrite(chosen.id, writer, grader);
+            }}><Pencil /> Write script</Button>}
+          </>}
+        </section>
       )}
-      {!d.scripts?.length ? (
-        <Button size="sm" variant="secondary" className="w-full" disabled={busy} onClick={write}>
-          <Pencil /> Write scripts
-        </Button>
-      ) : (
-        d.scripts.map((sc) => {
+      {hasDrafts && (
+        <div className="order-first space-y-2">
+          <h3 className="text-xs font-medium text-zinc-400">Scripts</h3>
+          {drafts.map((sc, index) => {
           const isOpen = open === sc.id;
           const lines = edits[sc.id];
+          const edited = lines?.some((line, i) => line.vo.trim() !== sc.beats[i].vo || line.onScreen.trim() !== sc.beats[i].onScreen);
+          const updateBeat = (index: number, patch: Partial<BeatEdit>) => {
+            const next = (lines ?? sc.beats).map(({ vo, onScreen }, i) => i === index ? { vo, onScreen, ...patch } : { vo, onScreen });
+            setEdits({ ...edits, [sc.id]: next });
+          };
           const sco = sc.score;
+          const approved = ap?.id === sc.id;
+          const savedDraft = d.scripts?.some((s) => s.id === sc.id);
           return (
-            <div key={sc.id} className={`rounded-md border p-1.5 ${ap?.id === sc.id ? "border-emerald-500/40" : "border-white/5"}`}>
-              <button className="flex w-full items-center gap-1.5 text-left" onClick={() => setOpen(isOpen ? null : sc.id)}>
-                {sco && <span className={`rounded px-1 text-[10px] font-semibold ${scoreTone(sc.checks?.length ? Math.min(7, sco.overall) : sco.overall)}`}>{sco.overall}/10</span>}
-                <span className="truncate text-[11px] font-medium text-zinc-200">{sc.framework}</span>
-                {sco && <span className="ml-auto shrink-0 text-[10px] text-zinc-500" title="Simulated buyers who keep watching after the hook">{sco.panel.stopRate}/10 stop</span>}
-                <ChevronDown className={`size-3 shrink-0 text-zinc-500 transition ${isOpen ? "rotate-180" : ""}`} />
-              </button>
-              <p className="mt-1 text-[11px] italic text-zinc-300">“{sc.hook.spoken}”</p>
+            <div key={sc.id} className={cn("rounded-lg border bg-white/[0.02] p-2.5", approved ? "border-emerald-500/40" : "border-white/10")}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-zinc-200">Draft {index + 1}</span>
+                <span aria-label={sco ? `Script score: ${sco.overall} out of 10` : "Not scored"} className="rounded bg-white/10 px-1.5 py-0.5 text-xs tabular-nums text-zinc-200">
+                  {sco ? `${sco.overall}/10` : "Not scored"}
+                </span>
+              </div>
+              <p className="my-2 text-xs leading-snug text-zinc-300">“{sc.hook.spoken}”</p>
+              <div className="flex items-center justify-between gap-2">
+                <button type="button" className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : sc.id)}>
+                  {isOpen ? "Hide script" : savedDraft ? "View / edit" : "View script"}
+                  <ChevronDown className={`size-3 shrink-0 transition ${isOpen ? "rotate-180" : ""}`} />
+                </button>
+                {approved && !edited
+                  ? <span className="flex items-center gap-1 text-xs font-medium text-emerald-300"><Check className="size-3.5" /> Approved</span>
+                  : <Button type="button" size="sm" aria-label={`Approve draft ${index + 1} for ${d.title}`} disabled={busy} onClick={() => onApprove(sc, edited ? lines : undefined)}>
+                      <Check /> Approve
+                    </Button>}
+              </div>
+              {approved && ap && storyboardLength !== undefined && (
+                <div className="mt-2">
+                  <ApprovedStoryboard script={ap} busy={busy} needsPhoto={needsPhoto} hasKeyframes={!!d.shots?.length} lengthSec={storyboardLength} onBuild={onStoryboard} />
+                </div>
+              )}
               {isOpen && (
                 <div className="mt-1.5 space-y-1.5">
                   {sc.beats.map((b, i) => (
                     <div key={i} className="space-y-0.5">
-                      <div className="text-[10px] text-zinc-500">{i + 1}. {b.seconds}s · {b.visual.slice(0, 90)}{b.onScreen ? ` · on screen: “${b.onScreen}”` : ""}</div>
+                      <div className="text-[10px] text-zinc-400">{i + 1}. {b.seconds}s · {b.visual}</div>
                       <textarea
                         aria-label={`Beat ${i + 1} voiceover`}
-                        className="nowheel w-full resize-none rounded border border-white/10 bg-zinc-950 px-1.5 py-1 text-[11px] text-zinc-200"
+                        readOnly={!savedDraft || (!!sc.proofBrief && i === 0)}
+                        placeholder="Spoken line"
+                        maxLength={300}
+                        className={field}
                         rows={2}
-                        value={lines?.[i] ?? b.vo}
-                        onChange={(e) => {
-                          const next = [...(lines ?? sc.beats.map((x) => x.vo))];
-                          next[i] = e.target.value;
-                          setEdits({ ...edits, [sc.id]: next });
-                        }}
+                        value={lines?.[i]?.vo ?? b.vo}
+                        onChange={(e) => updateBeat(i, { vo: e.target.value })}
+                      />
+                      <input
+                        aria-label={`Beat ${i + 1} on-screen copy`}
+                        readOnly={!savedDraft || (!!sc.proofBrief && i === 0)}
+                        placeholder="On-screen copy"
+                        maxLength={160}
+                        className={field}
+                        value={lines?.[i]?.onScreen ?? b.onScreen}
+                        onChange={(e) => updateBeat(i, { onScreen: e.target.value })}
                       />
                     </div>
                   ))}
                   <div className="text-[10px] text-zinc-400">CTA: {sc.cta}</div>
                   {sco && (
                     <div className="flex flex-wrap gap-1">
+                      <span className="text-[9px] text-zinc-400">Category scores:</span>
                       {Object.entries(sco.scores).map(([k, v]) => (
                         <span key={k} className={`rounded px-1 text-[9px] ${scoreTone(v)}`}>{k} {v}</span>
                       ))}
                     </div>
                   )}
-                  {[...(sco?.unsupported ?? []).map((u) => `Unsupported: ${u}`), ...(sc.checks ?? []), ...(sco?.notes ?? [])].slice(0, 5).map((n, i) => (
+                  {[...(sco?.unsupported ?? []).map((u) => `Unsupported: ${u}`), ...(sc.checks ?? []), ...(sco?.notes ?? [])].map((n, i) => (
                     <p key={i} className="text-[10px] text-amber-200/80">• {n}</p>
                   ))}
-                  {sco?.panel.quotes.map((q, i) => <p key={i} className="text-[10px] text-zinc-500">Buyer: “{q}”</p>)}
-                  <p className="text-[10px] text-zinc-400">{sc.review ? `${sc.review.writer.split("/").at(-1)} wrote · ${sc.review.judge.split("/").at(-1)} reviewed` : "Needs independent review"} · 9/10 required</p>
-                  <Button size="sm" className="w-full" disabled={busy || (!!sc.review && !scriptReady(sc) && !lines?.some((line, i) => line.trim() !== sc.beats[i]?.vo))} onClick={() => onApprove(sc, lines)}>
-                    <Check /> {lines?.some((line, i) => line.trim() !== sc.beats[i]?.vo) || !sc.review ? "Review and approve" : "Approve this script"}
-                  </Button>
+                  <ReadThrough script={{ ...sc, beats: sc.beats.map((b, i) => ({ ...b, ...lines?.[i] })) }} />
+                  {edited && <p className="text-[10px] text-zinc-400">Approving will save your edits and refresh the review.</p>}
                 </div>
               )}
             </div>
           );
-        })
+          })}
+        </div>
       )}
     </div>
   );
 }
 
-function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
+function VideoControls({ d }: { d: Direction }) {
   const { run, act, sending, form, pricing, models } = useFlow();
   const [vm, setVm] = useState<{ draft?: string; final?: string }>({});
+  if (!run || !d.shots?.length) return null;
+  const shots = d.shots;
+  const plan = run.videoPlan ?? form.plan;
+  const pick = { draft: vm.draft ?? plan.draftModel, final: vm.final ?? plan.finalModel };
+  const videos = models.filter((m) => m.modality === "video" && (m.provider === "openrouter" || m.id in pricing.prices));
+  const scriptFixes = scriptProductionBlockers(d.approvedScript);
+  const frameFixes = storyboardKeyframeFixes(shots);
+  const blocked = draftVideoBlocker(d, run.videoPlan);
+  const testDraft = scriptFixes.length > 0 || frameFixes.length > 0;
+  const hdReady = !blocked && !testDraft && d.passingDraft === d.storyboardKey;
+  const busy = sending || run.status === "working";
+  const generate = (tier: "draft" | "final") => act("render_video", { runId: run.id, directionId: d.id, tier, draftModel: pick.draft, finalModel: pick.final });
+  const estimate = (tier: "draft" | "final") => money(estimateCost("video", { perSec: pricing.prices[pick[tier]]?.[tier], lengthSec: shots.reduce((sum, shot) => sum + shot.seconds, 0), shots: shots.length, music: plan.music }));
+
+  return (
+    <section aria-label="Video generation" className="nodrag space-y-2 rounded-lg border border-indigo-400/20 bg-indigo-500/5 p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold text-zinc-100">Generate video</h3>
+        <span className={cn("text-[11px]", blocked ? "text-amber-200" : "text-emerald-300")}>{blocked ? "Blocked" : "Draft available"}</span>
+      </div>
+      <div className="nowheel flex gap-1.5 overflow-x-auto pb-1">
+        {shots.map((shot) => <ShotThumb key={shot.id} d={d} s={shot} />)}
+      </div>
+      <Button size="sm" className="w-full" disabled={busy || !!blocked} onClick={() => generate("draft")}>
+        <Film /> Generate 480p draft{!blocked ? ` · ≈ ${estimate("draft")}` : ""}
+      </Button>
+      {blocked ? <p className="text-[11px] text-amber-200">{blocked}</p> : testDraft && (
+        <p className="text-[11px] text-zinc-300">Test the workflow with this draft. Quality warnings won’t block it, but it can’t go to HD or publishing.</p>
+      )}
+      {scriptFixes.length > 0 && (
+        <details className="text-[11px] text-amber-200">
+          <summary className="cursor-pointer">{scriptFixes.length} script {scriptFixes.length === 1 ? "fix" : "fixes"} before HD</summary>
+          <ul className="mt-1 list-disc space-y-1 pl-4">{scriptFixes.map((fix) => <li key={fix}>{fix}</li>)}</ul>
+        </details>
+      )}
+      {!!frameFixes.length && (
+        <p className="text-[11px] text-amber-200">Before HD, redraw {frameFixes.length === 1 ? "keyframe" : "keyframes"} {frameFixes.join(", ")} to match the shot and score {VIDEO_PASS}/10.</p>
+      )}
+      {hdReady ? (
+        <Button size="sm" variant="outline" className="w-full" disabled={busy} onClick={() => generate("final")}>
+          Upgrade to HD · ≈ {estimate("final")}
+        </Button>
+      ) : (
+        !testDraft && <p className="text-[11px] text-zinc-400">A passing draft unlocks HD.</p>
+      )}
+      <details className="text-[11px] text-zinc-400">
+        <summary className="cursor-pointer">Video models</summary>
+        <div className="mt-1 grid grid-cols-2 gap-1.5">
+          {(["draft", "final"] as const).map((tier) => (
+            <select
+              key={tier}
+              aria-label={tier === "draft" ? "Draft video model" : "HD video model"}
+              className="w-full truncate rounded-md border border-white/10 bg-zinc-950 px-1.5 py-1 text-[10px] text-zinc-300"
+              value={pick[tier]}
+              onChange={(e) => setVm({ ...vm, [tier]: e.target.value })}
+            >
+              {videos.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}{pricing.prices[m.id]?.[tier] != null ? ` · $${pricing.prices[m.id][tier]!.toFixed(3)}/s` : ""}</option>
+              ))}
+            </select>
+          ))}
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
+  const { run, act, sending, form } = useFlow();
   const [openScript, setOpenScript] = useState<string | null>(null);
-  const [edits, setEdits] = useState<Record<string, string[]>>({});
+  const [edits, setEdits] = useState<Record<string, BeatEdit[]>>({});
   if (!run) return null;
-  const vplan = run.videoPlan ?? form.plan;
-  const pickModel = { draft: vm.draft ?? vplan.draftModel, final: vm.final ?? vplan.finalModel };
-  const videoModels = models.filter((m) => m.modality === "video" && (m.provider === "openrouter" || m.id in pricing.prices));
   const d = run.directions[data.index];
   if (!d) {
     return (
@@ -940,68 +1270,51 @@ function DirectionNode({ data }: NodeProps<Node<{ index: number }>>) {
     );
   }
   const state: NodeState = run.stage === "generate" ? (run.status === "working" ? "working" : "active") : "done";
+  const photos = storyboardPhotos(run, form);
   return (
-    <Shell step={4} label={`Direction ${data.index + 1}`} icon={Wand2} state={state} width={340}>
+    <Shell label={d.title} icon={Wand2} state={state} width={340} showCaption={false}>
       <div className="space-y-2.5">
-        <div className="text-[15px] font-semibold leading-snug tracking-tight text-white">“{d.hook}”</div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-[12px] font-medium text-zinc-300">{d.title}</span>
-        </div>
-        <p className="line-clamp-2 text-[11px] text-zinc-500" title={d.angle}>{d.angle}</p>
-        <p className="line-clamp-3 text-[12px] leading-relaxed text-zinc-400">{d.script}</p>
+        {d.format !== "video" && (
+          <>
+            <p className="text-sm font-medium text-zinc-200">“{d.hook}”</p>
+            <p className="line-clamp-2 text-xs text-zinc-400" title={d.angle}>{d.angle}</p>
+            <p className="line-clamp-3 text-xs text-zinc-400">{d.script}</p>
+          </>
+        )}
         {d.format === "video" && (
+          <>
+          <VideoControls d={d} />
           <ScriptLab
+            key={d.hookLab?.id ?? d.id}
             d={d}
             open={openScript}
             setOpen={setOpenScript}
             edits={edits}
             setEdits={setEdits}
             busy={sending || run.status === "working"}
-            onWrite={(writer, judge) => act("write_scripts", { runId: run.id, directionId: d.id, lengthSec: vplan.lengthSec, writer, judge })}
-            onApprove={(sc, lines) => act("approve_script", { runId: run.id, directionId: d.id, scriptId: sc.id, ...(lines ? { edit: { beats: sc.beats.map((b, i) => ({ vo: lines[i] ?? b.vo, onScreen: b.onScreen })) } } : {}) })}
+            needsPhoto={!photos.count && !storyboardProofPhoto(run.id, d)}
+            lengthSec={form.plan.lengthSec}
+            research={run.research}
+            brief={run.brief}
+            realOffer={run.offer}
+            quotes={run.voc?.sourcedQuotes ?? []}
+            refs={form.refs}
+            onDraft={(proof, writer, judge) => act("draft_hooks", { runId: run.id, directionId: d.id, lengthSec: form.plan.lengthSec, writer, judge, proof })}
+            onWrite={(hookId, writer, judge) => act("write_scripts", { runId: run.id, directionId: d.id, lengthSec: form.plan.lengthSec, writer, judge, hookId })}
+            onApprove={(sc, lines) => act("approve_script", { runId: run.id, directionId: d.id, scriptId: sc.id, ...(lines ? { edit: { beats: lines } } : {}) }).then((ok) => {
+              if (ok) setEdits((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== sc.id)));
+            })}
+            onStoryboard={(lengthSec) => act("storyboard", { runId: run.id, directionId: d.id, plan: { ...form.plan, lengthSec }, refs: photos.refs })}
           />
+          </>
         )}
         {run.status === "working" && run.job?.directionId === d.id && <JobBar job={run.job} />}
-        {d.shots?.length ? (
-          <div className="space-y-2 border-t border-white/5 pt-2.5">
-            <div className="nowheel flex gap-1.5 overflow-x-auto pb-1">
-              {d.shots.map((s) => (
-                <ShotThumb key={s.id} d={d} s={s} />
-              ))}
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {(["draft", "final"] as const).map((tier) => (
-                <select
-                  key={tier}
-                  aria-label={tier === "draft" ? "Draft video model" : "HD video model"}
-                  className="nodrag w-full truncate rounded-md border border-white/10 bg-zinc-950 px-1.5 py-1 text-[10px] text-zinc-300"
-                  value={pickModel[tier]}
-                  onChange={(e) => setVm({ ...vm, [tier]: e.target.value })}
-                >
-                  {videoModels.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}{pricing.prices[m.id]?.[tier] != null ? ` · $${pricing.prices[m.id][tier]!.toFixed(3)}/s` : ""}</option>
-                  ))}
-                </select>
-              ))}
-            </div>
-            <div className="flex gap-1.5">
-              {(["draft", "final"] as const).map((tier) => (
-                <Button
-                  key={tier}
-                  size="sm"
-                  variant={tier === "final" ? "default" : "outline"}
-                  className={cn("flex-1", tier === "final" && "bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90")}
-                  disabled={sending || run.status === "working" || !d.storyboardKey || d.shots!.some((s) => !shotReady(s.keyframeQa)) || (tier === "final" && d.passingDraft !== d.storyboardKey)}
-                  onClick={() => act("render_video", { runId: run.id, directionId: d.id, tier, draftModel: pickModel.draft, finalModel: pickModel.final })}
-                >
-                  <Film /> {tier === "draft" ? "480p draft" : "Upgrade to HD"} ~$
-                  {estimateCost("video", { perSec: pricing.prices[pickModel[tier]]?.[tier], lengthSec: d.shots!.reduce((t, s) => t + s.seconds, 0), shots: d.shots!.length, music: vplan.music }).toFixed(2)}
-                </Button>
-              ))}
-            </div>
-            <p className="text-[10px] text-zinc-400">Each keyframe needs 9/10. A passing draft unlocks HD.</p>
-          </div>
-        ) : null}
+        {d.format === "video" && (
+          <details className="text-xs text-zinc-400">
+            <summary className="cursor-pointer">Concept details</summary>
+            <p className="mt-1">{d.angle}</p>
+          </details>
+        )}
       </div>
     </Shell>
   );
@@ -1327,6 +1640,7 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>, dirH =
 function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
   const { run, act, sending, form, setEditing } = useFlow();
   const router = useRouter();
+  const flow = useReactFlow();
   if (!run) return null;
 
   const lastError = run.status === "error" ? [...run.events].reverse().find((e) => e.role === "error")?.text : null;
@@ -1399,18 +1713,32 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
         break;
       case "generate":
         if (run.format === "video") {
-          const hasSb = run.directions.some((d) => d.shots?.length);
-          const approved = run.directions.filter((d) => d.approvedScript).length;
-          if (!approved) {
-            const written = run.directions.some((d) => d.scripts?.length);
-            text = written ? "Open a script on each direction, edit any line, and approve one. Storyboards, voice and video only use approved scripts." : "Script first: Sol writes 5 scripts per direction and Carbon grades them before anything is drawn or rendered.";
-            buttons = [btn(written ? "Rewrite scripts" : "Write scripts", () => act("write_scripts", { runId: run.id, lengthSec: form.plan.lengthSec, writer: savedWriter(), judge: judgeOf(savedWriter(), savedJudge()) }), !written, <Pencil />)];
+          const storyboards = run.directions.flatMap((d, index) => d.shots?.length ? [{
+            index, blocked: !!draftVideoBlocker(d, run.videoPlan), fixes: scriptProductionBlockers(d.approvedScript).length + storyboardKeyframeFixes(d.shots).length,
+          }] : []).sort((a, b) => Number(a.blocked) - Number(b.blocked) || a.fixes - b.fixes);
+          const first = storyboards[0];
+          if (first) {
+            text = first.blocked ? "Open video controls to see what’s missing for a draft." : "Your storyboard is ready for a 480p draft.";
+            buttons = [btn("Video controls", () => {
+              const node = flow.getNode(`dir-${first.index}`);
+              if (node) void flow.setCenter(node.position.x + (node.measured?.width ?? 340) / 2, node.position.y + 180, { zoom: 1, duration: 450 });
+            }, true, <Film />)];
             break;
           }
-          text = hasSb ? "Review the storyboards. Redraw weak shots, then render a draft or final video on each direction." : "Pick a category and length on the Video plan card, then build storyboards before any video spend.";
+          const approved = storyboardTargets(run.directions);
+          if (!approved.length) {
+            const written = run.directions.some((d) => d.scripts?.length);
+            text = written ? "Click Approve on the draft you want to use." : "Open a concept to draft its script.";
+            break;
+          }
+          const eligible = storyboardTargets(approved, form.plan.lengthSec);
+          const photos = storyboardPhotos(run, form);
+          const needsPhoto = !photos.count && approved.some((d) => !storyboardProofPhoto(run.id, d));
+          const canBatch = eligible.length > 0 && (photos.count > 0 || eligible.every((d) => storyboardProofPhoto(run.id, d)));
+          text = needsPhoto ? "Add product photos in Video plan before building keyframes." : "Build the storyboard from an approved direction. It uses the approved script’s duration.";
           buttons = [
             btn("Re-pitch", () => act("directions", { runId: run.id, format: run.format }), false, <RefreshCw />),
-            btn(hasSb ? "Rebuild storyboards" : "Build storyboards", () => act("storyboard", { runId: run.id, plan: form.plan, refs: form.refs }), !hasSb),
+            ...(canBatch ? [btn("Build storyboards", () => act("storyboard", { runId: run.id, plan: form.plan, refs: photos.refs }), true)] : []),
           ];
           break;
         }

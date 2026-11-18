@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "eval:scripts": "vitest run tests/script-benchmark.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

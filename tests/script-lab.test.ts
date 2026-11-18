@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { checkScript, finalScore, judgeFor, sameHooks, sameSpeech, SCRIPT_PASS, textMatch, textRecall } from "@/lib/script-lab";
-import { scriptReady, SCRIPT_RUBRIC } from "@/lib/quality-policy";
+import { checkScript, finalScore, judgeFor, sameHooks, sameSpeech, SCRIPT_TARGET, textMatch, textRecall } from "@/lib/script-lab";
+import { recommendedOpening, scriptReady, SCRIPT_RUBRIC } from "@/lib/quality-policy";
 import { lockScriptShots } from "@/lib/video-plan";
 import type { AdScript } from "@/lib/types";
 
@@ -53,7 +53,7 @@ describe("textMatch", () => {
 describe("finalScore", () => {
   it("keeps scripts with failed checks below the pass bar", () => {
     const s = { ...base, score: { overall: 9, scores: {}, notes: [], unsupported: [], panel: { stopRate: 7, quotes: [] } }, checks: ["Runs 20s"] };
-    expect(finalScore(s)).toBe(SCRIPT_PASS - 1);
+    expect(finalScore(s)).toBe(SCRIPT_TARGET - 1);
     expect(finalScore({ ...s, checks: [] })).toBe(9);
   });
 
@@ -70,14 +70,26 @@ describe("finalScore", () => {
   });
 });
 
-it("requires a current independent grade and blocks unsupported claims", () => {
-  const score = { overall: 9, scores: {}, notes: [], unsupported: [], panel: { stopRate: 8, quotes: [] } };
+it("requires independent production checks but has no minimum script score", () => {
+  const score = { overall: 7, scores: {}, notes: [], unsupported: [], panel: { stopRate: 8, quotes: [] } };
   const script = { ...base, score, checks: [], review: { rubric: SCRIPT_RUBRIC, writer: "carbon", judge: "sol", targetSeconds: 10 } };
   expect(scriptReady(script)).toBe(true);
-  expect(scriptReady({ ...script, score: { ...score, overall: 8 } })).toBe(false);
+  expect(scriptReady({ ...script, score: { ...score, overall: 4 } })).toBe(true);
   expect(scriptReady({ ...script, score: { ...score, unsupported: ["Free"] } })).toBe(false);
+  expect(scriptReady({ ...script, checks: ["Missing required wording"] })).toBe(false);
+  const oldReview = { ...script.review, rubric: "studio-script-v1" };
+  expect(scriptReady({ ...script, review: oldReview, score: { ...score, overall: 8 } })).toBe(true);
+  expect(scriptReady({ ...script, review: oldReview, score: { ...score, overall: 9 } })).toBe(true);
   expect(scriptReady({ ...script, review: { ...script.review, judge: "carbon" } })).toBe(false);
   expect(scriptReady({ ...script, review: undefined })).toBe(false);
+});
+
+it("recommends the strongest reviewed opening without blockers", () => {
+  const hook = { ...base.hook, type: "goal" as const, id: "ready", review: { score: 8, note: "", blockers: [] } };
+  const weak = { ...hook, id: "weak", review: { ...hook.review, score: 7 } };
+  const blocked = { ...hook, id: "blocked", review: { ...hook.review, score: 10, blockers: ["Unsupported claim"] } };
+  expect(recommendedOpening([blocked, weak, hook])).toBe(hook);
+  expect(recommendedOpening([blocked])).toBeUndefined();
 });
 
 it("locks beat timing, narration, visible copy and expected action into the storyboard", () => {

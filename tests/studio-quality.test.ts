@@ -76,7 +76,8 @@ beforeEach(() => {
     id: "test", status: "idle", stage: "qa", format: "video", brandUrl: "https://example.com", progress: {}, events: [], costUsd: 0, creativeIds: [],
     brief: { objective: "Sell the product" }, research: { brand: "Example" },
     directions: [{ id: "dir", title: "Fixture", format: "video", scripts: [fixture], approvedScript: fixture,
-      storyboardKey: "sb-lock", shots: [{ id: "s0", keyframe: "/api/media/fixture.jpg" }] }],
+      storyboardKey: "sb-lock", productRefs: ["fixture-product"], shots: [{ id: "s0", keyframe: "/api/media/fixture.jpg",
+        keyframeQa: { score: 9, match: "pass", notes: [], frames: [{ at: 0, match: "pass", note: "" }] } }] }],
     videoPlan: { lengthSec: 6 },
   } as unknown as StudioRun;
 });
@@ -90,9 +91,9 @@ describe("Studio no-spend route checks", () => {
     expect(state.render).not.toHaveBeenCalled();
   });
 
-  it("removes a stale approval and storyboard when independently regrading edits stays below 9", async () => {
+  it("saves edited approval but clears its storyboard and blocks an unsupported claim", async () => {
     state.review.mockImplementation(async (script: AdScript) => ({
-      script: { ...script, review: fixture.review, score: { ...fixture.score, overall: 8 } }, cost: 0,
+      script: { ...script, review: fixture.review, score: { ...fixture.score, overall: 6, unsupported: ["Blue box"] } }, cost: 0,
     }));
     const res = await request("approve_script", {
       scriptId: fixture.id, edit: { beats: [{ vo: "Open your blue box.", onScreen: "The blue box" }] },
@@ -101,8 +102,17 @@ describe("Studio no-spend route checks", () => {
     await state.jobs[0]();
     expect(state.review.mock.calls[0][0].score).toBeUndefined();
     expect(state.review.mock.calls[0].slice(2)).toEqual([fixture.review!.writer, fixture.review!.judge]);
-    expect(state.run!.directions[0]).toMatchObject({ approvedScript: null, storyboardKey: null });
-    expect(state.run!.events.at(-1)?.text).toContain("Script not approved.");
+    expect(state.run!.directions[0]).toMatchObject({ approvedScript: { id: fixture.id }, storyboardKey: null });
+    expect(state.run!.events.at(-1)?.text).toContain("Before upgrading to HD: Unsupported claim: Blue box");
+    expect(state.render).not.toHaveBeenCalled();
+  });
+
+  it("rejects drafts without product references before spending", async () => {
+    delete state.run!.directions[0].productRefs;
+    const response = await request("render_video", { tier: "draft" });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatch(/real product references/);
+    expect(state.jobs).toHaveLength(0);
     expect(state.render).not.toHaveBeenCalled();
   });
 
@@ -117,12 +127,12 @@ describe("Studio no-spend route checks", () => {
     expect(JSON.stringify(state.vision.mock.calls[0])).toContain("fixture-product");
   });
 
-  it("repairs only the failed take, reuses the voice tracks and saves a draft that unlocks HD", async () => {
+  it.each([false, true])("repairs only the failed take and reuses voice tracks (test draft: %s)", async (exploratory) => {
     const run = state.run!, d = run.directions[0], model = "fixture-model";
     const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
     const pass: ShotQA = { score: 9, match: "pass", notes: [], frames: [{ at: 0, match: "pass", note: "" }] };
     run.models = { text: "text", image: "image", video: model, vision: "vision" };
-    run.videoPlan = { category: "product_demo", lengthSec: 6, draftModel: model, finalModel: model, voice: "Rachel", music: false, budgetUsd: 1 };
+    run.videoPlan = { category: "product_demo", lengthSec: 10, draftModel: model, finalModel: model, voice: "Rachel", music: false, budgetUsd: 1 };
     d.productRefs = ["fixture-product"];
     d.shots = fixture.beats.map((b, i) => {
       const keyframe = `fixture-keyframe-${i}`;
@@ -134,6 +144,10 @@ describe("Studio no-spend route checks", () => {
         voiceTrack: { key: hash([b.vo, "Rachel", b.seconds]), url: `saved-voice-${i}` },
       };
     });
+    if (exploratory) {
+      d.shots[0].keyframeQa = { ...pass, score: 7 };
+      d.approvedScript = { ...fixture, checks: ["Missing required offer in script."] };
+    }
     state.vision.mockResolvedValue({ data: { score: 9, notes: [], frames: [{ index: 1, match: "pass", note: "" }] }, usage: { costUsd: 0 } });
     state.render.mockResolvedValueOnce({ url: "repaired-take", usage: { costUsd: 0 } });
     expect((await request("render_video", { tier: "draft" })).status).toBe(200);
@@ -143,6 +157,24 @@ describe("Studio no-spend route checks", () => {
     expect(state.run?.directions[0].shots?.map((s) => [s.clip, s.voiceTrack?.url])).toEqual([
       ["saved-take-0", "saved-voice-0"], ["repaired-take", "saved-voice-1"],
     ]);
+    if (exploratory) {
+      expect(state.render.mock.calls[0][2]).toMatchObject({ resolution: "480p" });
+      expect(state.creative?.quality).toMatchObject({ status: "review", tier: "draft", score: 9, findings: [
+        expect.objectContaining({ kind: "preflight", observed: "Missing required offer in script." }),
+        expect.objectContaining({ kind: "preflight", observed: "Keyframe 1 still needs review." }),
+      ] });
+      expect(state.creative?.gate?.pass).toBe(false);
+      expect(state.run?.directions[0].passingDraft).toBeNull();
+      const hd = await request("render_video", { tier: "final" });
+      expect(hd.status).toBe(400);
+      expect((await hd.json()).error).toMatch(/Before upgrading to HD: Missing required offer/);
+      state.run!.directions[0].approvedScript = fixture;
+      const weak = await request("render_video", { tier: "final" });
+      expect(weak.status).toBe(400);
+      expect((await weak.json()).error).toMatch(/redraw keyframes 1/);
+      expect(state.jobs).toHaveLength(1);
+      return;
+    }
     expect(state.run?.directions[0].passingDraft).toBe("sb-lock");
     expect(state.creative?.quality).toMatchObject({ status: "pass", tier: "draft" });
 
