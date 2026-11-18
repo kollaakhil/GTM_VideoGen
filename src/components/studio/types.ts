@@ -41,7 +41,14 @@ export interface Ctx {
   pricing: Pricing;
 }
 
-export type Pricing = { credits: number | null; prices: Record<string, { draft: number | null; final: number | null }> };
+export type Pricing = {
+  credits: number | null;
+  prices: Record<string, { draft: number | null; final: number | null }>;
+  /** Whether the optional World Labs real set can run, and why not. */
+  realSet?: { available: boolean; reason: string | null };
+  /** Whether local Real-ESRGAN is installed for HD upscales. */
+  upscaler?: boolean;
+};
 
 export type BeatEdit = Pick<AdScript["beats"][number], "vo" | "onScreen">;
 /** Operator edits sent with approve_script or rescore_script. Beat 1 is the hook. */

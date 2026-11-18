@@ -7,6 +7,7 @@ import { storyboardProofPhoto, storyboardTargets } from "@/lib/quality-policy";
 import { cn } from "@/lib/utils";
 import type { VideoCategory, VideoPlan } from "@/lib/types";
 import { CATEGORIES, estimateCost, LENGTHS, shotCount } from "@/lib/video-categories";
+import { LENSES, MUSIC_STYLES, VISUAL_STYLES } from "@/lib/video-looks";
 import { useFlow } from "./context";
 import { VOICE_OPTIONS } from "./constants";
 import { money, storyboardPhotos } from "./utils";
@@ -65,33 +66,50 @@ export function VideoPlanNode() {
             </select>
           </label>
           <label className="block space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Final model</span>
-            <select className={sel} value={p.finalModel} onChange={(e) => set({ finalModel: e.target.value })}>
-              {video.map((m) => (
-                <option key={m.id} value={m.id}>{m.label}{pricing.prices[m.id]?.final != null ? ` · $${pricing.prices[m.id].final!.toFixed(2)}/s` : ""}</option>
-              ))}
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Lens</span>
+            <select className={sel} value={p.lens ?? "auto"} onChange={(e) => set({ lens: e.target.value })}>
+              {Object.entries(LENSES).map(([k, l]) => <option key={k} value={k}>{l.label}</option>)}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Visual style</span>
+            <select className={sel} value={p.visualStyle ?? "natural"} onChange={(e) => set({ visualStyle: e.target.value })}>
+              {Object.entries(VISUAL_STYLES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Music</span>
+            <select className={sel} value={p.music ? p.musicStyle ?? "auto" : "off"} onChange={(e) => set(e.target.value === "off" ? { music: false } : { music: true, musicStyle: e.target.value })}>
+              <option value="off">No music</option>
+              {Object.entries(MUSIC_STYLES).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500">480p takes</span>
+            <select className={sel} value={p.takes ?? 1} onChange={(e) => set({ takes: Number(e.target.value) })}>
+              {[1, 2, 3].map((n) => <option key={n} value={n}>{n === 1 ? "1 take" : `Up to ${n} takes`}</option>)}
             </select>
           </label>
           <label className="block space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-zinc-500">Budget cap / video</span>
             <input type="number" min={1} max={500} step={1} className={sel} value={p.budgetUsd} onChange={(e) => set({ budgetUsd: Math.max(1, Number(e.target.value) || 1) })} />
           </label>
-          <label className="flex items-end gap-2 pb-1.5 text-xs text-zinc-300">
-            <input type="checkbox" checked={p.music} onChange={(e) => set({ music: e.target.checked })} /> Music bed
+          <label className="flex items-end gap-2 pb-1.5 text-xs text-zinc-300" title={pricing.realSet?.reason ?? "Build one World Labs 3D set and shoot every keyframe in it"}>
+            <input type="checkbox" checked={!!p.realSet} disabled={!pricing.realSet?.available && !p.realSet} onChange={(e) => set({ realSet: e.target.checked })} /> Real set (3D world)
           </label>
         </div>
         {(() => {
           const draft = estimateCost("video", { perSec: pricing.prices[p.draftModel]?.draft, lengthSec: p.lengthSec, shots, music: p.music });
-          const final = estimateCost("video", { perSec: pricing.prices[p.finalModel]?.final, lengthSec: p.lengthSec, shots, music: p.music });
           const low = pricing.credits != null && pricing.credits < draft * 1.2;
           return (
             <div className="space-y-1 rounded-lg bg-white/[0.03] p-2 text-[11px] leading-snug text-zinc-400">
               {eligible.length > 0 && <div>Storyboards ≈ {money(estimateCost("storyboard", { lengthSec: p.lengthSec, shots: eligible.reduce((sum, d) => sum + (d.approvedScript?.beats.length ?? 0), 0) }))}</div>}
               <div>
-                Per video: draft ≈ <span className={cn(draft > p.budgetUsd && "text-amber-300")}>{money(draft)}</span>, final ≈ <span className={cn(final > p.budgetUsd && "text-amber-300")}>{money(final)}</span>
+                Per 480p take ≈ <span className={cn(draft > p.budgetUsd && "text-amber-300")}>{money(draft)}</span>{(p.takes ?? 1) > 1 ? ` · up to ${p.takes} takes, stops at the first 9/10` : ""}. HD = local upscale of the approved take (QA only, ≈ $0.10).
               </div>
               <div className={cn(low ? "text-red-300" : "text-zinc-500")}>OpenRouter spendable: {money(pricing.credits)}{low ? " · check Credits and Guardrails" : ""}</div>
-              {(draft > p.budgetUsd || final > p.budgetUsd) && <div className="text-amber-300">Over your cap: shorten the video, pick a cheaper model or raise the cap.</div>}
+              {!pricing.realSet?.available && <div className="text-zinc-500">{pricing.realSet?.reason ?? "Real set unavailable."}</div>}
+              {draft > p.budgetUsd && <div className="text-amber-300">Over your cap: shorten the video, pick a cheaper model or raise the cap.</div>}
             </div>
           );
         })()}

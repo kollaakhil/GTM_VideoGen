@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   review: vi.fn(),
   vision: vi.fn(),
   render: vi.fn(),
+  upscale: vi.fn(),
 }));
 
 vi.mock("next/server", async (original) => ({ ...await original<typeof import("next/server")>(), after: (job: () => Promise<void>) => state.jobs.push(job) }));
@@ -45,6 +46,8 @@ vi.mock("@/lib/media-qa", async (original) => ({
   audioFindings: async () => [], checkExport: async () => [], evidenceFrames: async () => [{ at: 0, url: "fixture-frame" }],
   localOcrAvailable: async () => true, verifySpeech: async () => ({ findings: [], cost: 0 }), videoTechnicalFindings: async () => [],
 }));
+vi.mock("@/lib/upscale", () => ({ upscaleClip: state.upscale, upscalerAvailable: async () => true }));
+vi.mock("@/lib/qa-tools", () => ({ sceneCuts: async () => ({ cuts: [], via: "ffmpeg" }), wordTimings: async () => null, werCheck: async () => ({ wer: 0, via: "builtin" }), lipSync: async () => null, loudness: async () => null }));
 vi.mock("@/lib/video-post", async (original) => ({
   ...await original<typeof import("@/lib/video-post")>(),
   captionVariants: async () => [{ aspect: "9:16", url: "fixture-export" }],
@@ -83,10 +86,10 @@ beforeEach(() => {
 });
 
 describe("Studio no-spend route checks", () => {
-  it("rejects HD before any video work when the current draft has not passed", async () => {
+  it("rejects HD before any video work when no 480p take is approved", async () => {
     const res = await request("render_video", { tier: "final" });
     expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: expect.stringContaining("Pass draft QA") });
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("Approve a 480p take") });
     expect(state.jobs).toHaveLength(0);
     expect(state.render).not.toHaveBeenCalled();
   });
@@ -139,7 +142,7 @@ describe("Studio no-spend route checks", () => {
       return {
         ...b, id: `s${i}`, beat: i ? "cta" : "hook", camera: "wide", status: "done", attempts: 1, keyframe, keyframeQa: pass,
         expectedVisual: b.visual, clip: `saved-take-${i}`, clipModel: model,
-        clipKey: hash(["video-qa-v1", "480p", model, "product_demo", d.productRefs, keyframe, b.visual, b.visual, "wide", b.seconds]),
+        clipKey: hash(["video-qa-v2", "480p", model, "product_demo", d.productRefs, keyframe, b.visual, b.visual, "wide", b.seconds, ""]),
         clipQa: i ? { score: 5, match: "fail", notes: ["Wrong box"] } : pass,
         voiceTrack: { key: hash([b.vo, "Rachel", b.seconds]), url: `saved-voice-${i}` },
       };
@@ -187,5 +190,49 @@ describe("Studio no-spend route checks", () => {
     }));
     expect(decision.status).toBe(400);
     expect(await decision.json()).toMatchObject({ error: expect.stringContaining("storyboard changed") });
+  });
+
+  it("approves one 480p take and upscales exactly its clips without new generation", async () => {
+    const run = state.run!, d = run.directions[0], model = "fixture-model";
+    const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
+    const pass: ShotQA = { score: 9, match: "pass", notes: [], frames: [{ at: 0, match: "pass", note: "" }] };
+    run.models = { text: "text", image: "image", video: model, vision: "vision" };
+    run.videoPlan = { category: "product_demo", lengthSec: 6, draftModel: model, finalModel: model, voice: "Rachel", music: false, budgetUsd: 1, takes: 2 };
+    d.shots = fixture.beats.map((b, i) => {
+      const keyframe = `fixture-keyframe-${i}`;
+      return {
+        ...b, id: `s${i}`, beat: i ? "cta" : "hook", camera: "wide", status: "done", attempts: 1, keyframe, keyframeQa: pass,
+        expectedVisual: b.visual, clip: `saved-take-${i}`, clipModel: model, clipQa: pass,
+        clipKey: hash(["video-qa-v2", "480p", model, "product_demo", d.productRefs, keyframe, b.visual, b.visual, "wide", b.seconds, ""]),
+        voiceTrack: { key: hash([b.vo, "Rachel", b.seconds]), url: `saved-voice-${i}` },
+      };
+    });
+    state.vision.mockResolvedValue({ data: { score: 9, notes: [], frames: [{ index: 1, match: "pass", note: "" }] }, usage: { costUsd: 0 } });
+    expect((await request("render_video", { tier: "final" })).status).toBe(400);
+    expect((await request("render_video", { tier: "draft" })).status).toBe(200);
+    await state.jobs[0]();
+    expect(state.render).not.toHaveBeenCalled();
+    const take = state.run!.directions[0].takes!.at(-1)!;
+    expect(take).toMatchObject({ pass: true, storyboardKey: "sb-lock", clips: [{ shotId: "s0", url: "saved-take-0" }, { shotId: "s1", url: "saved-take-1" }] });
+    expect(state.run!.directions[0].takes).toHaveLength(1);
+
+    const approved = await request("approve_take", { takeId: take.id });
+    expect(approved.status).toBe(200);
+    expect(state.run!.directions[0].approvedTakeId).toBe(take.id);
+
+    state.upscale.mockImplementation(async (clip: string) => ({ url: `hd-${clip}`, method: "realesrgan", interpolated: false }));
+    expect((await request("render_video", { tier: "final" })).status).toBe(200);
+    await state.jobs[1]();
+    expect(state.render).not.toHaveBeenCalled();
+    expect(state.upscale.mock.calls.map((c) => c[0])).toEqual(["saved-take-0", "saved-take-1"]);
+    expect(state.creative).toMatchObject({ model: expect.stringContaining("Real-ESRGAN"), quality: { tier: "final" } });
+    expect(state.run!.directions[0].takes!.at(-1)!.upscaledCreativeId).toBe(state.creative!.id);
+  });
+
+  it("rejects approving a take from an older storyboard", async () => {
+    state.run!.directions[0].takes = [{ id: "take-old", storyboardKey: "sb-old", creativeId: "c", url: "u", score: 9, pass: true, clips: [], voices: [], music: null, costUsd: 0, createdAt: "" }];
+    const res = await request("approve_take", { takeId: "take-old" });
+    expect(res.status).toBe(400);
+    expect(state.run!.directions[0].approvedTakeId).toBeUndefined();
   });
 });
