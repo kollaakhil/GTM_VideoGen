@@ -1543,6 +1543,7 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>, dirH =
     const nodes: Node[] = [];
     const edges: Edge[] = [];
     const working = run?.status === "working";
+    const sb = Math.max(run?.directions.some((d) => d.shots?.length) ? SB_SHIFT : 0, dirH ? DIR_Y + dirH + 90 - CR_Y : 0);
     let order = 0;
     const edge = (source: string, target: string, down: boolean, opts: { active?: boolean; tone?: "pass" | "fail" } = {}): Edge => ({
       id: `${source}->${target}`,
@@ -1562,7 +1563,11 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>, dirH =
       for (const g of GHOSTS) {
         if (g.order <= order) continue;
         const id = `ghost-${g.key}`;
-        nodes.push({ id, type: "ghost", position: { x: g.x, y: g.y }, data: { label: g.label, step: g.step, hint: g.hint, icon: g.key, order: g.order } });
+        nodes.push({
+          id, type: "ghost", position: { x: g.x, y: g.y + (g.order >= 4 ? sb : 0) },
+          focusable: false, style: { pointerEvents: "none" },
+          data: { label: g.label, step: g.step, hint: g.hint, icon: g.key, order: g.order },
+        });
         sources.forEach((src) => edges.push({ ...edge(src, id, g.order >= 3), animated: false, style: { stroke: "#3f3f46", strokeWidth: 1.5, strokeDasharray: "4 6" } }));
         sources = [id];
       }
@@ -1601,7 +1606,6 @@ function useGraph(run: StudioRun | null, byDir: Record<string, Creative>, dirH =
       order = 3;
     }
 
-    const sb = Math.max(run.directions.some((d) => d.shots?.length) ? SB_SHIFT : 0, dirH ? DIR_Y + dirH + 90 - CR_Y : 0);
     if (run.format === "video" && run.directions.length > 0) {
       nodes.push({ id: "videoplan", type: "videoplan", position: { x: 140, y: DIR_Y }, data: {} });
       edges.push(edge("brief", "videoplan", true, {}));
