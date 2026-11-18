@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const chat = vi.hoisted(() => ({ fn: vi.fn() }));
 vi.mock("@/lib/ai", async (original) => ({ ...await original<typeof import("@/lib/ai")>(), chatJSON: chat.fn }));
 
-import { audioChecks, better, continuityScore, editChecks, researchGate, researchRules, shotRules, shotsGate, videoChecks } from "@/lib/stage-gates";
+import { audioChecks, better, continuityScore, editChecks, researchGate, researchRules, scrubResearch, shotRules, shotsGate, videoChecks } from "@/lib/stage-gates";
 import { calibrated, combine, overrideStage, saveStage, scriptStage, stageBlock, stageScore, takeStageBlock, threshold } from "@/lib/stage-policy";
 import { goldenSet, summarize } from "@/lib/judge-calibration";
 import { SCRIPT_TARGET } from "@/lib/script-lab";
@@ -111,6 +111,20 @@ describe("judged gates", () => {
     expect(g.fixes[0]).toBe("Remove or source: FDA approved");
     expect(g.score.checks.find((c) => c.name === "no hallucinated facts")?.note).toMatch(/FDA approved/);
     expect(g.cost).toBe(0.001);
+  });
+
+  it("any unsupported fact keeps research under the bar even with a high average", async () => {
+    chat.fn.mockResolvedValue({ data: { grounded: 9, evidence: 10, competitors: 10, unsupported: ["code WELCOME15"], notes: [] }, usage });
+    const g = await researchGate("judge", research, voc, "site", null);
+    expect(g.score).toMatchObject({ score: 7.5, pass: false });
+    expect(g.unsupported).toEqual(["code WELCOME15"]);
+  });
+
+  it("scrubs unsupported facts out of research", () => {
+    const r = scrubResearch({ ...research, summary: "UV bottle, aged roughly 25-45, ships fast.", valueProps: ["UV-C cap", "15% off with code WELCOME15"], angles: ["Cold", "Use code welcome15 today"] }, ["aged roughly 25-45", "code WELCOME15"]);
+    expect(r.summary).toBe("UV bottle, ships fast.");
+    expect(r.valueProps).toEqual(["UV-C cap"]);
+    expect(r.angles).toEqual(["Cold"]);
   });
 
   it("a broken judge verdict falls back to rule checks instead of blocking", async () => {
