@@ -3,7 +3,7 @@ import { brandRules } from "@/lib/brand-rules";
 import { voiceOfCustomer, vocBlock } from "@/lib/ad-wisdom";
 import { breakdownInspiration, swipeStructure } from "@/lib/inspiration";
 import { newId, put, storeMedia } from "@/lib/store";
-import { better, gateJudge, researchGate } from "@/lib/stage-gates";
+import { better, gateJudge, researchGate, scrubResearch } from "@/lib/stage-gates";
 import { saveStage, stageBlock } from "@/lib/stage-policy";
 import { latestCalibration } from "@/lib/judge-calibration";
 import type { InspirationBreakdown, StudioRun, VoiceOfCustomer } from "@/lib/types";
@@ -81,6 +81,13 @@ async function gateResearch(run: StudioRun, r: Researched, voc: VoiceOfCustomer 
       if (g2.score.score >= gate.score.score) r = again;
       gate = better(gate, g2);
     }
+  }
+  // Still citing facts the site doesn't have: cut them out and re-check (one more cheap judge call).
+  if (!gate.score.pass && gate.unsupported.length && r.site) {
+    const scrubbed = { ...r, data: scrubResearch(r.data, gate.unsupported) };
+    const g3 = await researchGate(judge, scrubbed.data, voc, r.site.text, cal, gate.score.attempts + 1);
+    if (g3.score.score >= gate.score.score) r = scrubbed;
+    gate = better(gate, g3);
   }
   saveStage(run, gate.score);
   const blocked = stageBlock(run, "research");

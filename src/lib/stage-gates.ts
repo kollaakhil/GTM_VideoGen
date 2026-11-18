@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { chatJSON, type Part } from "./ai";
-import { clamp, stageScore, type Check } from "./stage-policy";
-import type { JudgeCalibration, Research, Shot, ShotQA, StudioRun, VoiceOfCustomer } from "./types";
+import { clamp, stageScore, threshold, type Check } from "./stage-policy";
+import type { JudgeCalibration, Research, Shot, ShotQA, StageScore, StudioRun, VoiceOfCustomer } from "./types";
 
 /** Judges and rule checks for each stage gate (thresholds and blocking live in stage-policy.ts). */
 
@@ -32,7 +32,7 @@ const ResearchVerdict = z.object({
 
 /** Judge: every fact must trace to the site text; competitors must be real companies in the category. */
 export async function judgeResearch(model: string, r: Research, siteText: string) {
-  const { data, usage } = await chatJSON<unknown>(model, "You are a strict fact-checker for marketing research. Return only JSON.", `Website text (the only ground truth):\n${siteText.slice(0, 9000) || "(unavailable)"}\n\nResearch to check: ${JSON.stringify({ brand: r.brand, summary: r.summary, audience: r.audience, valueProps: r.valueProps, competitors: r.competitors ?? [] })}
+  const { data, usage } = await chatJSON<unknown>(model, "You are a strict fact-checker for marketing research. Return only JSON.", `Website text (the only ground truth):\n${siteText.slice(0, 12000) || "(unavailable)"}\n\nResearch to check: ${JSON.stringify({ brand: r.brand, summary: r.summary, audience: r.audience, valueProps: r.valueProps, competitors: r.competitors ?? [] })}
 Score 0–10: "grounded" (10 = every fact is in the website text; list each fact that is not as "unsupported", quoted from the research), "evidence" (value props backed by concrete proof such as numbers, materials, guarantees or reviews), "competitors" (named competitors are real companies selling a similar product; 0 if invented, 3 if none named). Add up to 3 notes on how to fix the research.
 Return JSON {"grounded":number,"evidence":number,"competitors":number,"unsupported":[string],"notes":[string]}`);
   const v = ResearchVerdict.safeParse(data);
@@ -182,16 +182,39 @@ export async function researchGate(model: string, r: Research, voc: VoiceOfCusto
   const checks = researchRules(r, voc);
   let cost = 0;
   let fixes: string[] = [];
+  let unsupported: string[] = [];
   try {
     const j = await judgeResearch(model, r, siteText);
     checks.push(...j.checks);
     cost = j.cost;
+    unsupported = j.unsupported;
     fixes = [...j.unsupported.map((u) => `Remove or source: ${u}`), ...j.notes];
   } catch (e) {
     fixes = [`Research judge unavailable: ${(e as Error).message.slice(0, 120)}`];
   }
   if (!r.competitors?.length) fixes.push("Name 2-4 real competitors in the category.");
-  return { score: stageScore("research", checks, model, attempts, fixes, cal), fixes, cost };
+  const score = stageScore("research", checks, model, attempts, fixes, cal);
+  // An unsupported fact flows into the brief and every script, so it can't pass on a good average.
+  if (unsupported.length && score.score >= threshold("research")) Object.assign(score, { score: threshold("research") - 0.5, pass: false });
+  return { score, fixes, cost, unsupported };
+}
+
+/**
+ * Deterministic last resort after a retry: drop every value prop, angle or competitor that contains a fact the
+ * fact-checker couldn't find on the site, and cut those phrases out of the summary and audience.
+ */
+export function scrubResearch(r: Research, unsupported: string[]): Research {
+  const bad = unsupported.map((u) => u.toLowerCase().replace(/^["“']|["”']$/g, "").trim()).filter((u) => u.length >= 4);
+  const hit = (s: string) => bad.some((u) => s.toLowerCase().includes(u));
+  const cut = (s: string) => bad.reduce((out, u) => out.replace(new RegExp(u.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "").replace(/\s{2,}/g, " ").replace(/\s+([,.;])/g, "$1").replace(/([,;])[,;]+/g, "$1"), s).trim();
+  return {
+    ...r,
+    summary: cut(r.summary),
+    audience: cut(r.audience),
+    valueProps: r.valueProps.filter((v) => !hit(v)),
+    angles: r.angles.filter((a) => !hit(a)),
+    competitors: r.competitors?.filter((c) => !hit(`${c.name} ${c.difference ?? ""}`)),
+  };
 }
 
 export async function shotsGate(model: string, shots: Shot[], cal: JudgeCalibration | null, attempts = 1) {
@@ -210,9 +233,9 @@ export async function shotsGate(model: string, shots: Shot[], cal: JudgeCalibrat
   return { score: stageScore("shots", checks, model, attempts, fixes, cal), fixes, cost };
 }
 
-type GateResult = Awaited<ReturnType<typeof shotsGate>>;
+type GateResult = { score: StageScore; fixes: string[]; cost: number };
 /** Keeps the better of two attempts and records that a retry ran. */
-export const better = (a: GateResult, b: GateResult): GateResult => {
+export const better = <T extends GateResult>(a: T, b: T): T => {
   const best = b.score.score >= a.score.score ? b : a;
   return { ...best, score: { ...best.score, attempts: a.score.attempts + 1 }, cost: a.cost + b.cost };
 };

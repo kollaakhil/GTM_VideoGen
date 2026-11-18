@@ -58,7 +58,8 @@ export function newRun(body: Extract<Parsed, { action: "research" }>, user: stri
     events: [],
     progress: {},
     research: null,
-    referenceUrl: body.referenceUrl || body.inspirations?.find((i) => i.url)?.url || null,
+    // A direct video or image link is broken down as an inspiration, not fetched as a style page.
+    referenceUrl: body.referenceUrl || body.inspirations?.find((i) => i.url && !/\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)(\?|#|$)/i.test(i.url))?.url || null,
     autoBrief: body.autoBrief ?? false,
     offer: body.offer || null,
     styleDNA: null,
