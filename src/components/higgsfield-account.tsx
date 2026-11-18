@@ -30,12 +30,11 @@ export function HiggsfieldAccount({ connected, email }: { connected: boolean; em
         {connected && email ? ` Signed in as ${email}.` : ""}
       </p>
       {msg && msg !== "connected" && <p className="mt-2 text-xs text-red-400">{msg}</p>}
-      <div className="mt-3">
-        {connected ? (
+      <div className="mt-3 flex flex-wrap gap-2">
+        {connected && (
           <button onClick={disconnect} disabled={busy} className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50">Disconnect</button>
-        ) : (
-          <a href="/api/higgsfield/connect" className="inline-block rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">Connect Higgsfield account</a>
         )}
+        <a href="/api/higgsfield/connect" className="inline-block rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">{connected ? "Reconnect Higgsfield account" : "Connect Higgsfield account"}</a>
       </div>
     </div>
   );

@@ -18,6 +18,7 @@ const MCP_URL = "https://mcp.higgsfield.ai/mcp";
 const AUTH = "https://mcp.higgsfield.ai/oauth2";
 const ROW = "higgsfield_mcp";
 const SCOPE = "openid email offline_access";
+const RECONNECT = "Higgsfield sign-in is no longer valid. Open Connections and reconnect your Higgsfield account.";
 
 const key = () => crypto.createHash("sha256").update(process.env.SESSION_SECRET ?? "").digest();
 function seal(s: string) {
@@ -65,9 +66,17 @@ export async function higgsfieldAuthorizeUrl(redirectUri: string) {
   return { url: `${AUTH}/authorize?${q}`, verifier, state };
 }
 
+class InvalidGrant extends Error {}
+
 async function token(params: Record<string, string>) {
   const res = await fetch(`${AUTH}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ ...params, resource: MCP_URL }) });
-  if (!res.ok) throw new Error(`Higgsfield sign-in ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    if (body?.error === "invalid_grant") {
+      throw new InvalidGrant(params.grant_type === "refresh_token" ? RECONNECT : "Higgsfield sign-in expired or was already used. Start sign-in again from Connections.");
+    }
+    throw new Error(`Higgsfield sign-in failed (HTTP ${res.status}). Try again from Connections.`);
+  }
   return (await res.json()) as { access_token: string; refresh_token?: string; expires_in?: number; id_token?: string };
 }
 
@@ -88,27 +97,64 @@ async function save(t: Awaited<ReturnType<typeof token>>, r: Integration) {
 }
 
 export async function higgsfieldExchange(code: string, verifier: string, redirectUri: string) {
-  const r = await row();
   const clientId = await clientFor(redirectUri);
-  r.clients[redirectUri] = clientId;
+  const t = await token({ grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: redirectUri, client_id: clientId });
+  if (!t.refresh_token) throw new Error("Higgsfield didn't grant ongoing access. Reconnect and allow offline access.");
+  const r = await row();
   r.clientId = clientId;
   r.connectedAt = new Date().toISOString();
-  await save(await token({ grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: redirectUri, client_id: clientId }), r);
+  delete r.email;
+  sessions.clear();
+  await save(t, r);
 }
 
-export async function higgsfieldDisconnect() {
-  const r = await row();
+async function clearCredentials(r: Integration) {
   delete r.accessToken;
   delete r.refreshToken;
+  delete r.expiresAt;
+  delete r.email;
+  delete r.connectedAt;
+  sessions.clear();
   await put("integrations", r);
 }
 
-async function accessToken(force = false) {
+export async function higgsfieldDisconnect() {
+  await clearCredentials(await row());
+}
+
+const cachedToken = (r: Integration | null) =>
+  r?.refreshToken && r.accessToken && (r.expiresAt ?? 0) > Date.now() + 60_000 ? open(r.accessToken) : undefined;
+
+let refreshing: Promise<string> | undefined;
+
+async function refreshAccessToken(rejected?: string) {
   const r = await get("integrations", ROW);
   if (!r?.refreshToken || !r.clientId) throw new Error("Higgsfield isn't connected. Open Connections and click Connect Higgsfield account.");
-  if (!force && r.accessToken && (r.expiresAt ?? 0) > Date.now() + 60_000) return open(r.accessToken);
-  await save(await token({ grant_type: "refresh_token", refresh_token: open(r.refreshToken), client_id: r.clientId }), r);
-  return open(r.accessToken!);
+  const cached = cachedToken(r);
+  if (cached && cached !== rejected) return cached;
+
+  const refresh = r.refreshToken;
+  const t = await token({ grant_type: "refresh_token", refresh_token: open(refresh), client_id: r.clientId }).catch((error) => {
+    if (error instanceof InvalidGrant) return null;
+    throw error;
+  });
+  const latest = await get("integrations", ROW);
+  if (latest?.refreshToken !== refresh) {
+    const newer = cachedToken(latest);
+    if (newer && newer !== rejected) return newer;
+    throw new Error(RECONNECT);
+  }
+  if (!t) {
+    await clearCredentials(latest);
+    throw new Error(RECONNECT);
+  }
+  if (latest.accessToken) sessions.delete(open(latest.accessToken));
+  await save(t, latest);
+  return t.access_token;
+}
+
+function accessToken(rejected?: string) {
+  return refreshing ??= refreshAccessToken(rejected).finally(() => { refreshing = undefined; });
 }
 
 let rpcId = 0;
@@ -134,13 +180,16 @@ async function readRpc(res: Response, id: number) {
 }
 
 /** One JSON-RPC call over MCP Streamable HTTP, with initialize + token refresh handled. */
-async function rpc(method: string, params: Record<string, unknown>, retried = false): Promise<unknown> {
-  const auth = await accessToken(retried);
+async function rpc(method: string, params: Record<string, unknown>, retry?: { rejected?: string }): Promise<unknown> {
+  const auth = await accessToken(retry?.rejected);
   let session = sessions.get(auth);
   if (!session) {
     const id = ++rpcId;
     const init = await post({ jsonrpc: "2.0", id, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "gtm-engine", version: "1.0" } } }, auth);
-    if (init.status === 401 && !retried) return rpc(method, params, true);
+    if (init.status === 401) {
+      if (!retry) return rpc(method, params, { rejected: auth });
+      throw new Error(RECONNECT);
+    }
     if (!init.ok) throw new Error(`Higgsfield MCP ${init.status}: ${(await init.text()).slice(0, 200)}`);
     await readRpc(init, id);
     session = init.headers.get("mcp-session-id") ?? "";
@@ -149,9 +198,10 @@ async function rpc(method: string, params: Record<string, unknown>, retried = fa
   }
   const id = ++rpcId;
   const res = await post({ jsonrpc: "2.0", id, method, params }, auth, session || undefined);
-  if ((res.status === 401 || res.status === 404) && !retried) {
+  if (res.status === 401 || res.status === 404) {
     sessions.delete(auth);
-    return rpc(method, params, true);
+    if (!retry) return rpc(method, params, res.status === 401 ? { rejected: auth } : {});
+    if (res.status === 401) throw new Error(RECONNECT);
   }
   if (!res.ok) throw new Error(`Higgsfield MCP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const msg = await readRpc(res, id);

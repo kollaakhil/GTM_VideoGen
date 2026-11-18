@@ -1769,6 +1769,9 @@ function Dock({ elapsed, notice }: { elapsed: number; notice: string | null }) {
             <span className="flex items-start gap-2 text-red-300">
               <AlertTriangle className="mt-0.5 size-4 shrink-0" />
               <span className="line-clamp-4">{lastError}</span>
+              {/Higgsfield (?:sign-in|isn't connected)/.test(lastError) && (
+                <Link href="/connections" className="shrink-0 font-medium underline">Connections</Link>
+              )}
             </span>
           ) : (
             text
