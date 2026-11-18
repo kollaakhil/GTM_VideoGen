@@ -338,37 +338,89 @@ export function wrapLines(text: string, max: number, maxLines = 3) {
   return lines;
 }
 
+/** The offer line printed on a static ad: the first sentence of the offer, with no mid-word cut. Clauses are trimmed later by fitOffer. */
+export function offerLine(raw: string | null | undefined): string {
+  return (raw ?? "").split(/\.(?:\s|$)|[;\n]/)[0].replace(/[{}\\]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Average glyph width of bold sans text as a share of the font size (DejaVu Sans Bold runs wide, so this is conservative). */
+const GLYPH_EM = 0.6;
+export const OFFER_MAX_PX = 940;
+
+/**
+ * Fits the offer inside maxPx on at most maxLines lines. Tries the base size, then smaller sizes, then drops trailing
+ * comma clauses, and finally cuts at the last whole word, so the offer never runs off the image or stops mid-word.
+ */
+export function fitOffer(raw: string, o: { maxPx?: number; maxLines?: number; sizes?: number[] } = {}): { lines: string[]; size: number; text: string } {
+  const maxPx = o.maxPx ?? OFFER_MAX_PX;
+  const maxLines = o.maxLines ?? 2;
+  const sizes = o.sizes ?? [44, 40, 36];
+  const text = raw.replace(/\s+/g, " ").trim();
+  if (!text) return { lines: [], size: sizes[0], text: "" };
+  const perLine = (size: number) => Math.floor(maxPx / (size * GLYPH_EM));
+  const fits = (t: string, size: number) => {
+    const lines = wrapLines(t, perLine(size), Number.MAX_SAFE_INTEGER);
+    return lines.length <= maxLines && lines.every((l) => l.length <= perLine(size)) ? lines : null;
+  };
+  const clauses = text.split(/\s*,\s*/).filter(Boolean);
+  for (let keep = clauses.length; keep >= 1; keep--) {
+    const t = clauses.slice(0, keep).join(", ");
+    for (const size of sizes) {
+      const lines = fits(t, size);
+      if (lines) return { lines, size, text: t };
+    }
+  }
+  const size = sizes[sizes.length - 1];
+  const max = perLine(size);
+  const words = clauses[0].split(" ");
+  const lines: string[] = [];
+  for (const w of words) {
+    const last = lines[lines.length - 1];
+    if (last !== undefined && `${last} ${w}`.length <= max) lines[lines.length - 1] = `${last} ${w}`;
+    else if (lines.length < maxLines && w.length <= max) lines.push(w);
+    else break;
+  }
+  return { lines, size, text: lines.join(" ") };
+}
+
 const assColor = (hex: string) => `&H00${hex.slice(5, 7)}${hex.slice(3, 5)}${hex.slice(1, 3)}`.toUpperCase();
 
 /**
  * Typesets a static ad in code: the image model only paints the scene; headline, offer, CTA and logo are laid out
  * with the brand font so text is always spelled right and on-brand. Output 1080x1350 (4:5) PNG data URL.
  */
-export async function typesetStatic(background: string, kit: StaticKit): Promise<string> {
+export async function typesetStatic(background: string, kit: StaticKit, o: { tighter?: number } = {}): Promise<string> {
   const W = 1080;
   const H = 1350;
+  // Each "tighter" step (used when QA flags text layout) shrinks type ~10% and narrows the text block.
+  const t = Math.max(0, Math.min(3, o.tighter ?? 0));
+  const k = 1 - 0.1 * t;
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-static-"));
   try {
     const bg = await toFile(dir, "bg.img", background);
     const clean = (t: string) => t.replace(/[{}\\\n]/g, " ").trim();
     const headline = clean(kit.headline);
-    const size = headline.length > 48 ? 70 : headline.length > 30 ? 82 : 96;
-    const lines = wrapLines(headline, Math.floor((W - 140) / (size * 0.56)));
+    const size = Math.round((headline.length > 48 ? 70 : headline.length > 30 ? 82 : 96) * k);
+    const textPx = OFFER_MAX_PX - 40 * t;
+    const lines = wrapLines(headline, Math.floor(textPx / (size * 0.56)));
     const primary = /^#[0-9a-f]{6}$/i.test(kit.primary ?? "") ? kit.primary! : "#111111";
     const ink = inkFor(primary);
     const font = kit.fontFamily || "DejaVu Sans";
-    const offer = kit.offer ? clean(kit.offer).slice(0, 60) : "";
+    const fitted = kit.offer ? fitOffer(offerLine(clean(kit.offer)), { maxPx: textPx, sizes: [44, 40, 36].map((n) => Math.round(n * k)) }) : null;
+    const offer = fitted?.lines.length ? fitted.lines.join("\\N") : "";
+    const offerSize = fitted?.size ?? 44;
     const footer = kit.footer ? clean(kit.footer).slice(0, 80) : "";
     const ctaY = H - (footer ? 150 : 110);
     const offerY = ctaY - 100;
-    const headBottom = offer ? offerY - 60 : ctaY - 90;
+    const offerExtra = fitted && fitted.lines.length > 1 ? Math.round((fitted.lines.length - 1) * offerSize * 1.2) : 0;
+    const headBottom = offer ? offerY - 60 - offerExtra : ctaY - 90;
     const ev = (style: string, an: number, x: number, y: number, text: string, extra = "") => `Dialogue: 0,0:00:00.00,0:00:05.00,${style},{\\an${an}\\pos(${x},${y})${extra}}${text}`;
     const ass = [
       "[Script Info]", "ScriptType: v4.00+", `PlayResX: ${W}`, `PlayResY: ${H}`, "WrapStyle: 2", "",
       "[V4+ Styles]",
       "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
       `Style: Head,${font},${size},&H00FFFFFF,&H00000000,&H64000000,1,1,0,3,1,0,0,0`,
-      `Style: Offer,${font},44,&H00FFFFFF,&H00000000,&H64000000,1,1,0,2,1,0,0,0`,
+      `Style: Offer,${font},${offerSize},&H00FFFFFF,&H00000000,&H64000000,1,1,0,2,1,0,0,0`,
       `Style: Cta,${font},44,${ink === "white" ? "&H00FFFFFF" : "&H00000000"},${assColor(primary)},${assColor(primary)},1,3,22,0,1,0,0,0`,
       `Style: Foot,${font},30,&H00E6E6E6,&H00000000,&H64000000,0,1,0,2,1,0,0,0`,
       "", "[Events]", "Format: Layer, Start, End, Style, Text",
