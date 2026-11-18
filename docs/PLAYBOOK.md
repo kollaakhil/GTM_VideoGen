@@ -1,0 +1,51 @@
+# GTM Engine failure playbook
+
+Known failure cases, how to spot them, and the fix. Add a section every time a run fails in a new way.
+
+## 1. Tests fail with `spawn .../ffmpeg-static/ffmpeg ENOENT`
+
+**Symptom:** after a fresh `pnpm install`, the media and typeset tests (and any real render) fail with `ENOENT` on the FFmpeg binary. pnpm prints `Ignored build scripts: esbuild, ffmpeg-static`.
+
+**Cause:** pnpm 10 skips dependency install scripts unless they are allow-listed, so `ffmpeg-static` never downloads its binary.
+
+**Fix (in repo):** `package.json` → `"pnpm": { "onlyBuiltDependencies": ["esbuild", "ffmpeg-static"] }`. If a new dependency needs a build script, pnpm warns on install; add it to that list.
+
+**Related:** pnpm 10 also stopped hoisting ESLint plugins, so `pnpm run lint` failed with "couldn't find the plugin eslint-plugin-react-hooks". `pnpm-workspace.yaml` sets `publicHoistPattern: ["*eslint*"]`. After changing either setting on an existing checkout, delete `node_modules` and reinstall.
+
+**Also:** `tests/media.test.ts` calls a system `ffprobe` (ffmpeg-static does not include it). If those tests fail with `spawnSync ffprobe ENOENT`, install FFmpeg on the host (`brew install ffmpeg` or `apt install ffmpeg`), or put a static `ffprobe` on PATH.
+
+## 2. Bug A: offer line runs off the static ad
+
+**Symptom (Patagonia Better Sweater run, 2026-11-18):** the offer under the headline read "Ironclad Guarantee, Worn Wear repair and resa…" and spilled past the right edge. Vision QA scored 5/10.
+
+**Cause:** `typesetStatic` cut the offer to 60 characters and the ASS subtitle used `WrapStyle: 2` (no wrapping), so a 60-character line at 44px (~1,600px) overflowed the 1080px image. The offer was also cut to 60 characters upstream, mid-word.
+
+**Fix:** `offerLine()` takes the first sentence (keeps prices like `$249.99`) with no character cut. `fitOffer()` fits it inside ~940px on at most 2 lines: it tries 44/40/36px, then drops trailing comma clauses, then cuts at the last whole word. The headline moves up to make room for a second offer line. The claims check now reviews exactly what is printed.
+
+## 3. Bug B: auto-fix paid for re-renders that could not fix text
+
+**Symptom:** QA flagged the cut-off offer. The auto-fix loop sent that note to the image model twice, and both re-renders scored 5/10 again.
+
+**Cause:** the headline, offer and CTA are typeset in code after the image is generated, so the image model cannot change them. All QA notes were passed to it as "fix these issues".
+
+**Fix:** `src/lib/qa-triage.ts` sorts QA notes into **typeset** (headline, offer, CTA, wrapping, cut off, legibility, typos) and **picture** (everything else, including stray text painted into the scene such as labels or signage). Typeset-only failures are fixed by re-typesetting the same scene with tighter type (`typesetStatic(..., { tighter })`), which costs nothing apart from the QA call. Only picture notes go to the image model. When the image model draws the text itself (`STATIC_TYPESET=off`), every note still goes to it.
+
+## 4. Bug C: comparison claims the research doesn't support
+
+**Symptom:** the "Us vs them" direction produced the headline "Only one is guaranteed". Nothing in the research says competitors lack a guarantee, so the creative failed its own claims check, but only after the image had been paid for.
+
+**Fix:**
+- `CLAIM_RULE` (in `src/lib/ad-wisdom.ts`) is added to every concept and direction prompt: comparisons and superlatives ("only", "best", "#1", "unlike others"…) need proof in the research or brief. "Us vs them" compares against the customer's old way unless a difference is documented.
+- The claims reviewer now explicitly flags unproven comparisons and superlatives.
+- `preflightCopy()` (in `src/lib/gate.ts`) runs the claims check on the on-image headline and offer **before** rendering. Unsupported offer clauses are dropped. An unsupported headline is rewritten once, re-checked, and replaced with a research value prop if it still fails. Each change is posted in the Studio chat.
+
+## 5. Silent Reddit voice-of-customer failure (not fixed yet)
+
+`redditText()` in `src/lib/ad-wisdom.ts` swallows every error (rate limits, blocks, JSON changes) and returns empty text. The run continues with no Reddit quotes and nothing tells the user. **Watch for:** voice-of-customer blocks with no `r/...` sources. **To do:** record the failure reason on the run and show it in the UI.
+
+## 6. Cost control: `TOURNAMENT_SIZE`
+
+Each static direction renders `TOURNAMENT_SIZE` takes (default 2, max 4) and keeps the best by QA score. Total image renders ≈ directions × `TOURNAMENT_SIZE` + up to `AUTO_FIX_ATTEMPTS` (2) re-renders per failing direction. Re-typeset fixes add no renders.
+
+- Cheapest test run: `TOURNAMENT_SIZE=1` in `.env.local` and a single direction.
+- The pre-render claims check adds 1–3 small text-model calls per static direction (well under a cent).
