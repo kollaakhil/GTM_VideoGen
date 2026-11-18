@@ -258,10 +258,17 @@ export async function openrouterCredits(): Promise<number | null> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) return null;
   const auth = { Authorization: `Bearer ${key}` };
-  const [c, k] = await Promise.all([
-    fetch("https://openrouter.ai/api/v1/credits", { headers: auth, signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    fetch("https://openrouter.ai/api/v1/key", { headers: auth, signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-  ]);
+  // A loaded machine can miss an 8 s window; a slow answer must not read as "no balance". Retry once, longer.
+  const get = async (path: string) => {
+    for (const ms of [10_000, 25_000]) {
+      const j = await fetch(`https://openrouter.ai/api/v1/${path}`, { headers: auth, signal: AbortSignal.timeout(ms) })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch((e) => (console.error(`[openrouter] ${path} check failed`, e), null));
+      if (j) return j;
+    }
+    return null;
+  };
+  const [c, k] = await Promise.all([get("credits"), get("key")]);
   const left: number[] = [];
   if (c?.data) left.push(Number(c.data.total_credits) - Number(c.data.total_usage));
   if (k?.data?.limit_remaining != null) left.push(Number(k.data.limit_remaining));
