@@ -19,7 +19,14 @@ export const AD_PRINCIPLES = [
 /** Proven static-ad formats for the concept matrix. */
 export const STATIC_FORMATS = ["Product hero", "Problem / solution", "Customer quote", "Before / after", "Us vs them", "Offer callout", "3 reasons why", "UGC-style photo"];
 
-export const principlesBlock = () => `\nAd principles (must follow):\n- ${AD_PRINCIPLES.join("\n- ")}`;
+/**
+ * Comparison and superlative claims are the most common way generated copy fails the claims check
+ * (e.g. an "Us vs them" concept writing "Only one is guaranteed" with no proof that competitors lack a guarantee).
+ */
+export const CLAIM_RULE =
+  "Comparisons and superlatives need proof: never write \"only\", \"the only\", \"unlike others\", \"better than\", \"best\", \"#1\", \"most\", \"first\", \"cheapest\" or any claim about competitors unless the research or brief states that exact fact. For \"Us vs them\" ideas, compare against the customer's old way or doing nothing, not against named or implied competitors, unless the research documents the difference.";
+
+export const principlesBlock = () => `\nAd principles (must follow):\n- ${[...AD_PRINCIPLES, CLAIM_RULE].join("\n- ")}`;
 
 const strip = (html: string) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 

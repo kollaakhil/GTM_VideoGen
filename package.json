@@ -42,5 +42,11 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "ffmpeg-static"
+    ]
   }
 }

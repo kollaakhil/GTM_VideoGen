@@ -181,10 +181,15 @@ export async function directions(model: string, b: Brief, r: Research, format: "
   return { data: data.directions.slice(0, 3).map((d, i) => ({ ...d, id: `dir_${i}`, format })), cost: usage.costUsd };
 }
 
+/** Lays the direction's headline, offer and CTA over an already-paid-for scene. Costs nothing; used to fix text-layout QA notes. */
+export function retypeset(scene: string, d: Direction, kit: Omit<StaticKit, "headline" | "cta">, tighter = 0): Promise<string> {
+  return typesetStatic(scene, { ...kit, headline: d.copy?.metaHeadline || d.hook, cta: d.copy?.metaCta }, { tighter });
+}
+
 export async function render(
   d: Direction,
-  opts: { imageModel: string; videoModel: string; refs: string[]; seed: number; fixes?: string[]; brand?: string; style?: { styleRef?: string | null; colors?: string[] }; kit?: Omit<StaticKit, "headline" | "cta"> | null },
-): Promise<{ url: string; type: "image" | "video"; model: string; cost: number; variants?: { aspect: string; url: string }[] }> {
+  opts: { imageModel: string; videoModel: string; refs: string[]; seed: number; fixes?: string[]; brand?: string; style?: { styleRef?: string | null; colors?: string[] }; kit?: Omit<StaticKit, "headline" | "cta"> | null; tighter?: number },
+): Promise<{ url: string; type: "image" | "video"; model: string; cost: number; variants?: { aspect: string; url: string }[]; scene?: string }> {
   if (!aiConfigured()) return { url: placeholderImage(d.hook, opts.seed), type: "image", model: "demo", cost: 0 };
   if (d.format === "video") {
     const v = await generateVideo(
@@ -212,8 +217,8 @@ export async function render(
       `${d.visualPrompt}\n4:5 vertical photo for a social ad. Photoreal, natural light, the product clearly visible in the upper two-thirds. Absolutely no text, words, letters, numbers, logos, labels or signage anywhere in the image; any box, bag or packaging is plain and unbranded; the headline is added later. Keep the bottom third calm and uncluttered.${colors}${fixes}`,
       opts.refs,
     );
-    const url = await typesetStatic(scene.url, { ...opts.kit, headline: d.copy?.metaHeadline || d.hook, cta: d.copy?.metaCta });
-    return { url, type: "image", model: opts.imageModel, cost: scene.usage.costUsd };
+    const url = await retypeset(scene.url, d, opts.kit, opts.tighter ?? 0);
+    return { url, type: "image", model: opts.imageModel, cost: scene.usage.costUsd, scene: scene.url };
   }
   const img = await generateImage(
     opts.imageModel,
