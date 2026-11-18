@@ -46,7 +46,10 @@ export type ScriptCtx = {
 
 /** Inspiration ads with a readable structure (swipes) plus the reference style, if any. */
 function inspirations(c: Pick<ScriptCtx, "swipes" | "style">) {
-  const swipes = (c.swipes ?? []).filter((x) => x.structure).slice(0, 6).map((x) => ({ format: x.structure!.format, hook: x.structure!.hook, beats: x.structure!.beats, whyItWorks: x.structure!.whyItWorks }));
+  const swipes = (c.swipes ?? []).filter((x) => x.structure).slice(0, 6).map((x) => ({
+    format: x.structure!.format, hook: x.structure!.hook, beats: x.structure!.beats, whyItWorks: x.structure!.whyItWorks,
+    ...(x.breakdown?.kind === "video" ? { measured: { seconds: x.breakdown.duration, shots: x.breakdown.shotCount, avgShotSec: x.breakdown.avgShotSec, firstCutSec: x.breakdown.firstCutSec, wordsPerSec: x.breakdown.wordsPerSec, pacing: x.breakdown.pacing, textStyle: x.breakdown.textStyle } } : {}),
+  }));
   const style = c.style ? { tone: c.style.tone, pacing: c.style.pacing, hookPatterns: c.style.hookPatterns } : null;
   return swipes.length || style ? { swipes, style } : null;
 }

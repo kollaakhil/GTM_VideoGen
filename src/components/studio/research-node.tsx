@@ -53,6 +53,24 @@ export function ResearchNode() {
               {more && <Row label="Objections"><span>{run.voc.objections.join("; ")}</span></Row>}
             </div>
           )}
+          {!!run.inspirations?.length && (
+            <div className="space-y-1.5">
+              <Label>Inspiration breakdown · structure only</Label>
+              {run.inspirations.map((b) => (
+                <div key={b.id} className="flex gap-2 rounded-md bg-fuchsia-500/[0.06] p-1.5 text-[11px] text-zinc-300">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {b.thumb && <img src={b.thumb} alt="" className="h-12 w-7 shrink-0 rounded object-cover" />}
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="truncate text-zinc-200">{b.format || b.kind} · {b.source.replace(/^https?:\/\/(www\.)?/, "").slice(0, 40)}</div>
+                    {b.kind === "video" && <div className="text-zinc-400">{b.duration}s · {b.shotCount} shots · {b.avgShotSec}s avg{b.firstCutSec ? ` · first cut ${b.firstCutSec}s` : ""}{b.wordsPerSec ? ` · ${b.wordsPerSec} words/s` : ""}</div>}
+                    {b.hook && <div className={cn(!more && "line-clamp-2")}>Hook: {b.hook}</div>}
+                    {more && b.shots.length > 0 && <div className="text-zinc-400">{b.shots.map((s) => [s.framing, s.lens, s.motion].filter(Boolean).join(", ")).filter(Boolean).join(" → ")}</div>}
+                    {more && <div className="text-[10px] text-zinc-500">cuts: {b.via.cuts} · transcript: {b.via.transcript} · OCR: {b.via.ocr} · vision: {b.via.vision}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <button onClick={() => setMore(!more)} className="text-[11px] text-indigo-300 hover:text-indigo-200">{more ? "Show less" : "Show more"}</button>
         </div>
       )}

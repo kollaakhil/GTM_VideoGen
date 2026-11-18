@@ -22,7 +22,7 @@ export interface Ctx {
   models: Model[];
   form: {
     brandUrl: string;
-    referenceUrl: string;
+    inspirations: Inspiration[];
     offer: string;
     saveKit: boolean;
     kits: Brand[];
@@ -40,6 +40,9 @@ export interface Ctx {
   setEditing: (v: boolean) => void;
   pricing: Pricing;
 }
+
+/** One inspiration on the start screen: a link, or a video/image file read as a data URL. */
+export type Inspiration = { url?: string; upload?: string; name?: string };
 
 export type Pricing = {
   credits: number | null;

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { ChevronDown, Film, Globe, ImageIcon, Loader2, Sparkles, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,7 +28,9 @@ export function BrandNode() {
             </div>
           </div>
           <p className="text-[13px] leading-snug text-zinc-300">{run.goal}</p>
-          {run.referenceUrl && <div className="text-[11px] text-fuchsia-300/90">Inspired by {run.referenceUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</div>}
+          {run.inspirations?.length ? (
+            <div className="text-[11px] text-fuchsia-300/90">Inspired by {run.inspirations.map((i) => i.source.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "").slice(0, 40)).join(", ")}</div>
+          ) : run.referenceUrl && <div className="text-[11px] text-fuchsia-300/90">Inspired by {run.referenceUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</div>}
         </div>
       </Shell>
     );
@@ -37,8 +40,8 @@ export function BrandNode() {
     ? "Enter your website, e.g. allbirds.com"
     : form.goal.trim().length < 3
       ? "Add a goal to start"
-      : form.referenceUrl.trim() && !urlOk(form.referenceUrl)
-        ? "Check the Inspired by link"
+      : form.inspirations.some((i) => !i.upload && i.url?.trim() && !urlOk(i.url))
+        ? "Check the inspiration links"
         : "";
   const canStart = !sending && !missing;
   return (
@@ -80,16 +83,7 @@ export function BrandNode() {
           />
           <p className="text-[10px] leading-snug text-zinc-500">Used word-for-word, so ads never invent prices or terms.</p>
         </div>
-        <div className="space-y-1.5">
-          <Label>Inspired by (optional)</Label>
-          <Input
-            value={form.referenceUrl}
-            onChange={(e) => form.set({ referenceUrl: e.target.value })}
-            placeholder="https://liquiddeath.com"
-            className="h-9 bg-zinc-950/60"
-          />
-          <p className="text-[10px] leading-snug text-zinc-500">Borrow another brand&apos;s creative style, never its logo or claims.</p>
-        </div>
+        <Inspirations />
         <div className="space-y-1.5">
           <Label>Goal</Label>
           <Textarea
@@ -175,10 +169,68 @@ export function BrandNode() {
           </div>
         </details>
         <Button className="w-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:opacity-90" disabled={!canStart} onClick={start}>
-          {sending ? <Loader2 className="animate-spin" /> : <Sparkles />} Start research
+          {sending ? <Loader2 className="animate-spin" /> : <Sparkles />} Research and write the brief
         </Button>
         {missing && !sending && <p className="-mt-1 text-center text-[11px] text-amber-300/90">{missing}</p>}
       </div>
     </Shell>
+  );
+}
+
+const MAX_VIDEO = 30_000_000;
+
+/** Up to four inspirations: links (ads, pages, video files) or uploaded videos and images. */
+function Inspirations() {
+  const { form } = useFlow();
+  const [error, setError] = useState<string | null>(null);
+  const list = form.inspirations;
+  const set = (next: typeof list) => form.set({ inspirations: next.slice(0, 4) });
+  return (
+    <div className="space-y-1.5">
+      <Label>Inspirations (optional, up to 4)</Label>
+      {list.map((i, k) => (
+        <div key={k} className="flex items-center gap-1.5">
+          {i.upload ? (
+            <span className="flex h-9 flex-1 items-center gap-1.5 truncate rounded-md border border-white/10 bg-zinc-950/60 px-2 text-xs text-zinc-300">
+              {i.upload.startsWith("data:video/") ? <Film className="size-3" /> : <ImageIcon className="size-3" />} {i.name}
+            </span>
+          ) : (
+            <Input value={i.url ?? ""} onChange={(e) => set(list.map((x, j) => (j === k ? { url: e.target.value } : x)))} placeholder="https://… an ad, video or brand page" className="h-9 bg-zinc-950/60" />
+          )}
+          <button onClick={() => set(list.filter((_, j) => j !== k))} className="rounded p-1 text-zinc-500 hover:text-zinc-200" aria-label="Remove inspiration">
+            <X className="size-3.5" />
+          </button>
+        </div>
+      ))}
+      {list.length < 4 && (
+        <div className="flex gap-1.5">
+          <Button type="button" variant="outline" size="sm" onClick={() => set([...list, { url: "" }])}>
+            <Globe /> Add link
+          </Button>
+          <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs text-zinc-300 hover:text-zinc-100">
+            <Upload className="size-3" /> Upload video or image
+            <input
+              type="file"
+              accept="video/mp4,video/quicktime,video/webm,image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.currentTarget.value = "";
+                if (!f) return;
+                if (f.size > MAX_VIDEO) return setError("Inspiration files must be under 30 MB.");
+                const r = new FileReader();
+                r.onload = () => {
+                  setError(null);
+                  set([...form.inspirations, { upload: String(r.result), name: f.name.slice(0, 120) }]);
+                };
+                r.readAsDataURL(f);
+              }}
+            />
+          </label>
+        </div>
+      )}
+      {error && <p role="alert" className="text-[11px] text-amber-200">{error}</p>}
+      <p className="text-[10px] leading-snug text-zinc-500">We measure cuts, pacing, framing and text style, and borrow structure only. We never reuse their footage, lines or logos.</p>
+    </div>
   );
 }

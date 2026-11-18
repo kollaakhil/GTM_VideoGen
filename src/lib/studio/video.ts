@@ -14,7 +14,8 @@ import { audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, 
 import { list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
 import type { Direction, QAResult, QualityFinding, Shot, ShotQA, StudioRun, VideoQuality, VideoTake } from "@/lib/types";
 import { now, say, live, saveRun } from "./run-state";
-import { brandFor, guidance, brandName, shortHash } from "./context";
+import { brandFor, guidance, brandName, shortHash, swipesFor } from "./context";
+import { inspirationGuidance } from "@/lib/inspiration";
 import { saveCreative } from "./creatives";
 
 async function remember(run: StudioRun, s: Shot, kind: "keyframe" | "clip", model: string, q: ShotQA) {
@@ -54,7 +55,8 @@ export async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: 
 }
 
 export async function storyboard(run: StudioRun, d: Direction, refs: string[], savedRefs: string[]) {
-  const p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, await winningShots(run), await guidance(run));
+  const structure = inspirationGuidance((await swipesFor(run)).flatMap((x) => x.breakdown ? [x.breakdown] : []));
+  const p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, await winningShots(run), (await guidance(run)) + structure);
   Object.assign(d, { shots: p.shots, productRefs: savedRefs, storyboardKey: randomUUID(), passingDraft: null, compactCopy: false });
   run.costUsd += p.cost;
   if (run.job) {
