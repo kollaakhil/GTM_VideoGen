@@ -9,6 +9,7 @@ import { blenderAvailable, buildWorld, cameraPlate, REAL_SET_RESERVE, realSetSta
 import { lipSync, loudness, sceneCuts, werCheck, wordTimings } from "@/lib/qa-tools";
 import { CATEGORIES, keyframe, planShots, QA_PASS, reviewShotFrames } from "@/lib/video-plan";
 import { checkScript, nearSpeech } from "@/lib/script-lab";
+import { canonExpected, canonHeard } from "@/lib/speech-canon";
 import { approvedStoryboardLength, scriptProductionBlockers, shotReady, storyboardKeyframeFixes, videoAspects, videoReady } from "@/lib/quality-policy";
 import { captionVariants, END_SECONDS, expectedCopy, meanVolume, mediaDuration, placedCues, stitchShots } from "@/lib/video-post";
 import { type CopyCue, asrVocabulary, audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
@@ -513,7 +514,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     const shot = shots.find((s) => s.id === finding.shotId);
     if (shot?.vo) delete shot.voiceTrack;
   }
-  const words = await wordLevelFindings(main, segments, script, plan.category, cues.filter((c) => c.layer === "caption"));
+  const words = await wordLevelFindings(main, segments, script, plan.category, cues.filter((c) => c.layer === "caption"), end.brand);
   findings.push(...words.findings);
 
   const evidence: VideoQuality["shots"] = [];
@@ -613,16 +614,16 @@ async function takeStages(run: StudioRun, main: string, o: {
 /** Word-by-word checks on the final mix: WER against the script, voice timing per shot, and lip sync when enabled. */
 type WordLevel = { findings: QualityFinding[]; wer: number | null; via?: string; linesOutside: number; level: { lufs: number; peak: number } | null; captionSync?: number | null };
 
-async function wordLevelFindings(main: string, segments: { shotId: string; start: number; end: number; text: string }[], script: string, category: string, captions: { start: number; end: number; text: string }[] = []): Promise<WordLevel> {
+async function wordLevelFindings(main: string, segments: { shotId: string; start: number; end: number; text: string }[], script: string, category: string, captions: { start: number; end: number; text: string }[] = [], brand = ""): Promise<WordLevel> {
   const findings: QualityFinding[] = [];
   const timed = await wordTimings(main).catch(() => null);
   if (!timed) return { findings, wer: null, linesOutside: 0, level: await loudness(main).catch(() => null) };
   // Word-by-word: each caption cue against the words heard while it is on screen.
-  const sync = captionSyncFindings(captionSync(captions, timed.words));
+  const sync = captionSyncFindings(captionSync(captions, timed.words, 0.35, brand));
   findings.push(...sync.findings);
   let linesOutside = 0;
   const heard = timed.words.map((w) => w.word).join(" ");
-  const { wer, via } = await werCheck(script, heard);
+  const { wer, via } = await werCheck(canonExpected(script), canonHeard(heard, script, brand)); // 13.23: compare spoken forms
   if (wer > 0.1) findings.push({ kind: "speech", at: 0, expected: `Narration matches the script (WER ≤ 10%, ${via})`, observed: `WER ${(wer * 100).toFixed(0)}%: heard “${heard.slice(0, 200)}”`, status: wer > 0.25 ? "fail" : "review" });
   for (const seg of segments) {
     if (!seg.text.trim()) continue;

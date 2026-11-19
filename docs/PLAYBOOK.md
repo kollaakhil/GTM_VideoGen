@@ -431,3 +431,13 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
   re-buy it.
 - Operator edit on run_8a9c7c9db627: beat 4 VO → "Half off two-plus cases. Shop at drinkolipop.com." (14 syllables, est 3.5 s;
   the "50% off 2+ cases" end-card mandatory is unchanged and still shown).
+
+### 13.23 Final QA compared ASR spellings, not speech
+- Failure: take 1 of run_8a9c7c9db627 (clean mix; the voice pre-check had passed every line) scored audio 5.4: WER 23%,
+  "voice vs script (ASR) 0/10, 5 mismatches", caption word-sync 4.5. The transcript was "50% off 2+ cases", "ollie pop",
+  "drinkaliepop.com"; the script says "fifty percent", "two-plus", OLIPOP, drinkolipop.com.
+- Fix: `speech-canon.ts`. Both sides go to spoken words (`spokenForm`: digits, %, +, domains), and heard 1–3 token windows within
+  2 edits (3 for 10+ letters) of a coined brand term from the script (terms containing the brand) map to that term. Used by
+  `verifySpeech` (per line + whole script, in addition to `sameSpeech`), `captionSync` (brand param), and the whole-mix WER.
+- Not loosening: ordinary words are never rewritten, so "soda" for "cola" or a wrong brand still fails; the thresholds
+  (WER ≤ 10%, caption coverage) are unchanged. Homophone spellings ("dred", "gilt") still count against WER.
