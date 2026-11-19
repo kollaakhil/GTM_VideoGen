@@ -229,6 +229,9 @@ export interface VideoQuality {
   findings: QualityFinding[];
   shots: { id: string; start: number; end: number; visual: string; vo: string; onScreen: string; keyframe?: string | null; qa?: ShotQA | null }[];
   aspects: string[];
+  /** Final-QA rubric breakdown (stage-gates finalChecks) and its weighted score. */
+  rubric?: { name: string; score: number; note: string; by: string; weight?: number }[];
+  rubricScore?: number;
 }
 
 /** Structured shot instructions (see shot-spec.ts). */

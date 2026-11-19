@@ -19,6 +19,7 @@ import { brandFor, guidance, brandName, shortHash, swipesFor } from "./context";
 import { inspirationGuidance } from "@/lib/inspiration";
 import { negativePrompt, specBlock } from "@/lib/shot-spec";
 import { candidateCount, draftEstimate, pickCandidate } from "@/lib/best-of-n";
+import { captionSync, captionSyncFindings } from "@/lib/caption-sync";
 import { saveCreative } from "./creatives";
 import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
 import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
@@ -480,7 +481,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     const shot = shots.find((s) => s.id === finding.shotId);
     if (shot?.vo) delete shot.voiceTrack;
   }
-  const words = await wordLevelFindings(main, segments, script, plan.category);
+  const words = await wordLevelFindings(main, segments, script, plan.category, cues.filter((c) => c.layer === "caption"));
   findings.push(...words.findings);
 
   const evidence: VideoQuality["shots"] = [];
@@ -529,12 +530,12 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     const segment = segments[n - 1];
     findings.push({ kind: "preflight", at: segment.start, shotId: segment.shotId, expected: `Keyframe match and ${QA_PASS}/10 before HD`, observed: `Keyframe ${n} still needs review.`, status: "review" });
   }
-  const finalGate = stageScore("final", finalChecks({ craft: craft.score, findings, shotScores: evidence.map((e) => e.qa?.score ?? 0) }), run.models.vision, 1,
+  const finalGate = stageScore("final", finalChecks({ craft: craft.score, findings, shotScores: evidence.map((e) => e.qa?.score ?? 0), captionSync: words.captionSync, frameScores: evidence.flatMap((e) => (e.qa?.frames ?? []).map((f) => (f.match === "pass" ? 10 : f.match === "review" ? 7 : 3))) }), run.models.vision, 1,
     [...craft.notes, ...findings.filter((f) => f.status === "fail").map((f) => `${f.at.toFixed(1)}s ${f.kind}: ${f.observed}`)].slice(0, 6));
   const stages = await takeStages(run, main, { shots, st, evidence, craft: craft.score, words, music: a.music, speechFails: speech.findings.filter((f) => f.kind === "speech" && f.status === "fail").length, charge, beats: d.approvedScript?.beats.map((b) => b.seconds) });
   for (const g of stages) saveStage(run, g, d.id);
   saveStage(run, finalGate, d.id);
-  const quality = { ...exportVerdict(tier, craft.score, evidence, findings, variants.map((v) => v.aspect)), storyboardKey: d.storyboardKey! };
+  const quality = { ...exportVerdict(tier, craft.score, evidence, findings, variants.map((v) => v.aspect)), storyboardKey: d.storyboardKey!, rubric: finalGate.checks, rubricScore: finalGate.score };
   const pass = videoReady(quality);
   const result = { score: quality.score, pass, notes: [...findings.slice(0, 5).map((f) => f.observed), ...craft.notes] };
   const model = [...new Set(a.clips.map((c) => c.model))].join(" + ") + (a.upscaledFrom ? " (Real-ESRGAN HD)" : "");
@@ -577,12 +578,15 @@ async function takeStages(run: StudioRun, main: string, o: {
 }
 
 /** Word-by-word checks on the final mix: WER against the script, voice timing per shot, and lip sync when enabled. */
-type WordLevel = { findings: QualityFinding[]; wer: number | null; via?: string; linesOutside: number; level: { lufs: number; peak: number } | null };
+type WordLevel = { findings: QualityFinding[]; wer: number | null; via?: string; linesOutside: number; level: { lufs: number; peak: number } | null; captionSync?: number | null };
 
-async function wordLevelFindings(main: string, segments: { shotId: string; start: number; end: number; text: string }[], script: string, category: string): Promise<WordLevel> {
+async function wordLevelFindings(main: string, segments: { shotId: string; start: number; end: number; text: string }[], script: string, category: string, captions: { start: number; end: number; text: string }[] = []): Promise<WordLevel> {
   const findings: QualityFinding[] = [];
   const timed = await wordTimings(main).catch(() => null);
   if (!timed) return { findings, wer: null, linesOutside: 0, level: await loudness(main).catch(() => null) };
+  // Word-by-word: each caption cue against the words heard while it is on screen.
+  const sync = captionSyncFindings(captionSync(captions, timed.words));
+  findings.push(...sync.findings);
   let linesOutside = 0;
   const heard = timed.words.map((w) => w.word).join(" ");
   const { wer, via } = await werCheck(script, heard);
@@ -599,7 +603,7 @@ async function wordLevelFindings(main: string, segments: { shotId: string; start
     const sync = await lipSync(main);
     if (sync && (Math.abs(sync.offset) > 3 || sync.confidence < 3)) findings.push({ kind: "speech", at: 0, expected: "Lip sync within 3 frames (SyncNet)", observed: `Offset ${sync.offset} frames, confidence ${sync.confidence.toFixed(1)}`, status: "review" });
   }
-  return { findings, wer, via, linesOutside, level };
+  return { findings, wer, via, linesOutside, level, captionSync: sync.score };
 }
 
 async function checkedVoice(line: string, voice: string, charge: (n: number) => void, onTry?: (n: number) => void) {
