@@ -229,7 +229,22 @@ export interface VideoQuality {
   aspects: string[];
 }
 
+/** Structured shot instructions (see shot-spec.ts). */
+export interface ShotSpec {
+  subject: string;
+  productFraming: string;
+  lensMm: number;
+  cameraMove: string;
+  lighting: string;
+  setting: string;
+  /** 1–3 timed beats, e.g. "0–1s can tilts", "1–3s cola streams over ice". */
+  motionBeats: string[];
+  /** Shot-specific things to avoid, on top of DEFAULT_NEGATIVE. */
+  negative: string[];
+}
+
 export interface Shot {
+  spec?: ShotSpec;
   id: string;
   beat: string;
   seconds: number;

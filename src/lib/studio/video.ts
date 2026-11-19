@@ -17,6 +17,7 @@ import type { Direction, JobPhase, QAResult, QualityFinding, Shot, ShotQA, Studi
 import { now, say, live, saveRun } from "./run-state";
 import { brandFor, guidance, brandName, shortHash, swipesFor } from "./context";
 import { inspirationGuidance } from "@/lib/inspiration";
+import { negativePrompt, specBlock } from "@/lib/shot-spec";
 import { saveCreative } from "./creatives";
 import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
 import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
@@ -192,7 +193,7 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   const seconds = shots.reduce((t, s) => t + s.seconds, 0);
   const actual = shots.map((s, i) => { const durs = durationsOf.get(models[i]); return durs?.length ? durs.find((n) => n >= s.seconds) : s.seconds; });
   if (actual.some((s) => s === undefined)) throw new Error("The chosen model cannot cover a locked beat. Pick a model with longer takes.");
-  const cacheKeys = shots.map((s, i) => shortHash(["video-qa-v2", resolution, models[i], plan.category, d.productRefs, s.keyframe, s.expectedVisual, s.visual, s.camera, s.seconds, lookLine(plan, s)]));
+  const cacheKeys = shots.map((s, i) => shortHash(["video-qa-v2", resolution, models[i], plan.category, d.productRefs, s.keyframe, s.expectedVisual, s.visual, s.camera, s.seconds, lookLine(plan, s), ...(s.spec ? [s.spec] : [])]));
   const toReview = (s: Shot, i: number) => s.clipKey === cacheKeys[i] && !!s.clip && (!s.clipQa || s.clipQa.match === "review");
   const missing = shots.flatMap((s, i) => reusableShot(s, cacheKeys[i]) || toReview(s, i) ? [] : [i]);
   const perSec = (i: number) => priceOf.get(models[i]) ?? 0.12;
@@ -322,7 +323,8 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
       await step(run, d, `Shot ${i + 1}/${shots.length}: ${attempt || notes.length ? "repairing the failed take" : "rendering the planned beat"}`, 2 + i, total, "rendering", { i, stage: "rendering" });
       const look = lookLine(plan, s);
       const prompt = `Required on-screen action: ${s.expectedVisual}. Shot treatment: ${s.visual}. Camera: ${s.camera}. Look: ${CATEGORIES[plan.category].look}.${look ? ` ${look}` : ""}
-Start from the attached frame. Preserve the exact product; no invented text or labels. Natural physical motion. ${notes.length ? `Fix these defects: ${notes.join(" ")}` : ""}`;
+${specBlock(s)}
+Start from the attached frame. Preserve the exact product and its real label; no invented text. Natural physical motion, one continuous shot. Avoid: ${negativePrompt(s)}. ${notes.length ? `Fix these defects: ${notes.join(" ")}` : ""}`;
       const take = await generateVideo(models[i], prompt, { firstFrame: firsts[i], seconds: actual[i], audio: false, resolution });
       charge(take.usage.costUsd);
       const stored = await storeMedia(take.url, `${run.id}/${d.id}-${s.id}-clip-${randomUUID()}`);
