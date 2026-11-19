@@ -12,7 +12,7 @@ const run = promisify(execFile);
  * work created by the app (see PLAYBOOK 13.11). They are cheap stand-ins for a recorded library; swap in a licensed
  * CC0 pack via SFX_DIR (files named <kind>.wav) if one is added later.
  */
-export type SfxKind = "whoosh" | "pop" | "fizz" | "pour" | "clink";
+export type SfxKind = "whoosh" | "pop" | "fizz" | "pour" | "clink" | "click" | "thud" | "slide" | "sizzle";
 
 const RECIPES: Record<SfxKind, { d: number; graph: string }> = {
   // Air swish across a cut: pink noise through a band that swells and fades.
@@ -25,9 +25,17 @@ const RECIPES: Record<SfxKind, { d: number; graph: string }> = {
   pour: { d: 1.8, graph: "anoisesrc=d=1.8:c=brown:a=0.8:r=44100,bandpass=f=650:width_type=h:w=500,tremolo=f=6:d=0.5,afade=t=in:d=0.2,afade=t=out:st=1.3:d=0.5" },
   // Ice clink: two inharmonic partials with a fast decay.
   clink: { d: 0.6, graph: "aevalsrc='0.6*sin(2*PI*2380*t)*exp(-14*t)+0.4*sin(2*PI*3710*t)*exp(-18*t)':d=0.6:s=44100" },
+  // Switch or button: two short ticks, the second lower.
+  click: { d: 0.25, graph: "aevalsrc='0.8*sin(2*PI*3100*t)*exp(-220*t)+0.6*sin(2*PI*1500*t)*exp(-260*(t-0.07))*gt(t,0.07)':d=0.25:s=44100,highpass=f=800" },
+  // Something set down or struck: a low body thump with a little knock on top.
+  thud: { d: 0.5, graph: "aevalsrc='sin(2*PI*(70+40*exp(-30*t))*t)*exp(-14*t)+0.25*(random(2)*2-1)*exp(-80*t)':d=0.5:s=44100,lowpass=f=900" },
+  // A slow drag across a surface (light sweep, sliding part): filtered noise with a rising then falling band.
+  slide: { d: 0.9, graph: "anoisesrc=d=0.9:c=pink:a=0.45:r=44100,bandpass=f=1800:width_type=h:w=1400,tremolo=f=9:d=0.35,afade=t=in:d=0.3,afade=t=out:st=0.5:d=0.4" },
+  // Heat or fizzing metal: a dense high crackle that decays.
+  sizzle: { d: 1.4, graph: "anoisesrc=d=1.4:c=white:a=0.5:r=44100,highpass=f=3000,tremolo=f=45:d=0.9,afade=t=in:d=0.1,afade=t=out:st=0.7:d=0.7" },
 };
 
-export const SFX_GAIN: Record<SfxKind, number> = { whoosh: 0.12, pop: 0.45, fizz: 0.18, pour: 0.3, clink: 0.22 };
+export const SFX_GAIN: Record<SfxKind, number> = { whoosh: 0.12, pop: 0.45, fizz: 0.18, pour: 0.3, clink: 0.22, click: 0.4, thud: 0.5, slide: 0.3, sizzle: 0.2 };
 
 export async function sfxFile(kind: SfxKind, dir: string): Promise<string> {
   const out = path.join(dir, `sfx-${kind}.wav`);
@@ -43,6 +51,16 @@ const CUES: { kind: SfxKind; re: RegExp }[] = [
   { kind: "fizz", re: /\b(fizz|fizzing|fizzes|bubbl\w*|carbonat\w*|foam\w*|sparkl\w*)\b/i },
   { kind: "clink", re: /\b(ice|clink\w*|glass(es)? (touch|meet))\b/i },
 ];
+
+/** Extra action sounds used only by the foley-first mode (audio/mode.ts), so the default per-shot cues stay as they were. */
+const EXTRA: { kind: SfxKind; re: RegExp }[] = [
+  { kind: "click", re: /\b(click\w*|switch\w*|snap\w*|button|latch\w*|dial|toggle|flick\w*)\b/i },
+  { kind: "thud", re: /\b(thud|lands?|set(s)? down|placed?|drops?|impact|slam\w*|hits?|knock\w*|tap\w*)\b/i },
+  { kind: "slide", re: /\b(slides?|sliding|glides?|sweeps?|drag\w*|rotat\w*|spins?|turns?)\b/i },
+  { kind: "sizzle", re: /\b(sizzl\w*|crackl\w*|spark\w*|sear\w*|burn\w*|ignit\w*)\b/i },
+];
+
+export const FOLEY_PATTERNS = [...CUES, ...EXTRA];
 
 /** Start second of the motion beat that mentions the action ("1–3s cola streams…" → 1), else a default lead-in. */
 function beatTime(s: Shot, re: RegExp, fallback: number) {

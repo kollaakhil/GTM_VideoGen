@@ -1,5 +1,6 @@
 import { scriptProductionBlockers, storyboardKeyframeFixes, VIDEO_PASS } from "./quality-policy";
 import { GATE_THRESHOLDS } from "./gate-config";
+import { gateEnabled } from "./qa/config";
 import type { AdScript, JudgeCalibration, StageId, StageScore, StudioRun, VideoTake } from "./types";
 
 /**
@@ -57,7 +58,7 @@ export function saveStage(run: StudioRun, s: StageScore, directionId?: string) {
 /** The reason a stage blocks the next step, or null when it passed or a human overrode it. Unscored stages don't block. */
 export function stageBlock(run: Pick<StudioRun, "stageScores">, stage: StageId, directionId?: string) {
   const s = run.stageScores?.[stageKey(stage, directionId)];
-  if (!s || s.pass || s.override) return null;
+  if (!s || s.pass || s.override || !gateEnabled(stage)) return null;
   const label = STAGES.find((x) => x.id === stage)!.label;
   return `${label} scored ${s.score}/10 (needs ${threshold(stage)}). Fix it, or override the ${label.toLowerCase()} gate to continue.`;
 }
@@ -66,7 +67,7 @@ export function stageBlock(run: Pick<StudioRun, "stageScores">, stage: StageId, 
 /** Video, sound and edit scores of one take; an override on the direction's stage (stage:directionId) lets it through. */
 export function takeStageBlock(run: Pick<StudioRun, "stageScores">, directionId: string, take: Pick<VideoTake, "stages">) {
   for (const s of take.stages ?? []) {
-    if (s.pass || run.stageScores?.[stageKey(s.stage, directionId)]?.override) continue;
+    if (s.pass || !gateEnabled(s.stage) || run.stageScores?.[stageKey(s.stage, directionId)]?.override) continue;
     const label = STAGES.find((x) => x.id === s.stage)!.label;
     return `${label} scored ${s.score}/10 on this take (needs ${threshold(s.stage)}). Make another take, or override the ${label.toLowerCase()} gate.`;
   }

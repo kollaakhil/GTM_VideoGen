@@ -3,6 +3,7 @@ import { z } from "zod";
 import { loadRun, saveProgress } from "./jobs";
 import { validateStack, normalizeStack, type VersionStack } from "@/lib/versions";
 import type { Version } from "./run-types";
+import { renderAction } from "./render-actions";
 
 const VersionStackSchema = z.object({
   id: z.string(),
@@ -119,7 +120,9 @@ export async function sheetActions(raw: unknown, _user: string): Promise<Respons
     return NextResponse.json({ run });
   }
 
-  if (a === "previews" || a === "final" || a === "pick") {
+  if (a === "previews" || a === "final") return renderAction(raw as { runId?: string; versionId?: string }, a);
+
+  if (a === "pick") {
     return NextResponse.json({ 
       error: "Legacy rendering actions. Use start_versions instead." 
     }, { status: 501 });

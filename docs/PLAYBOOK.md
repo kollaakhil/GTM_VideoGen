@@ -754,3 +754,122 @@ The **Versions** feature (PR #60) lets one shot sheet render as 2–4 versions i
 - `src/components/sheet-studio/render-steps.tsx`: integrates panel into Previews step
 - `tests/versions.test.ts`: stack validation, cost estimation, presets
 - `tests/versions-api.test.ts`: API validation, budget enforcement, winner selection
+
+## 14.6 Sheet Render Integration with Versions (PR #63)
+
+### Overview
+Integrated the sheet render pipeline (`src/lib/sheet/render.ts`) with the Versions module from PR #61, enabling the Studio's Previews and Final steps to render through version stacks with per-stage model overrides.
+
+### Key Changes
+
+1. **Version Stack Integration** (`src/lib/sheet/render.ts`)
+   - `renderSheetVersion` creates proper `VersionStack` objects with all required fields
+   - Uses `getPresetsWithCosts()` for default stacks with `description`, `models`, `estimatedCostUsd`
+   - Added `normalizeStack()` to ensure all stages have model assignments
+   - Version stack models drive per-stage rendering: video, image, voice, QA models
+
+2. **Model Override Wiring**
+   - Pass stack models through `RenderDeps` to actual renderers
+   - AI video renderer uses stack's video model (or `auto` resolved via registry)
+   - Voice synthesis uses stack's voice model
+   - QA checks use stack's QA model
+   - Image generation uses stack's image model
+
+3. **API Actions** (`src/lib/sheet/actions.ts`)
+   - `start_versions`: validates and queues 2-4 version stacks
+   - `previews` and `final`: delegate to `renderAction` for actual rendering through stacks
+   - Studio Previews/Final buttons call real API end-to-end
+
+4. **Test Coverage**
+   - Updated API tests to verify working render actions
+   - Added tests proving different stacks call different model IDs
+   - All 460 tests pass
+
+### Call Path: Studio UI → Render
+
+1. **Previews**: User clicks "Start" in Versions panel
+   - `VersionsPanel.tsx` → `onStartVersions(stacks)`
+   - `RenderSteps.tsx` → `act({ action: "start_versions", stacks })`
+   - POST `/api/sheet` → `sheetActions()` → creates queued versions
+   - User clicks preview → `act({ action: "previews", versionId })`
+   - POST `/api/sheet` → `sheetActions()` → `renderAction("previews")`
+   - `renderAction()` → `startSheetJob()` → `runPreviews()`
+   - `runPreviews()` → `renderSheetVersion()` with stack models
+   - Renderers use stack's model choices per shot
+
+2. **Final**: User clicks "Render final" after picking winner
+   - `RenderSteps.tsx` → `act({ action: "final", runId })`
+   - POST `/api/sheet` → `sheetActions()` → `renderAction("final")`
+   - `renderAction()` → `startSheetJob()` → `runFinal()`
+   - `runFinal()` → `renderSheetVersion(tier: "final")` with stack models
+   - Final review uses stack's QA model
+
+### Model Override Implementation
+
+**How it works:**
+- Each `Version` has a `stack: VersionStack` with `models: Partial<Record<Stage, string>>`
+- `renderSheetVersion()` passes stack to `RenderDeps` creation
+- Deps functions close over the stack and use its model choices:
+  - `aiVideoRenderer({ defaultModel: stack.models.video || "auto" })`
+  - `voiceover(line, { model: stack.models.voice })`
+  - `qa(stack.models.qa, video, ...)`
+- `auto` for video resolves per-shot via registry's `resolvePick()`
+
+**Example:**
+```typescript
+// Premium stack
+models: { video: "kling/v4/image-to-video", voice: "fal-ai/elevenlabs/tts/eleven-v3", qa: "google/gemini-4-carbon" }
+
+// Open stack  
+models: { video: "alibaba/wan-3.0/image-to-video", voice: "fal-ai/chatterbox/text-to-speech", qa: "google/gemini-3.8-flash" }
+
+// Same sheet, two stacks → different model calls proven by tests
+```
+
+### Failures Encountered & Fixes
+
+#### TypeScript Compilation Errors
+**Issue**: `VersionStack` missing `description`, `models`, `estimatedCostUsd`
+
+**Fix**: Import and use `getPresetsWithCosts()` and `normalizeStack()`
+
+#### Undefined Version Reference  
+**Issue**: `'v' is possibly 'undefined'` after `.find()`
+
+**Fix**: Explicit check: `if (!version) throw new Error(...)`
+
+#### Test Failures
+**Issue**: Tests expected legacy 501 errors, but actions now work
+
+**Fix**: Rewrote tests to create versions first, then verify render actions succeed
+
+#### Package Management
+**Issue**: npm lockfile committed instead of pnpm
+
+**Fix**: Deleted `package-lock.json`, use `pnpm install` instead
+
+### Cost and Caching
+
+- **Budget cap**: Run's `cost.capUsd` checked before rendering
+- **Preflight estimate**: Each version calculates cost before starting
+- **Per-shot cache**: Uses `clipCache` keyed by shot content + model + size
+- **Parallel rendering**: Respects concurrency limit (RENDER_CONCURRENCY, default 4)
+- **Per-stack costs**: Different models → different estimates and actual costs
+
+### What Renders End-to-End
+
+✅ **Fully Operational**:
+- Preview rendering with version stacks (2-4 in parallel)
+- Per-shot routing (Blender, AI video, Remotion) respecting stack models
+- Audio modes (foley-first, voiceover, both) with stack voice model
+- Shot-level QA using stack's QA model (check 2 of 3)
+- Final rendering at full quality with stack models
+- Final review using stack's QA model (check 3 of 3)
+- Cost metering with budget caps
+- Model overrides wired through to actual provider calls
+
+✅ **Tested**:
+- Two stacks with different models → different provider calls
+- All 460 tests pass
+- pnpm build succeeds
+- TypeScript type-safe
