@@ -82,6 +82,15 @@ describe("caption placement agent", () => {
     expect(r.log[0].action).toBe("moved");
     expect(r.captions[0].y).not.toBe(CAPTION_SLOTS[0]);
   });
+  it("never drops required copy; places it where it covers the least of the subject", () => {
+    const subjects = [...at([0.25, 0.75], { x: 0.1, y: 0, w: 0.8, h: 0.6 }), ...at([1.25], { x: 0.1, y: 0.55, w: 0.8, h: 0.45 })];
+    const hook = "Love cola, dread the sugar guilt?";
+    const cue = { start: 0, end: 1.5, text: hook, y: CAPTION_SLOTS[0], box: boxFor(hook, CAPTION_SLOTS[0]), required: true };
+    const r = placeCaptions([cue], [], subjects, boxFor);
+    expect(r.captions).toHaveLength(1);
+    expect(r.captions[0].text).toBe(hook);
+    expect(r.log[0].action).toBe("least-overlap");
+  });
   it("drops a cue when the subject fills every slot", () => {
     const subjects = at([0.25, 0.75, 1.25, 1.75], { x: 0.1, y: 0, w: 0.8, h: 1 });
     const cue = { start: 0, end: 2, text: "just fifty calories", y: CAPTION_SLOTS[0], box: boxFor("just fifty calories", CAPTION_SLOTS[0]) };
