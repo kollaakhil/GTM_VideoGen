@@ -11,6 +11,7 @@ import type { Direction, JobPhase, JobProgress, Shot, StudioRun } from "@/lib/ty
 import { estimateCost } from "@/lib/video-categories";
 import { LENSES } from "@/lib/video-looks";
 import { useFlow } from "./context";
+import { StageTimings } from "./stage-timings";
 import { money } from "./utils";
 
 function ShotThumb({ d, s }: { d: Direction; s: Shot }) {
@@ -169,6 +170,7 @@ export function VideoControls({ d }: { d: Direction }) {
       <StepHeader n={2} title="480p previews" state={takes.length ? "done" : "active"} />
       {mine && run.job && !finalJob && <Progress job={run.job} d={d} />}
       <Failure run={run} d={d} />
+      {!working && <StageTimings run={run} />}
       {!mine && (
         <Button size="sm" className="w-full" disabled={busy || !!blocked} onClick={() => act("render_video", { runId: run.id, directionId: d.id, tier: "draft", draftModel: pick, takes: takeCount })}>
           <Film /> {takes.length ? "Make another preview" : `Make 480p preview${takeCount > 1 ? "s" : ""}`}{!blocked ? ` · ≈ ${estimate}${takeCount > 1 ? " each" : ""}` : ""}
