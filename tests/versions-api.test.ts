@@ -290,19 +290,37 @@ describe("Versions API", () => {
     });
   });
 
-  describe("Legacy actions", () => {
-    it("rejects legacy previews action", async () => {
-      const res = await sheetActions({ action: "previews", runId }, "test-user");
+  describe("Render actions", () => {
+    it("accepts previews action with versionId", async () => {
+      // First create versions
+      const stacks = getPresetsWithCosts({ shots: 1, targetSec: 20 }).slice(0, 2);
+      await sheetActions({ action: "start_versions", runId, stacks }, "test-user");
+      
+      const run = await loadRun(runId);
+      if (!run) throw new Error("Run not found");
+      
+      const res = await sheetActions({ action: "previews", runId, versionId: run.versions[0].id }, "test-user");
       expect(res).toBeTruthy();
       const json = await res!.json();
-      expect(json.error).toMatch(/Legacy/);
+      expect(json.run).toBeDefined();
+      expect(json.run.status).toBe("working");
     });
 
-    it("rejects legacy final action", async () => {
+    it("accepts final action", async () => {
+      // First create versions and mark one as done
+      const stacks = getPresetsWithCosts({ shots: 1, targetSec: 20 }).slice(0, 2);
+      await sheetActions({ action: "start_versions", runId, stacks }, "test-user");
+      
+      const run = await loadRun(runId);
+      if (!run) throw new Error("Run not found");
+      run.versions[0].status = "done";
+      await put("sheet_runs", run);
+      
       const res = await sheetActions({ action: "final", runId }, "test-user");
       expect(res).toBeTruthy();
       const json = await res!.json();
-      expect(json.error).toMatch(/Legacy/);
+      expect(json.run).toBeDefined();
+      expect(json.run.status).toBe("working");
     });
   });
 });

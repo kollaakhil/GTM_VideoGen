@@ -11,6 +11,7 @@ import { dur, type SheetShot, type ShotSheet } from "@/lib/shot-sheet";
 import type { SfxCue } from "@/lib/sfx";
 import { ledger, nowIso, saveProgress } from "./jobs";
 import type { CostEntry, FinalResult, SheetRun, ShotRender, Version } from "./run-types";
+import { getPresetsWithCosts, normalizeStack } from "@/lib/versions";
 
 /**
  * The render half of the Studio flow (steps 4 and 5): shot sheet in, previews and a final out.
@@ -77,9 +78,23 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
 
   let version = run.versions.find((v) => v.id === o.versionId);
   if (!version) {
-    version = { id: nextVersionId(run, o.tier), stack: { id: "default", label: "Default stack" }, tier: o.tier, status: "queued", estimate: null, shots: [], videoUrl: null, contactUrl: null, usd: 0, ms: 0 };
+    // Create a new version with a proper default stack from presets
+    const defaultStack = normalizeStack(getPresetsWithCosts({ shots: sheet.shots.length, targetSec: sheet.targetSec })[0]);
+    version = { 
+      id: nextVersionId(run, o.tier), 
+      stack: defaultStack, 
+      tier: o.tier, 
+      status: "queued", 
+      estimate: null, 
+      shots: [], 
+      videoUrl: null, 
+      contactUrl: null, 
+      usd: 0, 
+      ms: 0 
+    };
     run.versions.push(version);
   }
+  if (!version) throw new Error("Failed to create or find version");
   const v = version;
   const refs = await deps.photos(run);
   const photoSig = inputHash(refs.map((r) => r.length + r.slice(-64)));
