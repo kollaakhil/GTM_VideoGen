@@ -97,6 +97,7 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
       const clipData = await Promise.all(clips.map((c) => mediaDataUrl(c)));
       const voices = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
       // Cast sfx to any to allow both SfxCue and GeneratedSfxCue
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- generated cues carry a url the SfxCue union does not model yet
       return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, height: a.height, beatSync: false, sfx: a.sfx as any, duck: a.duck, bedGain: a.bedGain });
     },
     bed: async (description, seconds) => {
