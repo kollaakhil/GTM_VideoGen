@@ -35,16 +35,23 @@ describe("label lock", () => {
   it("rewrites a tilt-pour into an upright can plus an off-frame pour with a locked camera", () => {
     const s = applyLabelLock(shot());
     expect(s.spec!.motionBeats[0]).toBe("0–0.8s hand cracks the tab");
-    expect(s.spec!.motionBeats[1]).toMatch(/^0\.8–3s .*upright and still.*out of frame/);
+    expect(s.spec!.motionBeats[1]).toMatch(/^0\.8–3s the labelled can stands upright and still beside the glass.*out of frame/);
     expect(s.spec!.motionBeats.some(movesProduct)).toBe(false);
     expect(s.visual).not.toMatch(/pours from the can/);
     expect(s.visual).toContain(OFF_FRAME_POUR);
     expect(s.camera).toBe("locked off, no camera move");
     expect(s.spec!.cameraMove).toBe("locked off, no camera move");
-    expect(s.spec!.productFraming).toMatch(/upright and still/);
+    expect(s.spec!.productFraming).toMatch(/always upright/);
+    expect(s.spec!.motionBeats.join(" ")).not.toMatch(/tilt|tip/);
     expect(s.spec!.negative).toContain("can tilting, tipping or lifting");
     expect(labelLockGaps(s)).toEqual([]);
     expect(applyLabelLock(s)).toBe(s); // idempotent
+  });
+
+  it("drops pouring clauses from the product framing", () => {
+    const s = applyLabelLock(shot({ framing: "Can at 45% of frame height, real label square to camera and held steady while pouring. The glass fills the lower right." }));
+    expect(s.spec!.productFraming).not.toMatch(/pouring/);
+    expect(s.spec!.productFraming).toMatch(/^Can at 45% of frame height, The glass fills the lower right|^Can at 45% of frame height/);
   });
 
   it("keeps a still, non-pouring shot's camera move", () => {

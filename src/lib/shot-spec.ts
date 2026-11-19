@@ -74,7 +74,8 @@ const CAN = /\b(can|bottle|jar|carton|box|pack|tin)\b/i;
 const OFF_FRAME = /\b(out of frame|off-?frame|off-?screen)\b/i;
 const TIME = /^\s*([\d.]+\s*[–-]\s*[\d.]+\s*s)\b/;
 
-export const LABEL_LOCK = "the labelled can stands upright and still with its front label square to camera; it never tilts, tips, lifts or rotates";
+// Positive wording only in prompts (naming "tilt" primes video models to tilt); the negations live in LABEL_NEGATIVE.
+export const LABEL_LOCK = "the labelled can stands upright and still beside the glass, front label square to camera";
 export const OFF_FRAME_POUR = "cola pours into the glass from a can held above, out of frame (only the stream is visible)";
 export const LABEL_NEGATIVE = ["can tilting, tipping or lifting", "label rotating or turning away"];
 
@@ -97,6 +98,9 @@ export function labelLockGaps(s: Pick<Shot, "spec" | "id"> & Partial<Pick<Shot, 
   return (s.spec.motionBeats ?? []).filter(movesProduct).map((b) => `${s.id}: the labelled product must not move ("${b.slice(0, 60)}"); pour from out of frame, can upright and still`);
 }
 
+/** Product framing without clauses that move the product or pour from it ("held steady while pouring"). */
+const lockFraming = (f: string) => f.split(/(?<=[.;,])\s+/).filter((c) => !movesProduct(c) && !POUR.test(c)).join(" ").replace(/[.;,\s]+$/, "");
+
 const sentences = (t: string) => t.split(/(?<=[.!?])\s+/).filter(Boolean);
 
 /**
@@ -108,12 +112,12 @@ export function applyLabelLock(s: Shot): Shot {
   if (!labelled(s) || !s.spec) return s;
   const bad = s.spec.motionBeats.filter(movesProduct);
   const visualBad = sentences(s.visual).some(movesProduct);
-  if (!bad.length && !visualBad && /upright and still/i.test(s.spec.productFraming)) return s;
+  if (!bad.length && !visualBad && /always upright/i.test(s.spec.productFraming)) return s;
   const pours = [...s.spec.motionBeats, s.visual].some((l) => POUR.test(l));
   const fix = (b: string) => {
     if (!movesProduct(b)) return b;
     const t = b.match(TIME)?.[1];
-    const what = POUR.test(b) || /\b(tilt|tip)\w*/i.test(b) ? `${LABEL_LOCK} beside the glass; ${OFF_FRAME_POUR}` : LABEL_LOCK;
+    const what = POUR.test(b) || /\b(tilt|tip)\w*/i.test(b) ? `${LABEL_LOCK}; ${OFF_FRAME_POUR}` : LABEL_LOCK;
     return t ? `${t} ${what}` : what;
   };
   const beats = [...new Set(s.spec.motionBeats.map(fix))];
@@ -124,7 +128,7 @@ export function applyLabelLock(s: Shot): Shot {
     ...s, visual, camera,
     spec: {
       ...s.spec, motionBeats: beats, cameraMove: pours ? camera : s.spec.cameraMove,
-      productFraming: /upright and still/i.test(s.spec.productFraming) ? s.spec.productFraming : `${s.spec.productFraming.replace(/[.;\s]+$/, "")}; upright and still for the whole shot, never tilted, lifted or rotated.`,
+      productFraming: /always upright/i.test(s.spec.productFraming) ? s.spec.productFraming : `${lockFraming(s.spec.productFraming)}; the can is always upright, label square to camera.`,
       negative: [...new Set([...LABEL_NEGATIVE, ...s.spec.negative])].slice(0, 6),
     },
   };
