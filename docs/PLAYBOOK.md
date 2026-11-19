@@ -249,3 +249,18 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
   **Fix:** `src/lib/judge-schema.ts` clips long strings and lists instead of rejecting them. **Lesson:** never put a
   hard `.max()` on free-text LLM output that you only display.
 - KPI rule: "Cost per first-time purchase" is measurable (it now matches "cost per", "rate" and "return on").
+
+### 13.5 E2E run 1b (Vintage Cola, after the brief fixes): script 6/10, the repair round silently did nothing
+
+- **Symptoms:** (1) Script beats described an "unmarked cream-and-burgundy can", and the judge rightly said the pour
+  lacked visible attribution to OLIPOP. (2) Beat 4 stacked offer, CTA, shipping and guarantee into one overlay.
+  (3) Proof problems in **beat 1** (three actions in 3 s, unbranded can). (4) `rounds` stayed unset, so the repair
+  round produced nothing and nobody could tell why.
+- **Causes:** (1) The new no-text rule (§13.2) said "never show any readable words in the scene", so the writer
+  dropped the real label too. (2) No overlay word limit. (3) The repair could only touch beats 2+, so opening-shot
+  problems were unfixable. (4) The repair result was parsed with strict length limits and failures were swallowed.
+- **Fixes:** the rule now bans *invented* words and UI, and requires the real labelled product whenever it appears.
+  Overlays are capped at 7 words, one message per beat. The repair may rewrite beat 1's **visual** (its line and overlay
+  stay locked; `hook.visual` follows), its output is clipped rather than rejected, and every round records
+  `script.repair` (`fixes`, kept or discarded, before and after score, reason). The reason is shown in the Script
+  chip and logged as `[script] …`.

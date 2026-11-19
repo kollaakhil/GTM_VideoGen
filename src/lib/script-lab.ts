@@ -265,8 +265,8 @@ const SCRIPT_RULES = (len: number) => `Rules:
 - Vertical 9:16 performance ad, ${len}s total. One buyer tension, one visible demonstration of a supported claim, one CTA. No extra storylines.
 - Story: ${STORY}
 - "vo": only the words spoken aloud, natural speech, max ${WORDS_PER_SEC} words per second of the beat. No speaker labels or stage directions.
-- "onScreen": one readable message that fits the window; give mandatory terms their own time instead of shrinking or shortening them. Empty text is allowed.
-- "visual": one filmable action per beat; never compress several setup steps into one. Never show phones, screens, web pages, apps, notifications, signs or any readable words in the scene (video models garble them); put words in "onScreen". Use only established product details.
+- "onScreen": one short message per beat (at most 7 words: one stat, one benefit or the CTA) that fits the window; give mandatory terms their own beat instead of stacking them. Empty text is allowed.
+- "visual": one filmable action per beat; never compress several setup steps into one. Never show phones, screens, web pages, apps, notifications, signs or invented words in the scene (video models garble them); put words in "onScreen". The real product, with its real label as in the product photo, should be clearly visible and identifiable whenever it appears (never "unmarked" or generic packaging). Use only established product details.
 - Every action you suggest in VO must agree with what the visual shows (do not say "tap" or "order" over a scene that shows something else).
 - Only facts from the product facts and brief: never invent features, numbers, guarantees, timings, inclusions or customer testimonials.
 - Say and show the exact CTA in the final beat.`;
@@ -522,25 +522,40 @@ Return {"beats":[{"visual":"...","vo":"...","onScreen":"..."}]}.`);
   if (!fixes.length) return { script: first.script, cost };
   const single = (score.blockerBeat ?? 0) - 1;
   const only = fixes.length === 1 && single >= 1 && single < initial.beats.length ? single : -1;
+  // Beat 1's spoken line and overlay are the operator's chosen opening and stay locked, but its *visual* may be
+  // repaired: problems in the opening shot ("unmarked can", "crams three actions into 3s") were unfixable before.
+  const hookVisualFix = only < 0 && fixes.some((f) => /\b(beat 1|opening|first beat|hook)\b/i.test(f));
+  const targets = only >= 1 ? [only] : initial.beats.map((_, j) => j).filter((j) => j >= 1);
+  const record = (kept: boolean, reason: string, after?: number): AdScript["repair"] => ({ fixes, kept, reason, before: score.overall, after });
   try {
-    const targets = only >= 1 ? [only] : initial.beats.map((_, j) => j).filter((j) => j >= 1);
-    const revision = await chatJSON<unknown>(writer, "Repair the script beats listed without adding facts or changing the locked opening.", `${ctxBlock(c)}
+    const revision = await chatJSON<unknown>(writer, "Repair the script beats listed without adding facts or changing the locked opening line.", `${ctxBlock(c)}
 Script: ${JSON.stringify(initial.beats)}
-The opening (beat 1) is locked. Rewrite ${targets.length === 1 ? `only beat ${targets[0] + 1}` : `beats ${targets.map((j) => j + 1).join(", ")}`}, keeping each beat's seconds. Fix every one of these:
+${hookVisualFix ? `Beat 1's "vo" and "onScreen" are locked; you may rewrite only its "visual". Return it as "openingVisual".\n` : "The opening (beat 1) is locked. "}Rewrite ${targets.length === 1 ? `only beat ${targets[0] + 1}` : `beats ${targets.map((j) => j + 1).join(", ")}`}, keeping each beat's seconds. Fix every one of these:
 ${fixes.map((f) => `- ${f}`).join("\n")}
 Story roles: ${targets.map((j) => `beat ${j + 1}: ${windows[j - 1]?.role ?? "CTA"}`).join("; ")}
 ${SCRIPT_RULES(c.lengthSec)}
-Return {"beats":[{"visual":"...","vo":"...","onScreen":"..."}]} with exactly ${targets.length} beat(s), in order.`);
+Return {${hookVisualFix ? `"openingVisual":"...",` : ""}"beats":[{"visual":"...","vo":"...","onScreen":"..."}]} with exactly ${targets.length} beat(s), in order.`);
     cost += revision.usage.costUsd;
-    const out = z.object({ beats: z.array(BeatCopy).length(targets.length) }).parse(revision.data).beats;
-    const revised = initial.beats.map((b, j) => targets.includes(j) ? { ...b, ...out[targets.indexOf(j)] } : b);
-    const second = await reviewScript({ ...initial, beats: revised, rounds: 1 }, c, writer, judge, { prior: first.script });
+    const Loose = z.object({ visual: z.string().trim().min(1).transform((t) => t.slice(0, 800)), vo: z.string().trim().transform((t) => t.slice(0, 300)), onScreen: z.string().trim().transform((t) => t.slice(0, 160)) });
+    const parsed = z.object({ openingVisual: z.string().trim().min(1).optional(), beats: z.array(Loose) }).safeParse(revision.data);
+    if (!parsed.success || parsed.data.beats.length !== targets.length) {
+      console.warn("[script] repair returned an unusable shape", parsed.success ? `${parsed.data.beats.length} beats` : parsed.error.message.slice(0, 200));
+      return { script: { ...first.script, repair: record(false, "The writer's repair came back in the wrong shape; kept the graded draft.") }, cost };
+    }
+    const out = parsed.data.beats;
+    const openingVisual = hookVisualFix ? parsed.data.openingVisual?.slice(0, 800) : undefined;
+    const revised = initial.beats.map((b, j) => targets.includes(j) ? { ...b, ...out[targets.indexOf(j)] } : j === 0 && openingVisual ? { ...b, visual: openingVisual } : b);
+    const next: AdScript = { ...initial, beats: revised, rounds: 1, ...(openingVisual ? { hook: { ...initial.hook, visual: openingVisual } } : {}) };
+    const second = await reviewScript(next, c, writer, judge, { prior: first.script });
     cost += second.cost;
-    if (betterScript(second.script, first.script)) return { script: second.script, cost };
-  } catch {
-    // Keep the already graded draft if an optional repair fails.
+    const kept = betterScript(second.script, first.script);
+    const reason = kept ? `Repair kept: ${blockerCount(first.script)} → ${blockerCount(second.script)} blockers.` : `Repair discarded: ${blockerCount(second.script)} blockers and ${second.script.score.overall}/10 vs ${blockerCount(first.script)} and ${score.overall}/10 before.`;
+    console.log(`[script] ${reason}`);
+    return kept ? { script: { ...second.script, repair: record(true, reason, second.script.score.overall) }, cost } : { script: { ...first.script, repair: record(false, reason, second.script.score.overall) }, cost };
+  } catch (e) {
+    console.warn("[script] repair failed", (e as Error).message.slice(0, 200));
+    return { script: { ...first.script, repair: record(false, `Repair failed: ${(e as Error).message.slice(0, 120)}`) }, cost };
   }
-  return { script: first.script, cost };
 }
 
 /** Everything the script gate wants fixed, deduplicated: deterministic checks first, then the judge's findings. */

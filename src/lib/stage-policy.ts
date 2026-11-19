@@ -86,7 +86,7 @@ export function scriptStage(s?: AdScript | null): StageScore | null {
   if (!s?.score) return null;
   const checks: Check[] = Object.entries(s.score.scores).map(([name, score]) => ({ name, score, note: "", by: "judge" as const }));
   checks.push({ name: "overall", score: s.score.overall, note: s.score.notes?.[0] ?? "", by: "judge", weight: 3 });
-  const notes = [...new Set([...(s.checks ?? []), ...(s.score.proofProblems ?? []), ...(s.score.notes ?? [])])];
+  const notes = [...new Set([...(s.checks ?? []), ...(s.score.proofProblems ?? []), ...(s.score.notes ?? []), ...(s.repair ? [s.repair.reason] : [])])];
   return { ...stageScore("script", checks, s.review?.judge ?? "judge", (s.rounds ?? 0) + 1, notes), score: s.score.overall, raw: s.score.overall, pass: s.score.overall >= threshold("script") && !s.score.unsupported.length && !s.score.proofProblems?.length && !s.checks?.length };
 }
 
