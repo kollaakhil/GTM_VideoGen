@@ -51,9 +51,9 @@ async function huggingfaceChat(body: Record<string, unknown> & { model: string }
   return json;
 }
 
-async function chat(body: Record<string, unknown> & { model: string }) {
+async function chat(body: Record<string, unknown> & { model: string }, signal?: AbortSignal) {
   if (providerOf(body.model) === "huggingface") return huggingfaceChat(body);
-  if (!viaOpenAI(body.model)) return openrouter(body);
+  if (!viaOpenAI(body.model)) return openrouter(body, signal);
   const model = body.model.slice("openai/".length);
   let res: Response;
   for (let attempt = 0; ; attempt++) {
@@ -61,6 +61,7 @@ async function chat(body: Record<string, unknown> & { model: string }) {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({ ...body, model }),
+      signal,
     });
     if ((res.status !== 429 && res.status < 500) || attempt >= 4) break;
     const after = Number(res.headers.get("retry-after"));
@@ -78,7 +79,7 @@ async function chat(body: Record<string, unknown> & { model: string }) {
   return json;
 }
 
-async function openrouter(body: Record<string, unknown>) {
+async function openrouter(body: Record<string, unknown>, signal?: AbortSignal) {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
   let res: Response;
@@ -91,6 +92,7 @@ async function openrouter(body: Record<string, unknown>) {
         "X-Title": "GTM Engine",
       },
       body: JSON.stringify({ ...body, usage: { include: true } }),
+      signal,
     });
     // Rate limits and transient provider errors: back off and retry (honours Retry-After).
     const inFlight = res.status === 402 && (await res.clone().text()).includes("in_flight_budget");
@@ -238,7 +240,7 @@ async function falPricePerSec(model: string, resolution: string): Promise<number
   return (tokensPerSec / per) * p.price;
 }
 
-async function falVideo(picked: string, prompt: string, o: VideoOpts = {}): Promise<{ url: string; usage: Usage }> {
+async function falVideo(picked: string, prompt: string, o: VideoOpts = {}, signal?: AbortSignal): Promise<{ url: string; usage: Usage }> {
   const key = process.env.FAL_KEY;
   if (!key) throw new Error("fal.ai is not connected (set FAL_KEY)");
   // A registry entry's id is its image-to-video endpoint; with no keyframe the text-to-video sibling is used.
@@ -246,7 +248,7 @@ async function falVideo(picked: string, prompt: string, o: VideoOpts = {}): Prom
   if (!/^[a-z0-9][a-z0-9./-]+$/.test(model)) throw new Error("Invalid fal model");
   const headers = { Authorization: `Key ${key}`, "Content-Type": "application/json" };
   const body = falVideoBody(model, prompt, o);
-  const submit = await fetch(`${FAL_QUEUE}${model}`, { method: "POST", headers, body: JSON.stringify(body) });
+  const submit = await fetch(`${FAL_QUEUE}${model}`, { method: "POST", headers, body: JSON.stringify(body), signal });
   if (!submit.ok) throw new Error(falError(submit.status, await submit.text()));
   const { status_url, response_url } = await submit.json();
   if (![status_url, response_url].every((u) => typeof u === "string" && u.startsWith(FAL_QUEUE))) throw new Error("Unexpected fal status URL");
@@ -254,7 +256,7 @@ async function falVideo(picked: string, prompt: string, o: VideoOpts = {}): Prom
   for (;;) {
     if (Date.now() - started > VIDEO_TIMEOUT_MS) throw new Error("fal video timed out");
     await sleep(5000);
-    const st = await fetch(status_url, { headers });
+    const st = await fetch(status_url, { headers, signal });
     if (!st.ok) {
       if (st.status < 500) throw new Error(falError(st.status, await st.text()));
       continue;
@@ -263,7 +265,7 @@ async function falVideo(picked: string, prompt: string, o: VideoOpts = {}): Prom
     if (s.status === "COMPLETED") break;
     if (!["IN_QUEUE", "IN_PROGRESS"].includes(s.status)) throw new Error(`fal video ${String(s.status).toLowerCase()}${s.error ? `: ${String(s.error).slice(0, 200)}` : ""}`);
   }
-  const res = await fetch(response_url, { headers });
+  const res = await fetch(response_url, { headers, signal });
   const out = await res.json();
   if (!res.ok) throw new Error(falError(res.status, JSON.stringify(out?.detail ?? out)));
   const url: string | undefined = out.video?.url ?? out.videos?.[0]?.url;
@@ -365,7 +367,7 @@ export async function downloadAsDataUrl(url: string, headers: Record<string, str
   return `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString("base64")}`;
 }
 
-async function openrouterVideo(model: string, prompt: string, o: VideoOpts = {}): Promise<{ url: string; usage: Usage }> {
+async function openrouterVideo(model: string, prompt: string, o: VideoOpts = {}, signal?: AbortSignal): Promise<{ url: string; usage: Usage }> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
   const auth = { Authorization: `Bearer ${key}` };
@@ -386,7 +388,7 @@ async function openrouterVideo(model: string, prompt: string, o: VideoOpts = {})
         }
       : {}),
   };
-  const submit = await fetch("https://openrouter.ai/api/v1/videos", { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Title": "GTM Engine" }, body: JSON.stringify(body) });
+  const submit = await fetch("https://openrouter.ai/api/v1/videos", { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Title": "GTM Engine" }, body: JSON.stringify(body), signal });
   if (!submit.ok) throw new Error(`OpenRouter video ${submit.status}: ${(await submit.text()).slice(0, 300)}`);
   let job = await submit.json();
   const started = Date.now();
@@ -394,7 +396,7 @@ async function openrouterVideo(model: string, prompt: string, o: VideoOpts = {})
     if (["failed", "cancelled", "expired"].includes(job.status)) throw new Error(`Video ${job.status}: ${JSON.stringify(job.error ?? "").slice(0, 300)}`);
     if (Date.now() - started > VIDEO_TIMEOUT_MS) throw new Error("Video generation timed out");
     await sleep(8000);
-    const poll = await fetch(new URL(job.polling_url ?? `/api/v1/videos/${job.id}`, "https://openrouter.ai"), { headers: auth });
+    const poll = await fetch(new URL(job.polling_url ?? `/api/v1/videos/${job.id}`, "https://openrouter.ai"), { headers: auth, signal });
     if (poll.ok) job = await poll.json();
     else if (poll.status < 500) throw new Error(`OpenRouter video poll ${poll.status}: ${(await poll.text()).slice(0, 200)}`);
   }
@@ -555,22 +557,22 @@ async function hfmcpVideo(model: string, prompt: string, o: VideoOpts): Promise<
   return { url: await downloadAsDataUrl(r.url), usage: { costUsd: 0, credits: r.credits ?? undefined } };
 }
 
-export async function generateVideo(model: string, prompt: string, opts?: string | VideoOpts): Promise<{ url: string; usage: Usage }> {
+export async function generateVideo(model: string, prompt: string, opts?: string | VideoOpts, signal?: AbortSignal): Promise<{ url: string; usage: Usage }> {
   const o: VideoOpts = typeof opts === "string" ? { firstFrame: opts } : (opts ?? {});
   const provider = providerOf(model);
   if (model.startsWith("blender:") || model.startsWith("remotion:")) throw new Error(`${model} is a local renderer, not an AI video model: route it with renderRouted`);
   if (getModel(model) && !getModel(model)?.runnable) throw new Error(`${getModel(model)?.label ?? model} is catalogued but has no adapter yet: ${getModel(model)?.note ?? "not callable"}`);
   // Higgsfield MCP bills subscription credits (checked against its own quote), not USD.
   const perSec = provider === "hfmcp" ? 0 : (await videoPricePerSec(model, o.resolution ?? "720p", !!o.audio).catch(() => null)) ?? EST.defaultVideoPerSec;
-  return paid(`video:${model}`, perSec * (o.seconds ?? 5), () => generateVideoUnmetered(model, prompt, o));
+  return paid(`video:${model}`, perSec * (o.seconds ?? 5), () => generateVideoUnmetered(model, prompt, o, signal));
 }
 
-async function generateVideoUnmetered(model: string, prompt: string, o: VideoOpts): Promise<{ url: string; usage: Usage }> {
+async function generateVideoUnmetered(model: string, prompt: string, o: VideoOpts, signal?: AbortSignal): Promise<{ url: string; usage: Usage }> {
   const provider = providerOf(model);
-  if (provider === "fal") return falVideo(model, prompt, o);
-  if (provider === "higgsfield") return higgsfieldVideo(model, prompt, o);
+  if (provider === "fal") return falVideo(model, prompt, o, signal);
+  if (provider === "higgsfield") return higgsfieldVideo(model, prompt, o); // Higgsfield: no signal support yet
   if (provider === "hfmcp") return hfmcpVideo(model, prompt, o);
-  return openrouterVideo(model, prompt, o);
+  return openrouterVideo(model, prompt, o, signal);
 }
 
 export async function falRun<T>(endpoint: string, input: Record<string, unknown>): Promise<T> {

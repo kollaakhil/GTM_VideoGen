@@ -74,6 +74,7 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
       remotion: remotionRenderer() 
     },
     autoBlender: process.env.RENDER_AUTO_BLENDER === "1",
+    jobContext: jobContext ? { ...jobContext, jobId: `${jobContext.runId}-${jobContext.versionId}` } : undefined,
     photos: async (r) => Promise.all(r.input.photos.map((p) => mediaDataUrl(p))),
     store: (data, key) => storeMedia(data, key),
     shotCheck: {

@@ -10,6 +10,7 @@ import { getPresetsWithCosts, createCustomStack, normalizeStack } from "@/lib/ve
 import { ModelPickerPanel, type Picks } from "@/components/model-picker";
 import { STAGES } from "@/lib/registry";
 import { usd, secs } from "./api";
+import { useQueueStatus, GlobalQueueStrip, CancelButton } from "./queue-status";
 import { estimateSheetVersion } from "@/lib/sheet/version-estimate";
 
 interface VersionsPanelProps {
@@ -24,6 +25,7 @@ export function VersionsPanel({ run, busy, onStartVersions, onPickWinner }: Vers
   const [showCustom, setShowCustom] = useState(false);
   const [customPicks, setCustomPicks] = useState<Picks>({});
   const [customLabel, setCustomLabel] = useState("");
+  const queueStatus = useQueueStatus(run.id);
 
   // Estimates come from this sheet (AI-video seconds at each stack's price + shot checks), the same number the server enforces.
   const sheetCost = (st: VersionStack) => (run.sheet ? estimateSheetVersion(run.sheet, st).usd : st.estimatedCostUsd);
@@ -210,6 +212,10 @@ export function VersionsPanel({ run, busy, onStartVersions, onPickWinner }: Vers
             <p className="text-sm text-zinc-400">Compare render quality, cost, and speed across stacks</p>
           </div>
 
+          {queueStatus && queueStatus.jobs.length > 0 && (
+            <GlobalQueueStrip runId={run.id} queueJobs={queueStatus.jobs} />
+          )}
+
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {previews.map((version) => {
               const isDone = version.status === "done";
@@ -221,24 +227,34 @@ export function VersionsPanel({ run, busy, onStartVersions, onPickWinner }: Vers
                   data-testid={`version-${version.id}`}
                 >
                   <div className="mb-3 flex items-start justify-between">
-                    <div>
+                    <div className="flex-1">
                       <div className="font-semibold text-zinc-100">{version.stack.label}</div>
                       <div className="text-xs text-zinc-400">{version.stack.description}</div>
                     </div>
-                    <span
-                      className={cn(
-                        "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                        version.status === "done"
-                          ? "bg-emerald-500/20 text-emerald-400"
-                          : version.status === "rendering"
-                          ? "bg-sky-500/20 text-sky-400"
-                          : version.status === "failed" || version.status === "refused"
-                          ? "bg-red-500/20 text-red-400"
-                          : "bg-zinc-700/50 text-zinc-400"
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                          version.status === "done"
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : version.status === "rendering"
+                            ? "bg-sky-500/20 text-sky-400"
+                            : version.status === "failed" || version.status === "refused"
+                            ? "bg-red-500/20 text-red-400"
+                            : "bg-zinc-700/50 text-zinc-400"
+                        )}
+                      >
+                        {version.status}
+                      </span>
+                      {(version.status === "rendering" || version.status === "queued") && (
+                        <CancelButton
+                          runId={run.id}
+                          versionId={version.id}
+                          label=""
+                          onCancel={() => window.location.reload()}
+                        />
                       )}
-                    >
-                      {version.status}
-                    </span>
+                    </div>
                   </div>
 
                   {version.videoUrl ? (

@@ -13,6 +13,7 @@ import { ledger, nowIso, saveProgress } from "./jobs";
 import type { CostEntry, FinalResult, SheetRun, ShotRender, Version } from "./run-types";
 import { getPresetsWithCosts, normalizeStack, type VersionStack } from "@/lib/versions";
 import { editorInstructions } from "./editor";
+import { blenderQueue } from "@/lib/render/blender-queue";
 import { shotsForStack } from "./version-estimate";
 export { blenderOnly, estimateSheetVersion, SHOT_CHECK_USD, shotsForStack, videoPricePerSec } from "./version-estimate";
 
@@ -38,6 +39,8 @@ export interface RenderDeps {
   bed?(description: string, seconds: number): Promise<string | null>;
   /** Voiceover for a line (vo mode only). Gated by the meter like every paid call. */
   voice?(line: string, run: SheetRun): Promise<{ url: string; usd: number }>;
+  /** Job context for queue management (optional, used when rendering through the queue). */
+  jobContext?: { runId: string; versionId: string; jobId: string };
   final: (video: string, run: SheetRun, stitched: Stitched) => FinalDeps;
   clipCache: CacheStore<{ url: string; renderer: string; model: string }>;
   judgeCache: CacheStore<ShotVerdict>;
@@ -114,7 +117,11 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
   const rows = shots.map((s) => ({ s, row: rowFromSheetShot(s, {}, sheet.palette) as ShotRow }));
   const accent = sheet.palette.match(/#[0-9a-fA-F]{6}/)?.[0];
   const card = { brand: sheet.endCard.title, line: sheet.endCard.line || undefined, footer: sheet.endCard.footer || undefined, ...(accent ? { accent } : {}) };
-  const ctxFor = (s: SheetShot): RenderContext => ({ mode, width, height, refs, prompt: promptFor(s), resolution: mode === "preview" ? "480p" : "720p", ...(s.engine === "remotion" ? { card } : {}) });
+  const ctxFor = (s: SheetShot): RenderContext => {
+    const jobId = deps.jobContext ? `${deps.jobContext.jobId}-${s.id}` : undefined;
+    const signal = jobId ? blenderQueue.getSignal(jobId) : undefined;
+    return { mode, width, height, refs, prompt: promptFor(s), resolution: mode === "preview" ? "480p" : "720p", signal, ...(s.engine === "remotion" ? { card } : {}) };
+  };
   const keys = rows.map(({ s }) => clipKey(s, mode, photoSig, [width, height], videoModel, sheet.palette));
 
   // Preflight: what the paid shots still to render would cost, against what is left of the cap. Nothing is spent when it does not fit.

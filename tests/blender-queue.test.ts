@@ -436,30 +436,48 @@ describe("BlenderQueue", () => {
   });
 
   describe("preview spec quality settings", () => {
-    it("uses lower samples for preview mode", () => {
-      const previewSpec = {
-        mode: "preview",
-        samples: 8,
-        width: 854,
-        height: 480,
-      };
-
-      expect(previewSpec.samples).toBe(8);
-      expect(previewSpec.width).toBe(854);
-      expect(previewSpec.height).toBe(480);
+    it("generates preview mode spec JSON with lower samples for Blender", async () => {
+      const { kitJob } = await import("@/lib/render/blender-kit");
+      
+      const job = kitJob(
+        { id: "s1", n: 1, start: 0, end: 3, shotType: "product", framing: "", camera: { lensMm: 50, move: "static", angle: "straight-on" }, subject: "Product bottle", action: "", lighting: "", text: null, audio: { vo: null, sfx: null, music: null }, transition: "cut", engine: "blender", engineLocked: false, blender: { template: "product_hero", word: undefined, label: undefined, ignite: undefined }, editorNote: "" },
+        { palette: "#ff3b1d" },
+        { width: 854, height: 480, mode: "preview", blender: { template: "product_hero", word: undefined, label: undefined, ignite: undefined } }
+      );
+      
+      expect(job.spec.mode).toBe("preview");
+      expect(job.spec.samples).toBe(8);
+      expect(job.spec.width).toBeLessThanOrEqual(854);
+      expect(job.spec.height).toBeLessThanOrEqual(480);
     });
 
-    it("uses full samples for final mode", () => {
-      const finalSpec = {
-        mode: "final",
-        samples: 16,
-        width: 1280,
-        height: 720,
-      };
+    it("generates final mode spec JSON with full samples for Blender", async () => {
+      const { kitJob } = await import("@/lib/render/blender-kit");
+      
+      const job = kitJob(
+        { id: "s1", n: 1, start: 0, end: 3, shotType: "product", framing: "", camera: { lensMm: 50, move: "static", angle: "straight-on" }, subject: "Product bottle", action: "", lighting: "", text: null, audio: { vo: null, sfx: null, music: null }, transition: "cut", engine: "blender", engineLocked: false, blender: { template: "product_hero", word: undefined, label: undefined, ignite: undefined }, editorNote: "" },
+        { palette: "#ff3b1d" },
+        { width: 1280, height: 720, mode: "final", blender: { template: "product_hero", word: undefined, label: undefined, ignite: undefined } }
+      );
+      
+      expect(job.spec.mode).toBe("final");
+      expect(job.spec.samples).toBe(16);
+      expect(job.spec.width).toBeLessThanOrEqual(1280);
+      expect(job.spec.height).toBeLessThanOrEqual(720);
+    });
 
-      expect(finalSpec.samples).toBe(16);
-      expect(finalSpec.width).toBe(1280);
-      expect(finalSpec.height).toBe(720);
+    it("generates lab scene spec with higher samples for final mode", async () => {
+      const { kitJob } = await import("@/lib/render/blender-kit");
+      
+      const job = kitJob(
+        { id: "s1", n: 1, start: 0, end: 3, shotType: "product", framing: "", camera: { lensMm: 50, move: "static", angle: "straight-on" }, subject: "Lab scene", action: "", lighting: "", text: null, audio: { vo: null, sfx: null, music: null }, transition: "cut", engine: "blender", engineLocked: false, blender: { template: "lab", word: undefined, label: "Test Label", ignite: undefined }, editorNote: "" },
+        { palette: "#ff3b1d" },
+        { width: 1280, height: 720, mode: "final", blender: { template: "lab", word: undefined, label: "Test Label", ignite: undefined } }
+      );
+      
+      expect(job.spec.mode).toBe("final");
+      expect(job.spec.samples).toBe(24); // Lab scene uses 24 samples for final
+      expect(job.script).toBe("scene_kit.py");
     });
   });
 
