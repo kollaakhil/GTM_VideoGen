@@ -45,6 +45,8 @@ async function winningShots(run: StudioRun) {
 }
 
 const KEYFRAME_TRIES = 2;
+/** Independent export reviews per shot; the median decides (odd, see medianReview). */
+export const EXPORT_REVIEWS = 5;
 
 /** True-colour packshot still per run (free Blender render), cached so every labelled shot reuses one. */
 const trueColour = new Map<string, Promise<string | null>>();
@@ -567,9 +569,9 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     if (shotReady(clipQa)) {
       try {
         const frames = await evidenceFrames(main, frameTimes(segment.start, segment.end), segment);
-        // Median of three independent reviews (13.29): one export review swung 10 -> 4 on the identical cached clip
-        // between takes, so a single sample decided the gate. The median keeps a flaw two of three reviewers see.
-        const vs = await Promise.all([0, 1, 2].map(() => reviewShotFrames(run.models.vision, frames, capMode === "off" ? { ...s, onScreen: undefined } : s, refs, firsts[i], "export")));
+        // Median of EXPORT_REVIEWS independent reviews (13.29, 13.36): the identical cached clip scored 10 in take 24
+        // and a median-of-3 of 3 (3, 1, 5) in take 25, so three samples still let noise decide the gate.
+        const vs = await Promise.all(Array.from({ length: EXPORT_REVIEWS }, () => 0).map(() => reviewShotFrames(run.models.vision, frames, capMode === "off" ? { ...s, onScreen: undefined } : s, refs, firsts[i], "export")));
         vs.forEach((v) => charge(v.cost));
         finalQa = medianReview(vs.map((v) => v.qa));
       } catch {

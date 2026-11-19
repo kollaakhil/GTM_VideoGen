@@ -158,5 +158,30 @@ export function continuityLocks(shots: Shot[]): Shot[] {
   return shots.map((s, i) => (s.source === "packshot" || !s.spec ? s : { ...s, spec: { ...s.spec, continuity: opened >= 0 && i > opened ? [...locks, openLock] : locks } }));
 }
 
-/** Code-enforced shot-plan rules for products with labels: label lock per shot, then continuity locks across shots. */
-export const enforceShotRules = (shots: Shot[]): Shot[] => continuityLocks(shots.map(applyLabelLock));
+const FULL_GLASS = "the glass is already full: bubbles rise and the foam settles at the rim";
+const pourLine = (l: string) => POUR.test(l) || /\b(fill|fills|filling|top(s|ping)? up)\b/i.test(l);
+
+/**
+ * One pour per ad (13.36). Take 25's edit judge: "action reverses: a settled, filled glass in shot 2, then pouring
+ * again in shot 3" (continuity 4.5). The first shot that pours keeps it; every later shot shows the full glass.
+ */
+export function singlePour(shots: Shot[]): Shot[] {
+  const first = shots.findIndex((s) => s.source !== "packshot" && [s.visual, ...(s.spec?.motionBeats ?? [])].some(pourLine));
+  if (first < 0) return shots;
+  return shots.map((s, i) => {
+    if (i <= first || s.source === "packshot") return s;
+    const vis = (t: string) => {
+      const ss = sentences(t);
+      if (!ss.some(pourLine)) return t;
+      return [...ss.filter((x) => !pourLine(x)), `${FULL_GLASS[0].toUpperCase()}${FULL_GLASS.slice(1)}.`].join(" ");
+    };
+    const beats = s.spec ? [...new Set(s.spec.motionBeats.map((b) => (pourLine(b) || (movesProduct(b) && /\bglass\b/i.test(b)) ? `${b.match(TIME)?.[1] ?? ""} ${FULL_GLASS}`.trim() : b)))] : undefined;
+    return {
+      ...s, visual: vis(s.visual), ...(s.expectedVisual ? { expectedVisual: vis(s.expectedVisual) } : {}),
+      ...(s.spec && beats ? { spec: { ...s.spec, motionBeats: beats, negative: [...new Set(["pouring again", ...s.spec.negative])].slice(0, 6) } } : {}),
+    };
+  });
+}
+
+/** Code-enforced shot-plan rules for products with labels: one pour, label lock per shot, then continuity locks. */
+export const enforceShotRules = (shots: Shot[]): Shot[] => continuityLocks(singlePour(shots).map(applyLabelLock));

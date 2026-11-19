@@ -86,3 +86,17 @@ describe("continuity locks", () => {
     expect(CONTINUITY_LOCK_ASK).toMatch(/label's orientation/);
   });
 });
+
+describe("single pour", () => {
+  it("keeps the first pour and turns later pours into the full glass", async () => {
+    const { singlePour } = await import("@/lib/shot-spec");
+    const a = shot();
+    const b = { ...shot({ visual: "Close-up. The can tips to pour more cola into the glass. Golden light.", beats: ["0–1s hand tilts the can over the glass", "1–3s cola streams over the ice, fizz rises", "3–4s foam crowns the rim"] }), id: "s2", expectedVisual: "The can tips to pour more cola. Foam crowns the rim." };
+    const [x, y] = singlePour([a, b]);
+    expect(x).toBe(a);
+    expect([y.visual, y.expectedVisual!, ...y.spec!.motionBeats].some((l) => /pour|stream/i.test(l))).toBe(false);
+    expect(y.spec!.motionBeats[0]).toBe("0–1s the glass is already full: bubbles rise and the foam settles at the rim");
+    expect(y.spec!.motionBeats).toContain("3–4s foam crowns the rim");
+    expect(y.spec!.negative).toContain("pouring again");
+  });
+});
