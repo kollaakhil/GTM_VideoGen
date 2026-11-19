@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { reviewShotFrames } from "@/lib/video-plan";
 import { SCRIPT_RUBRIC } from "@/lib/quality-policy";
 import type { AdScript, Creative, Shot, ShotQA, StudioRun } from "@/lib/types";
+import { VOICE_MODEL } from "@/lib/ai";
 
 const state = vi.hoisted(() => ({
   run: null as StudioRun | null,
@@ -145,7 +146,7 @@ describe("Studio no-spend route checks", () => {
         expectedVisual: b.visual, clip: `saved-take-${i}`, clipModel: model,
         clipKey: hash(["video-qa-v2", "480p", model, "product_demo", d.productRefs, keyframe, b.visual, b.visual, "wide", b.seconds, ""]),
         clipQa: i ? { score: 5, match: "fail", notes: ["Wrong box"] } : pass,
-        voiceTrack: { key: hash([b.vo, "Rachel", b.seconds]), url: `saved-voice-${i}` },
+        voiceTrack: { key: hash([VOICE_MODEL, b.vo, "Rachel", b.seconds]), url: `saved-voice-${i}` },
       };
     });
     if (exploratory) {
@@ -205,7 +206,7 @@ describe("Studio no-spend route checks", () => {
         ...b, id: `s${i}`, beat: i ? "cta" : "hook", camera: "wide", status: "done", attempts: 1, keyframe, keyframeQa: pass,
         expectedVisual: b.visual, clip: `saved-take-${i}`, clipModel: model, clipQa: pass,
         clipKey: hash(["video-qa-v2", "480p", model, "product_demo", d.productRefs, keyframe, b.visual, b.visual, "wide", b.seconds, ""]),
-        voiceTrack: { key: hash([b.vo, "Rachel", b.seconds]), url: `saved-voice-${i}` },
+        voiceTrack: { key: hash([VOICE_MODEL, b.vo, "Rachel", b.seconds]), url: `saved-voice-${i}` },
       };
     });
     state.vision.mockResolvedValue({ data: { score: 9, notes: [], frames: [{ index: 1, match: "pass", note: "" }] }, usage: { costUsd: 0 } });

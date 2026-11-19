@@ -558,18 +558,31 @@ export function speakable(text: string, sayAs?: { brand?: string; pronunciation?
   return out.replace(/\b[A-Z]{4,}\b/g, (w) => (ACRONYMS.has(w) ? w : w[0] + w.slice(1).toLowerCase()));
 }
 
+/**
+ * Voice model. Eleven v3 replaced Turbo v2.5 after the 13.29 A/B on the OLIPOP script: same 3% WER, but Turbo said
+ * "swap an ollipop" (final QA flagged it) where v3 said "swap in", and v3 has a wider pitch range (10.6 vs 8.1 semitones).
+ * Stability 0.5 is v3's "Natural" setting (it accepts only 0 / 0.5 / 1).
+ */
+export const VOICE_MODEL = "fal-ai/elevenlabs/tts/eleven-v3";
 export async function voiceover(text: string, voice = "Rachel", sayAs?: { brand?: string; pronunciation?: string }): Promise<{ url: string; usage: Usage }> {
-  const out = await falRun<{ audio?: { url: string } }>("fal-ai/elevenlabs/tts/turbo-v2.5", { text: speakable(text, sayAs), voice: VOICES.includes(voice) ? voice : "Rachel" });
+  const out = await falRun<{ audio?: { url: string } }>(VOICE_MODEL, { text: speakable(text, sayAs), voice: VOICES.includes(voice) ? voice : "Rachel", stability: 0.5 });
   if (!out.audio?.url) throw new Error("Voiceover returned no audio");
-  return { url: await downloadAsDataUrl(out.audio.url), usage: { costUsd: (text.length / 1000) * 0.05 } };
+  return { url: await downloadAsDataUrl(out.audio.url), usage: { costUsd: (text.length / 1000) * 0.1 } };
 }
 
-/** Instrumental music bed via fal ElevenLabs Music ($0.60 per started minute). */
+/**
+ * Instrumental music bed via fal Stable Audio 2.5 ($0.20 a clip, up to 190 s). It replaced ElevenLabs Music
+ * ($0.60 per started minute) after the 13.29 A/B: steadier beat grid (inter-beat CV 0.015 vs 0.023) and less energy in
+ * the 300-3400 Hz voice band (1.82 vs 2.36), so the VO sits on top of it.
+ */
+export const MUSIC_MODEL = "fal-ai/stable-audio-25/text-to-audio";
+export const MUSIC_COST = 0.2;
 export async function musicBed(prompt: string, seconds: number): Promise<{ url: string; usage: Usage }> {
-  const ms = Math.max(3000, Math.min(120_000, Math.round(seconds * 1000)));
-  const out = await falRun<{ audio?: { url: string } }>("fal-ai/elevenlabs/music", { prompt, music_length_ms: ms, force_instrumental: true });
-  if (!out.audio?.url) throw new Error("Music returned no audio");
-  return { url: await downloadAsDataUrl(out.audio.url), usage: { costUsd: Math.ceil(ms / 60_000) * 0.6 } };
+  const secs = Math.max(3, Math.min(190, Math.ceil(seconds)));
+  const out = await falRun<{ audio?: string | { url?: string } }>(MUSIC_MODEL, { prompt, seconds_total: secs });
+  const url = typeof out.audio === "string" ? out.audio : out.audio?.url;
+  if (!url) throw new Error("Music returned no audio");
+  return { url: await downloadAsDataUrl(url), usage: { costUsd: MUSIC_COST } };
 }
 
 export function aiConfigured() {
