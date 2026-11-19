@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import type { CopyCue } from "./media-qa";
 import { energyMap, layoutCopy, shotOverlays } from "./caption-layout";
+import { detectBeats, snapCuts } from "./beat-sync";
+import { type SfxCue, sfxFile } from "./sfx";
 
 const run = promisify(execFile);
 const FFMPEG = ffmpegPath || "ffmpeg";
@@ -174,16 +176,37 @@ const toFile = async (dir: string, name: string, media: string) => {
  * Joins shot clips into one 720x1280 30fps video. With a voiceover and/or music bed the model audio is replaced
  * by a mix (voice on top, music ducked under it); otherwise each clip's own audio is kept.
  */
-export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number } = {}): Promise<{ url: string; starts: number[]; duration: number }> {
+export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; beatSync?: boolean; sfx?: SfxCue[] } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-stitch-"));
   try {
     const norm: string[] = [];
     const starts: number[] = [];
     let t = 0;
-    for (const [i, c] of clips.entries()) {
-      const src = await toFile(dir, `c${i}.mp4`, c);
-      const info = await probe(src);
-      const duration = audio.shotSeconds?.[i] ?? info.duration;
+    const srcs = await Promise.all(clips.map((c, i) => toFile(dir, `c${i}.mp4`, c)));
+    const infos = await Promise.all(srcs.map(probe));
+    // Beat sync: move each cut to the nearest music beat the clips have slack for; voices follow their shot.
+    let planned = audio.shotSeconds;
+    let beats: number[] | undefined, snapped: number | undefined;
+    const musicFile = audio.music ? await toFile(dir, "music.mp3", audio.music) : null;
+    if (audio.beatSync && musicFile && planned?.length) {
+      const b = await detectBeats(musicFile);
+      if (b) {
+        const s = snapCuts(planned, [...new Set([...b.beats, ...b.onsets])].sort((x, y) => x - y), infos.map((x) => x.duration));
+        const oldStarts = planned.map((_, i) => planned!.slice(0, i).reduce((a, x) => a + x, 0));
+        const newStarts = s.seconds.map((_, i) => s.seconds.slice(0, i).reduce((a, x) => a + x, 0));
+        audio = { ...audio, voices: audio.voices?.map((v) => {
+          const k = oldStarts.reduce((best, st, i) => (st <= v.start + 1e-6 ? i : best), 0);
+          return { ...v, start: Number((v.start - oldStarts[k] + newStarts[k]).toFixed(3)) };
+        }) };
+        planned = s.seconds;
+        beats = b.beats;
+        snapped = s.snapped;
+      }
+    }
+    for (const [i] of clips.entries()) {
+      const src = srcs[i];
+      const info = infos[i];
+      const duration = planned?.[i] ?? info.duration;
       if (!(duration > 0) || info.duration + 0.12 < duration) throw new Error(`Shot ${i + 1} is shorter than its planned ${duration}s.`);
       const w = audio.width ?? 720;
       const h = Math.round(w * 16 / 9 / 2) * 2;
@@ -208,7 +231,7 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
     const fc = norm.map((_, i) => `[${i}:v][${i}:a]`).join("") + `concat=n=${norm.length}:v=1:a=1[v][a]`;
     await run(FFMPEG, ["-hide_banner", "-loglevel", "error", ...inputs, "-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-y", joined], { timeout: 240_000 });
     let final = joined;
-    if (audio.voices?.length || audio.music) {
+    if (audio.voices?.length || audio.music || audio.sfx?.length) {
       final = path.join(dir, "mixed.mp4");
       const extra: string[] = [];
       const parts: string[] = [];
@@ -225,8 +248,18 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
         parts.push(`[${k++}:a]adelay=${ms}|${ms}[vo${i}]`);
         labels.push(`[vo${i}]`);
       }
+      const sfxFiles = new Map<string, string>();
+      for (const [j, c] of (audio.sfx ?? []).entries()) {
+        const at = (starts[c.shot] ?? 0) + c.offset;
+        if (c.shot >= starts.length || at < 0 || at > t - 0.2) continue;
+        if (!sfxFiles.has(c.kind)) sfxFiles.set(c.kind, await sfxFile(c.kind, dir));
+        extra.push("-i", sfxFiles.get(c.kind)!);
+        const ms = Math.round(at * 1000);
+        parts.push(`[${k++}:a]volume=${c.gain.toFixed(3)},adelay=${ms}|${ms}[fx${j}]`);
+        labels.push(`[fx${j}]`);
+      }
       if (audio.music) {
-        extra.push("-stream_loop", "-1", "-i", await toFile(dir, "music.mp3", audio.music));
+        extra.push("-stream_loop", "-1", "-i", musicFile!);
         parts.push(`[${k++}:a]aresample=44100,aformat=channel_layouts=stereo,volume=${labels.length ? 0.18 : 0.6},afade=t=out:st=${Math.max(0, t - 1).toFixed(2)}:d=1[mu]`);
         labels.push("[mu]");
       }
@@ -237,7 +270,7 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
         { timeout: 180_000 },
       );
     }
-    return { url: `data:video/mp4;base64,${(await fs.readFile(final)).toString("base64")}`, starts, duration: t };
+    return { url: `data:video/mp4;base64,${(await fs.readFile(final)).toString("base64")}`, starts, duration: t, beats, snapped };
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

@@ -21,6 +21,8 @@ import { negativePrompt, specBlock } from "@/lib/shot-spec";
 import { candidateCount, draftEstimate, pickCandidate } from "@/lib/best-of-n";
 import { captionSync, captionSyncFindings } from "@/lib/caption-sync";
 import { endCardItems } from "@/lib/brief-policy";
+import { onBeatShare } from "@/lib/beat-sync";
+import { sfxCues } from "@/lib/sfx";
 import { saveCreative } from "./creatives";
 import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
 import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
@@ -447,8 +449,12 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   await step(run, d, tier === "final" ? "Stitching the HD cut with the approved voice and music" : "Stitching shots, voice and music", steps.stitch, total, "stitching");
   const clipData = await Promise.all(a.clips.map((c) => mediaDataUrl(c.url)));
   const voiceData = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
-  const st = await stitchShots(clipData, { voices: voiceData, music: a.music ? await mediaDataUrl(a.music) : null, shotSeconds: shots.map((s) => s.seconds), width: tier === "final" ? 1080 : 486 });
-  const segments = shots.map((s, i) => ({ shotId: s.id, start: st.starts[i], end: st.starts[i] + s.seconds, text: s.vo, onScreen: s.onScreen }));
+  const st = await stitchShots(clipData, {
+    voices: voiceData, music: a.music ? await mediaDataUrl(a.music) : null, shotSeconds: shots.map((s) => s.seconds), width: tier === "final" ? 1080 : 486,
+    beatSync: plan.beatSync !== false, sfx: plan.sfx === false ? [] : sfxCues(shots),
+  });
+  const lenOf = (i: number) => (st.starts[i + 1] ?? st.duration) - st.starts[i];
+  const segments = shots.map((s, i) => ({ shotId: s.id, start: st.starts[i], end: st.starts[i] + lenOf(i), text: s.vo, onScreen: s.onScreen }));
   const end = {
     brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
     cta: d.approvedScript!.cta,
@@ -536,7 +542,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   }
   const finalGate = stageScore("final", finalChecks({ craft: craft.score, findings, shotScores: evidence.map((e) => e.qa?.score ?? 0), captionSync: words.captionSync, frameScores: evidence.flatMap((e) => (e.qa?.frames ?? []).map((f) => (f.match === "pass" ? 10 : f.match === "review" ? 7 : 3))) }), run.models.vision, 1,
     [...craft.notes, ...findings.filter((f) => f.status === "fail").map((f) => `${f.at.toFixed(1)}s ${f.kind}: ${f.observed}`)].slice(0, 6));
-  const stages = await takeStages(run, main, { shots, st, evidence, craft: craft.score, words, music: a.music, speechFails: speech.findings.filter((f) => f.kind === "speech" && f.status === "fail").length, charge, beats: d.approvedScript?.beats.map((b) => b.seconds) });
+  const stages = await takeStages(run, main, { shots, st, evidence, craft: craft.score, words, music: a.music, speechFails: speech.findings.filter((f) => f.kind === "speech" && f.status === "fail").length, charge, beats: d.approvedScript?.beats.map((b) => b.seconds), musicBeats: st.beats });
   for (const g of stages) saveStage(run, g, d.id);
   saveStage(run, finalGate, d.id);
   const quality = { ...exportVerdict(tier, craft.score, evidence, findings, variants.map((v) => v.aspect)), storyboardKey: d.storyboardKey!, rubric: finalGate.checks, rubricScore: finalGate.score };
@@ -550,7 +556,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
 
 /** Video, sound & voice and edit gates for one cut (see stage-gates.ts); one continuity vision call when AI is on. */
 async function takeStages(run: StudioRun, main: string, o: {
-  shots: Shot[]; st: { starts: number[]; duration: number }; evidence: VideoQuality["shots"]; craft: number; words: WordLevel; music: string | null; speechFails: number; charge: (n: number) => void; beats?: number[];
+  shots: Shot[]; st: { starts: number[]; duration: number }; evidence: VideoQuality["shots"]; craft: number; words: WordLevel; music: string | null; speechFails: number; charge: (n: number) => void; beats?: number[]; musicBeats?: number[];
 }) {
   const plan = run.videoPlan!;
   const judge = gateJudge(run);
@@ -577,6 +583,7 @@ async function takeStages(run: StudioRun, main: string, o: {
     planned: o.st.starts.slice(1), detected: cuts?.cuts.filter((t) => t > 0.2 && t < o.st.duration - 0.2) ?? [], shotSeconds,
     beatSeconds: o.beats?.length === o.shots.length ? o.beats : o.shots.map((s) => s.seconds),
     wordsPerShot: o.shots.map((s) => s.vo.split(/\s+/).filter(Boolean).length), continuity,
+    onBeat: o.musicBeats ? onBeatShare(o.st.starts.slice(1), o.musicBeats, 0.3) : null,
   }), judge, 1, notes, cal);
   return [video, audio, edit];
 }
