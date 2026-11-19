@@ -34,7 +34,7 @@ export interface RenderDeps {
   /** Persists a data URL and returns a stable URL. */
   store(data: string, key: string): Promise<string>;
   shotCheck: ShotCheckDeps;
-  stitch(clips: string[], audio: { voices: { url: string; start: number }[]; sfx: SfxCue[]; duck: boolean; bedGain: number; music: string | null; shotSeconds: number[]; width: number; height?: number }): Promise<Stitched>;
+  stitch(clips: string[], audio: { voices: { url: string; start: number }[]; sfx: SfxCue[]; duck: boolean; bedGain: number; music: string | null; shotSeconds: number[]; width: number; height?: number; silenceGaps?: { start: number; end: number }[] }): Promise<Stitched>;
   /** A free synthesised bed (drone) for the sheet's "bed" line, as a data URL; null for none. */
   bed?(description: string, seconds: number): Promise<string | null>;
   /** Voiceover for a line (vo mode only). Gated by the meter like every paid call. */
@@ -199,7 +199,16 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
   }
   const total = shots.reduce((a, x) => a + dur(x), 0);
   const music = sheet.bed?.trim() && deps.bed ? await deps.bed(sheet.bed, total) : null;
-  const stitched = await deps.stitch(v.shots.map((r) => r.url!), { voices, sfx: plan.sfx, duck: plan.duck, bedGain: plan.bedGain, music, shotSeconds: sheet.shots.map(dur), width, height });
+  // Compute silence gaps for pattern-specific beats (e.g. ~1s after but_silence)
+  const silenceGaps: { start: number; end: number }[] = [];
+  if (sheet.patternId === "confession_loop") {
+    const butSilenceIdx = sheet.shots.findIndex((s) => s.beat === "but_silence");
+    if (butSilenceIdx >= 0) {
+      const beatEnd = sheet.shots.slice(0, butSilenceIdx + 1).reduce((a, x) => a + dur(x), 0);
+      silenceGaps.push({ start: beatEnd, end: beatEnd + 1.0 });
+    }
+  }
+  const stitched = await deps.stitch(v.shots.map((r) => r.url!), { voices, sfx: plan.sfx, duck: plan.duck, bedGain: plan.bedGain, music, shotSeconds: sheet.shots.map(dur), width, height, silenceGaps });
   v.videoUrl = await deps.store(stitched.url, `${run.id}/${v.id}-cut`);
   addTiming(run, "edit and mix", Date.now() - t2, `audio: ${plan.mode}${plan.unmapped.length ? `, no sound for ${plan.unmapped.length} action(s)` : ""}`);
   Object.assign(v, { status: "done", ms: Date.now() - t0, error: null });

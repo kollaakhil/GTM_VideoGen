@@ -92,7 +92,7 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
     stitch: async (clips, a) => {
       const clipData = await Promise.all(clips.map((c) => mediaDataUrl(c)));
       const voices = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
-      return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, height: a.height, beatSync: false, sfx: a.sfx, duck: a.duck, bedGain: a.bedGain });
+      return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, height: a.height, beatSync: false, sfx: a.sfx, duck: a.duck, bedGain: a.bedGain, silenceGaps: a.silenceGaps });
     },
     bed: (description, seconds) => droneBed(description, seconds),
     voice: async (line) => {
