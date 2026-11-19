@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 // Records the model every provider call really receives (the overrides must reach the provider, not just a closure).
-const seen = vi.hoisted(() => ({ video: [] as string[], chat: [] as string[] }));
+const seen = vi.hoisted(() => ({ video: [] as string[], chat: [] as string[], aspect: undefined as string | undefined }));
 vi.mock("@/lib/ai", async (orig) => ({
   ...(await orig<typeof import("@/lib/ai")>()),
-  generateVideo: vi.fn(async (model: string) => { seen.video.push(model); return { url: "data:video/mp4;base64,AA", usage: { costUsd: 0.2 } }; }),
+  generateVideo: vi.fn(async (model: string, _p: string, o: { aspect?: string }) => { seen.video.push(model); seen.aspect = o?.aspect; return { url: "data:video/mp4;base64,AA", usage: { costUsd: 0.2 } }; }),
   chatJSON: vi.fn(async (model: string) => { seen.chat.push(model); return { data: { score: 7, notes: ["fine"] }, usage: { costUsd: 0.001 } }; }),
 }));
 vi.mock("@/lib/store", async (orig) => ({ ...(await orig<typeof import("@/lib/store")>()), put: vi.fn(async () => {}), get: vi.fn(async () => null) }));
@@ -82,6 +82,7 @@ describe("stack overrides reach the real provider calls", () => {
     await d.renderers["ai-video"]!.render(rowFromSheetShot(sheet.shots[1]), { mode: "preview", width: 1280, height: 720, refs: [], prompt: "p" });
     await d.shotCheck.review("data:image/jpeg;base64,AA", "expected");
     expect(seen.video).toEqual(["fal-ai/wan/v2.2-5b/image-to-video"]);
+    expect(seen.aspect).toBe("16:9");
     expect(seen.chat).toEqual(["qwen/qwen3.8-27b"]);
     expect(d.renderers["ai-video"]!.estimateUsd(rowFromSheetShot(sheet.shots[1]), { mode: "preview", width: 1, height: 1, refs: [] })).toBeCloseTo(0.12);
   });

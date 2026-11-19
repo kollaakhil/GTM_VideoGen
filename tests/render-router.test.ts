@@ -69,7 +69,7 @@ describe("concrete renderers", () => {
     expect(r.estimateUsd(row({ seconds: 5 }), ctx())).toBeCloseTo(0.5);
     const out = await r.render(row({ model: "fal:seedance" }), ctx({ resolution: "480p" }));
     expect(out).toEqual({ url: "https://x/y.mp4", costUsd: 0.5 });
-    expect(generate).toHaveBeenCalledWith("fal:seedance", "p", { firstFrame: "data:image/png;base64,BBBB", seconds: 4, audio: false, resolution: "480p" });
+    expect(generate).toHaveBeenCalledWith("fal:seedance", "p", { firstFrame: "data:image/png;base64,BBBB", seconds: 4, audio: false, resolution: "480p", aspect: "9:16" });
   });
   it("ai-video ignores blender:/remotion: model ids and uses the default", async () => {
     const generate = vi.fn(async () => ({ url: "u", usage: { costUsd: 0 } })) as never;

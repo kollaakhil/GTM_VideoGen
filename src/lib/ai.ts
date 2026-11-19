@@ -189,19 +189,19 @@ export function falError(status: number, body: string): string {
 /** Request body for a fal image-to-video model; exported for tests. */
 export function falVideoBody(model: string, prompt: string, o: VideoOpts) {
   const k = registryKnobs(model);
-  if (k) return buildFalBody(k, prompt, { firstFrame: o.firstFrame, lastFrame: o.lastFrame, seconds: o.seconds, resolution: o.resolution, aspect: "9:16", audio: o.audio, negative: o.negative, frameRule: frameRule(model) });
+  if (k) return buildFalBody(k, prompt, { firstFrame: o.firstFrame, lastFrame: o.lastFrame, seconds: o.seconds, resolution: o.resolution, aspect: o.aspect ?? "9:16", audio: o.audio, negative: o.negative, frameRule: frameRule(model) });
   const f = falFamily(model);
   const duration = String(nearest(falDurations(model), o.seconds ?? 5));
   const body: Record<string, unknown> = { prompt: prompt.slice(0, 2500) };
   if (o.firstFrame) body.image_url = o.firstFrame;
   if (f === "seedance") {
-    Object.assign(body, { duration, resolution: ["480p", "720p", "1080p"].includes(o.resolution ?? "") ? o.resolution : "480p", aspect_ratio: "9:16" });
+    Object.assign(body, { duration, resolution: ["480p", "720p", "1080p"].includes(o.resolution ?? "") ? o.resolution : "480p", aspect_ratio: o.aspect ?? "9:16" });
     if (o.lastFrame && model.includes("/lite/")) body.end_image_url = o.lastFrame;
   } else if (f === "kling") {
     body.duration = duration;
     if (o.lastFrame) body.tail_image_url = o.lastFrame;
   } else if (f === "veo") {
-    Object.assign(body, { duration: `${duration}s`, aspect_ratio: "9:16", resolution: o.resolution === "1080p" ? "1080p" : "720p", generate_audio: o.audio ?? false });
+    Object.assign(body, { duration: `${duration}s`, aspect_ratio: o.aspect ?? "9:16", resolution: o.resolution === "1080p" ? "1080p" : "720p", generate_audio: o.audio ?? false });
   } else body.duration = duration;
   return body;
 }
@@ -276,7 +276,7 @@ async function falVideo(picked: string, prompt: string, o: VideoOpts = {}): Prom
 }
 
 type VideoSpec = { durations?: number[] | null; resolutions?: string[] | null; aspects?: string[] | null; frames?: string[] | null; pricing?: Record<string, string> | null };
-export type VideoOpts = { firstFrame?: string; lastFrame?: string; seconds?: number; audio?: boolean; resolution?: string; negative?: string };
+export type VideoOpts = { firstFrame?: string; lastFrame?: string; seconds?: number; audio?: boolean; resolution?: string; negative?: string; /** Default 9:16 (the original vertical ads). */ aspect?: string };
 let videoCatalog: { at: number; specs: Map<string, VideoSpec> } | null = null;
 
 async function openrouterVideoSpec(model: string): Promise<VideoSpec> {
