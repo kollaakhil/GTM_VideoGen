@@ -12,10 +12,10 @@ importers:
         specifier: ^1.9.0
         version: 1.9.0(@types/react@19.3.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@remotion/bundler':
-        specifier: ^4.0.545
+        specifier: 4.0.545
         version: 4.0.545(lightningcss@1.33.0)(postcss@8.5.32)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@remotion/renderer':
-        specifier: ^4.0.545
+        specifier: 4.0.545
         version: 4.0.545(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@supabase/supabase-js':
         specifier: ^2.119.0
@@ -51,7 +51,7 @@ importers:
         specifier: 19.1.0
         version: 19.1.0(react@19.1.0)
       remotion:
-        specifier: ^4.0.545
+        specifier: 4.0.545
         version: 4.0.545(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       shadcn:
         specifier: ^4.23.0
