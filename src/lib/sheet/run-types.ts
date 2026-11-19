@@ -77,6 +77,7 @@ export interface SheetRun {
     targetSec: number;
     aspect: ShotSheet["aspect"];
     audioMode: ShotSheet["audioMode"];
+    patternId: string;
     textModel: string;
     visionModel: string;
   };

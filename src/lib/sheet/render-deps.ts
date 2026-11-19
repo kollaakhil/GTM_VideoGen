@@ -97,8 +97,8 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
       const clipData = await Promise.all(clips.map((c) => mediaDataUrl(c)));
       const voices = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
       // Cast sfx to any to allow both SfxCue and GeneratedSfxCue
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- generated cues carry a url the SfxCue union does not model yet
-      return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, height: a.height, beatSync: false, sfx: a.sfx as any, duck: a.duck, bedGain: a.bedGain });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- generated cues carry a url the SfxCue union does not model yet
+      return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, height: a.height, beatSync: false, sfx: a.sfx as any, duck: a.duck, bedGain: a.bedGain, silenceGaps: a.silenceGaps });
     },
     bed: async (description, seconds) => {
       // Only generate a drone if the bed description explicitly requests one
@@ -114,9 +114,9 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
     },
     soundDesign: async (run) => {
       if (!run.sheet || !run.brief) return null;
-      const textModel = run.input.visionModel; // Use the run's text model
-      const pattern = (run as { pattern?: { name?: string } }).pattern?.name;
-      const { plan, usd } = await designSound(run.sheet, run.brief, textModel, pattern);
+      const textModel = run.input.visionModel;
+      // Pass run.input.patternId directly (no optional workaround)
+      const { plan, usd } = await designSound(run.sheet, run.brief, textModel, run.input.patternId);
       return plan;
     },
     selectVoice: (persona, brand) => selectVoice(persona, brand),
@@ -135,6 +135,57 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
       const result = await musicBed(prompt, seconds, musicModel);
       return result.url;
     },
+    burnCaptions: async (video, cues, width, height) => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));
+      try {
+        const videoFile = path.join(dir, "in.mp4");
+        await fs.writeFile(videoFile, video.startsWith("data:") ? Buffer.from(video.split(",")[1], "base64") : await (await fetch(video)).arrayBuffer().then(Buffer.from));
+        
+        // Generate ASS subtitle file for chunked captions
+        const size = Math.round(Math.min(width, height) * 0.075);
+        const pad = Math.max(4, Math.round(size * 0.28));
+        const marginV = Math.round(height * 0.2);
+        const assTime = (t: number) => {
+          const h = Math.floor(t / 3600);
+          const m = Math.floor((t % 3600) / 60);
+          const s = (t % 60).toFixed(2).padStart(5, "0");
+          return `${h}:${String(m).padStart(2, "0")}:${s}`;
+        };
+        const esc = (t: string) => t.replace(/[{}\\]/g, "");
+        const assContent = [
+          "[Script Info]",
+          "ScriptType: v4.00+",
+          `PlayResX: ${width}`,
+          `PlayResY: ${height}`,
+          "",
+          "[V4+ Styles]",
+          "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
+          `Style: Cap,DejaVu Sans,${size},&H00FFFFFF,&H48000000,&H00000000,1,3,${pad},0,2,${Math.round(width * 0.08)},${Math.round(width * 0.08)},${marginV}`,
+          "",
+          "[Events]",
+          "Format: Layer, Start, End, Style, Text",
+          ...cues.map((c) => `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Cap,${esc(c.text)}`),
+        ].join("\n");
+        
+        const assFile = path.join(dir, "captions.ass");
+        await fs.writeFile(assFile, assContent);
+        
+        const output = path.join(dir, "out.mp4");
+        const FFMPEG = ffmpegPath || "ffmpeg";
+        await run(FFMPEG, [
+          "-hide_banner", "-loglevel", "error",
+          "-i", videoFile,
+          "-vf", `ass=${assFile.replace(/\\/g, "\\\\")}`,
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+          "-c:a", "copy",
+          "-y", output,
+        ], { timeout: 180_000 });
+        
+        return `data:video/mp4;base64,${(await fs.readFile(output)).toString("base64")}`;
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
     final: (video, r, stitched) => ({
       review: async () => {
         // Use stack's QA model for final review
@@ -148,6 +199,12 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
       },
       // Captions are not burned into sheet renders yet, so there is nothing to time against the voice.
       sync: async () => null,
+      patternReview: r.sheet?.patternId === "confession_loop" ? async () => {
+        const { confessionLoopReviewPrompt } = await import("@/lib/qa/pattern-review");
+        const prompt = confessionLoopReviewPrompt(r.sheet!);
+        const result = await qa(qaModel, video, "video", r.brief!, prompt);
+        return { score: result.data.score, notes: result.data.notes };
+      } : undefined,
     }),
     clipCache: cacheStore("sheet-clips"),
     judgeCache: cacheStore("sheet-judge"),

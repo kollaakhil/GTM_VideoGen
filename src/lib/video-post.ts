@@ -200,7 +200,7 @@ const toFile = async (dir: string, name: string, media: string) => {
  * Joins shot clips into one 720x1280 30fps video. With a voiceover and/or music bed the model audio is replaced
  * by a mix (voice on top, music ducked under it); otherwise each clip's own audio is kept.
  */
-export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; /** Output height; default is 9:16 for the width. */ height?: number; beatSync?: boolean; sfx?: SfxCue[]; /** Sidechain-duck the music bed under voice and sound effects. */ duck?: boolean; /** Bed level before ducking (default 0.18 under other audio, 0.6 alone). */ bedGain?: number } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number; voiceStarts?: number[] }> {
+export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; /** Output height; default is 9:16 for the width. */ height?: number; beatSync?: boolean; sfx?: SfxCue[]; /** Sidechain-duck the music bed under voice and sound effects. */ duck?: boolean; /** Bed level before ducking (default 0.18 under other audio, 0.6 alone). */ bedGain?: number; /** Time ranges where no voice or SFX should play (for pattern silence gaps). */ silenceGaps?: { start: number; end: number }[] } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number; voiceStarts?: number[] }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-stitch-"));
   try {
     const norm: string[] = [];
@@ -261,7 +261,12 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
       const parts: string[] = [];
       const labels: string[] = [];
       let k = 1;
-      for (const [i, v] of (audio.voices ?? []).entries()) {
+      // Filter voices that start within silence gaps
+      const activeVoices = (audio.voices ?? []).filter((v) => {
+        if (!audio.silenceGaps?.length) return true;
+        return !audio.silenceGaps.some((gap) => v.start >= gap.start && v.start < gap.end);
+      });
+      for (const [i, v] of activeVoices.entries()) {
         // Speed-fit each line in its own pass: chaining atempo into adelay/amix yields silence in ffmpeg 7.
         const raw = await toFile(dir, `vo${i}.mp3`, v.url);
         const fitted = path.join(dir, `vo${i}.wav`);
@@ -273,9 +278,15 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
         labels.push(`[vo${i}]`);
       }
       const sfxFiles = new Map<string, string>();
-      for (const [j, c] of (audio.sfx ?? []).entries()) {
+      // Filter SFX that fall within silence gaps
+      const activeSfx = (audio.sfx ?? []).filter((c) => {
         const at = (starts[c.shot] ?? 0) + c.offset;
-        if (c.shot >= starts.length || at < 0 || at > t - 0.2) continue;
+        if (c.shot >= starts.length || at < 0 || at > t - 0.2) return false;
+        if (!audio.silenceGaps?.length) return true;
+        return !audio.silenceGaps.some((gap) => at >= gap.start && at < gap.end);
+      });
+      for (const [j, c] of activeSfx.entries()) {
+        const at = (starts[c.shot] ?? 0) + c.offset;
         
         let sfxPath: string;
         if ("url" in c && c.url) {

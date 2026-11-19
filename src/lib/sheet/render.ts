@@ -17,7 +17,33 @@ import { blenderQueue } from "@/lib/render/blender-queue";
 import { shotsForStack } from "./version-estimate";
 export { blenderOnly, estimateSheetVersion, SHOT_CHECK_USD, shotsForStack, videoPricePerSec } from "./version-estimate";
 
-
+/** Builds caption cues from chunked captions in the sheet, timed to shot starts. */
+function buildChunkedCaptions(sheet: ShotSheet, shotStarts: number[]): { start: number; end: number; text: string }[] {
+  const cues: { start: number; end: number; text: string }[] = [];
+  let brightLabelAdded = false;
+  
+  for (let i = 0; i < sheet.shots.length; i++) {
+    const shot = sheet.shots[i];
+    const shotStart = shotStarts[i] ?? 0;
+    const shotDur = dur(shot);
+    
+    // Add bright label in first 3s if present
+    if (!brightLabelAdded && shot.text?.copy && shotStart < 3) {
+      cues.push({ start: shotStart, end: Math.min(shotStart + 0.8, shotStart + shotDur, 3), text: shot.text.copy });
+      brightLabelAdded = true;
+    }
+    
+    // Add chunked captions if present
+    if (shot.text?.chunks && shot.text.chunks.length > 0) {
+      const chunkDur = shotDur / shot.text.chunks.length;
+      shot.text.chunks.forEach((chunk, j) => {
+        cues.push({ start: shotStart + j * chunkDur, end: shotStart + (j + 1) * chunkDur, text: chunk });
+      });
+    }
+  }
+  
+  return cues;
+}
 
 /**
  * The render half of the Studio flow (steps 4 and 5): shot sheet in, previews and a final out.
@@ -36,7 +62,7 @@ export interface RenderDeps {
   /** Persists a data URL and returns a stable URL. */
   store(data: string, key: string): Promise<string>;
   shotCheck: ShotCheckDeps;
-  stitch(clips: string[], audio: { voices: { url: string; start: number }[]; sfx: (SfxCue | GeneratedSfxCue)[]; duck: boolean; bedGain: number; music: string | null; shotSeconds: number[]; width: number; height?: number }): Promise<Stitched>;
+  stitch(clips: string[], audio: { voices: { url: string; start: number }[]; sfx: (SfxCue | GeneratedSfxCue)[]; duck: boolean; bedGain: number; music: string | null; shotSeconds: number[]; width: number; height?: number; silenceGaps?: { start: number; end: number }[] }): Promise<Stitched>;
   /** A free synthesised bed (drone) for the sheet's "bed" line, as a data URL; null for none. */
   bed?(description: string, seconds: number): Promise<string | null>;
   /** Voiceover for a line (vo mode only). Gated by the meter like every paid call. */
@@ -49,6 +75,8 @@ export interface RenderDeps {
   generateSfx?(videoUrl: string, textPrompt: string, durationSeconds: number): Promise<{ url: string; usd: number }>;
   /** Generate music from text prompt. */
   generateMusic?(prompt: string, seconds: number): Promise<string>;
+  /** Burns chunked captions into a video for pattern-aware sheets. */
+  burnCaptions?(video: string, cues: { start: number; end: number; text: string }[], width: number, height: number): Promise<string>;
   /** Job context for queue management (optional, used when rendering through the queue). */
   jobContext?: { runId: string; versionId: string; jobId: string };
   final: (video: string, run: SheetRun, stitched: Stitched) => FinalDeps;
@@ -247,8 +275,22 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
   
   // Step 4: Generate music from sound design plan
   const total = shots.reduce((a, x) => a + dur(x), 0);
+  
+  // Compute silence gaps for pattern-specific beats (e.g. ~1s after but_silence)
+  const silenceGaps: { start: number; end: number }[] = [];
+  if (sheet.patternId === "confession_loop") {
+    const butSilenceIdx = sheet.shots.findIndex((s) => s.beat === "but_silence");
+    if (butSilenceIdx >= 0) {
+      const beatEnd = sheet.shots.slice(0, butSilenceIdx + 1).reduce((a, x) => a + dur(x), 0);
+      silenceGaps.push({ start: beatEnd, end: beatEnd + 1.0 });
+    }
+  }
+  
   let music: string | null = null;
-  if (soundDesign?.music && soundDesign.music.type === "cue" && deps.generateMusic) {
+  // Confession_loop: no music (rule 14)
+  if (sheet.patternId === "confession_loop") {
+    music = null;
+  } else if (soundDesign?.music && soundDesign.music.type === "cue" && deps.generateMusic) {
     try {
       const musicCue = soundDesign.music;
       if (musicCue.type === "cue") {
@@ -267,7 +309,7 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
     ? generatedSfx.map(g => ({ kind: "generated" as const, shot: g.shot, offset: g.offset, gain: g.gain, url: g.url }))
     : plan.sfx;
   
-  const stitched = await deps.stitch(v.shots.map((r) => r.url!), { 
+  let stitched = await deps.stitch(v.shots.map((r) => r.url!), { 
     voices, 
     sfx: sfxCues, 
     duck: plan.duck, 
@@ -275,8 +317,19 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
     music, 
     shotSeconds: sheet.shots.map(dur), 
     width, 
-    height 
+    height,
+    silenceGaps
   });
+  
+  // Burn chunked captions for pattern-aware sheets
+  if (sheet.patternId === "confession_loop" && deps.burnCaptions) {
+    const captionCues = buildChunkedCaptions(sheet, stitched.starts);
+    if (captionCues.length > 0) {
+      const captioned = await deps.burnCaptions(stitched.url, captionCues, width, height ?? Math.round(width * 16 / 9));
+      stitched = { ...stitched, url: captioned };
+    }
+  }
+  
   v.videoUrl = await deps.store(stitched.url, `${run.id}/${v.id}-cut`);
   addTiming(run, "edit and mix", Date.now() - t2, `audio: ${plan.mode}${plan.unmapped.length ? `, no sound for ${plan.unmapped.length} action(s)` : ""}`);
   Object.assign(v, { status: "done", ms: Date.now() - t0, error: null });

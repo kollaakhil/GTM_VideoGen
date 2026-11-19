@@ -17,7 +17,7 @@ const TEXT_ESTIMATE = 0.02;
 
 export type NewRunInput = {
   brandUrl: string; brand?: string; goal: string; offer?: string | null; facts?: string; inspirationUrl?: string | null; photos?: string[];
-  targetSec?: number; aspect?: ShotSheet["aspect"]; audioMode?: ShotSheet["audioMode"]; capUsd?: number; textModel?: string; visionModel?: string;
+  targetSec?: number; aspect?: ShotSheet["aspect"]; audioMode?: ShotSheet["audioMode"]; patternId?: string; capUsd?: number; textModel?: string; visionModel?: string;
 };
 
 const nameOf = (url: string) => {
@@ -34,7 +34,7 @@ export function newSheetRun(i: NewRunInput, user: string): SheetRun {
     id: newId("sr"), createdBy: user, createdAt: nowIso(), updatedAt: nowIso(), status: "idle", activity: null, error: null, step: "brand",
     input: {
       brandUrl: i.brandUrl, brand: i.brand?.trim() || nameOf(i.brandUrl), goal: i.goal, offer: i.offer ?? null, facts: i.facts ?? "", inspirationUrl: i.inspirationUrl || null,
-      photos: i.photos ?? [], targetSec: i.targetSec ?? 20, aspect: i.aspect ?? "16:9", audioMode: i.audioMode ?? "foley",
+      photos: i.photos ?? [], targetSec: i.targetSec ?? 20, aspect: i.aspect ?? "16:9", audioMode: i.audioMode ?? "foley", patternId: i.patternId ?? "confession_loop",
       textModel: i.textModel || CHEAP_TEXT, visionModel: i.visionModel || CHEAP_VISION,
     },
     research: null, brief: null, rules: [], ruleSource: null, script: null, sheet: null, gate: null, versions: [],
@@ -103,14 +103,14 @@ export async function loadRules(run: SheetRun) {
 export async function runSheet(run: SheetRun, chat: Chat = chatFor(run, "sheet")) {
   const input = {
     brand: run.input.brand, goal: run.input.goal, offer: run.input.offer, facts: run.input.facts, brief: run.brief, research: run.research,
-    rules: run.rules, targetSec: run.input.targetSec, aspect: run.input.aspect, audioMode: run.input.audioMode, hasPhotos: run.input.photos.length > 0,
+    rules: run.rules, targetSec: run.input.targetSec, aspect: run.input.aspect, audioMode: run.input.audioMode, patternId: run.input.patternId, hasPhotos: run.input.photos.length > 0,
   };
   const version = (run.sheet?.version ?? 0) + 1;
   let out = await timed(run, "shot sheet", () => writeSheet(input, chat, [], version));
   let gate = sheetGate(out.sheet, { facts: factBase(run), rules: run.rules });
   if (!gate.pass) {
     out = await timed(run, "shot sheet repair", () => writeSheet(input, chat, gate.issues.filter((i) => i.level === "error"), version));
-    gate = sheetGate(out.sheet, { facts: factBase(run), rules: run.rules });
+    gate = sheetGate(out.sheet, { facts: factBase(run), rules: run.rules, afterRepair: true });
   }
   run.script = out.script;
   run.sheet = out.sheet;
