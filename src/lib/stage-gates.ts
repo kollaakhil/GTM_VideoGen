@@ -147,7 +147,7 @@ export function audioChecks(o: { wer: number | null; werVia?: string; lufs: numb
 }
 
 /** Edit: shot lengths match the locked beats, cuts land where planned (no extras), speech pace is readable. */
-export function editChecks(o: { planned: number[]; detected: number[]; shotSeconds: number[]; beatSeconds: number[]; wordsPerShot: number[]; continuity: number | null }): Check[] {
+export function editChecks(o: { planned: number[]; detected: number[]; shotSeconds: number[]; beatSeconds: number[]; wordsPerShot: number[]; continuity: number | null; onBeat?: number | null }): Check[] {
   const near = (t: number) => o.planned.some((p) => Math.abs(p - t) <= 0.3);
   const extra = o.detected.filter((t) => !near(t)).length;
   const timing = o.shotSeconds.filter((s, i) => Math.abs(s - (o.beatSeconds[i] ?? s)) > 0.25).length;
@@ -158,6 +158,7 @@ export function editChecks(o: { planned: number[]; detected: number[]; shotSecon
     { name: "readable speech pace", score: clamp(10 - fast * 3), note: fast ? `${fast} shots over 3.2 words/s` : "Every line under 3.2 words/s", by: "rules" },
   ];
   if (o.continuity !== null) checks.push({ name: "continuity across cuts", score: o.continuity, note: "Same product, cast and set across shots", by: "judge", weight: 1.5 });
+  if (o.onBeat != null) checks.push({ name: "cuts on music beats", score: clamp(Math.round((4 + 6 * o.onBeat) * 10) / 10), note: `${Math.round(o.onBeat * 100)}% of cuts within 0.3 s of a beat or onset (librosa)`, by: "rules", weight: 0.5 });
   return checks;
 }
 
