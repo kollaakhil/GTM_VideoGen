@@ -140,16 +140,26 @@ def lid(z, radius, depth):
     return o
 
 
-lid(0.12 + h + 0.09, r * 0.9, 0.18)   # shoulder + lid
-lid(0.12 + h + 0.02, r * 0.99, 0.06)  # neck ring
-lid(0.07, r * 0.88, 0.14)             # base
+def cone(z, r_bottom, r_top, depth):
+    bpy.ops.mesh.primitive_cone_add(vertices=128, radius1=r_bottom, radius2=r_top, depth=depth, location=(0, 0, z))
+    o = bpy.context.object
+    bpy.ops.object.shade_smooth()
+    o.data.materials.append(metal)
+    return o
+
+
+# A 12 oz can: tapered neck into a rolled rim on top, a short inward taper at the base (no oversized lids).
+top = 0.12 + h
+cone(top + 0.11, r, r * 0.84, 0.22)          # neck taper
+lid(top + 0.25, r * 0.85, 0.07)              # rolled rim
+cone(0.06, r * 0.82, r, 0.12)                # base taper
 
 bpy.ops.mesh.primitive_plane_add(size=40, location=(0, 0, 0))
 floor = bpy.context.object
 fm = bpy.data.materials.new("floor")
 fm.use_nodes = True
 fb = fm.node_tree.nodes["Principled BSDF"]
-fb.inputs["Base Color"].default_value = (*[c * 0.6 for c in bgc], 1)
+fb.inputs["Base Color"].default_value = (*bgc, 1)  # same tone as the world: no visible horizon
 fb.inputs["Roughness"].default_value = 0.18
 floor.data.materials.append(fm)
 
@@ -190,7 +200,7 @@ for f in range(1, FRAMES + 1):
     ease = 0.5 - 0.5 * math.cos(math.pi * t)
     a = 0.0 if FRAMES == 1 else math.radians(-14 + 28 * ease)
     d = dist0 * (1.0 - 0.06 * ease)
-    cam.location = (d * math.sin(a), -d * math.cos(a), 0.12 + h * 0.62)
+    cam.location = (d * math.sin(a), -d * math.cos(a), 0.12 + h * 0.62 + d * 0.06)  # ~3° down
     cam.keyframe_insert("location", frame=f)
 
 os.makedirs(OUT, exist_ok=True)
