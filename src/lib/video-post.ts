@@ -8,6 +8,7 @@ import type { CopyCue } from "./media-qa";
 import { energyMap, layoutCopy, shotOverlays } from "./caption-layout";
 import { detectBeats, snapCuts } from "./beat-sync";
 import { type SfxCue, sfxFile } from "./sfx";
+import { motionGraphicsEnabled, overlayKind, renderEndCard, renderOverlay } from "./motion-graphics";
 
 const run = promisify(execFile);
 const FFMPEG = ffmpegPath || "ffmpeg";
@@ -343,7 +344,22 @@ export async function captionVariants(
       await fs.writeFile(ass, assFile(cues, w, h, overlays, compactCopy, layout));
       const vf = [spatial, ...(cues.length || overlays.length ? [`subtitles=${ass}:fontsdir=${FONTS}`] : [])].join(",");
       const enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", out];
-      if (!end) {
+      // Remotion motion graphics (animated captions, tags, callouts, end card) when available; ASS typesetting otherwise.
+      const mg = layout && end && motionGraphicsEnabled()
+        ? await motionLayers(dir, `${a.w}x${a.h}`, { w, h, seconds: src.duration, size: captionSize(w, h, compactCopy), compact: compactCopy, layout, end }).catch((e: Error) => {
+          console.warn(`[motion] Remotion unavailable, using ASS: ${e.message.slice(0, 200)}`);
+          return null;
+        })
+        : null;
+      if (mg) {
+        const fc = `[0:v]${spatial},setsar=1,fps=30,format=yuva420p[b];[1:v]fps=30,format=yuva420p[o];[b][o]overlay=0:0:format=auto:shortest=1,format=yuv420p[v0];[2:v]scale=${w}:${h},setsar=1,fps=30,format=yuv420p[v1];`
+          + (src.audio ? `[0:a]aresample=44100,aformat=channel_layouts=stereo[a0];[3:a]aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]` : `[v0][v1]concat=n=2:v=1:a=0[v]`);
+        await run(FFMPEG, [
+          "-hide_banner", "-loglevel", "error", "-i", input, "-i", mg.overlay, "-i", mg.card,
+          ...(src.audio ? ["-f", "lavfi", "-t", String(END_SECONDS), "-i", "anullsrc=r=44100:cl=stereo"] : []),
+          "-filter_complex", fc, "-map", "[v]", ...(src.audio ? ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"] : ["-an"]), ...enc,
+        ], { timeout: 240_000 });
+      } else if (!end) {
         await run(FFMPEG, ["-hide_banner", "-loglevel", "error", "-i", input, "-vf", vf, ...enc.slice(0, 8), ...(src.audio ? ["-c:a", "copy"] : ["-an"]), ...enc.slice(8)], { timeout: 180_000 });
       } else {
         const bg = /^#[0-9a-f]{6}$/i.test(end.color ?? "") ? end.color! : "#111111";
@@ -524,4 +540,21 @@ export async function posterFrame(video: string): Promise<Buffer> {
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+}
+
+/** Renders the Remotion overlay (alpha) and end card for one aspect; same slots and heights as the ASS path. */
+async function motionLayers(dir: string, tag: string, o: { w: number; h: number; seconds: number; size: number; compact: boolean; layout: ReturnType<typeof layoutCopy>; end: EndCard }) {
+  const bg = /^#[0-9a-f]{6}$/i.test(o.end.color ?? "") ? o.end.color! : "#111111";
+  const accent = "#FFE14D";
+  const overlay = await renderOverlay({
+    width: o.w, height: o.h, seconds: o.seconds, size: o.size, compact: o.compact, accent: bg,
+    captions: o.layout.captions.map((c) => ({ start: c.start, end: c.end, text: c.text, y: c.y })),
+    overlays: o.layout.overlays.map((c) => ({ start: c.start, end: c.end, text: c.text.replace(/\s+/g, " "), y: c.y, kind: overlayKind(c.text) })),
+  }, path.join(dir, `ov-${tag}.mov`));
+  const copy = endCopy(o.end);
+  const card = await renderEndCard({
+    width: o.w, height: o.h, seconds: END_SECONDS,
+    card: { brand: copy.brand, line: copy.line, cta: copy.cta, footer: copy.footer, bg, ink: inkFor(bg), logo: o.end.logo ?? null, accent },
+  }, path.join(dir, `card-${tag}.mp4`));
+  return { overlay, card };
 }

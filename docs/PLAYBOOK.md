@@ -338,3 +338,20 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
   - Up to 2 repair rounds. The second runs only if the first was kept and the script is still under target.
   - When a note targets the opening, the repair may rewrite beat 1's visual and its overlay (at most 7 words). The spoken hook stays locked because it is the operator's pick.
   - `repair.before` is the first draft's score, and `after` is the final one.
+
+### 13.13 Remotion motion graphics (step 7)
+
+- **What:** `remotion/Root.tsx` has two compositions, rendered locally by `src/lib/motion-graphics.ts` with @remotion/bundler and @remotion/renderer in headless Chrome. Versions are pinned to exactly 4.0.545, because Remotion packages must match.
+  - **Overlay:** ProRes 4444 with alpha, composited over the shots by FFmpeg.
+    - Animated captions spring in, and the word being spoken turns #FFE14D.
+    - Offer and price lines become a tilted, bordered tag that pops in.
+    - Other overlays slide in as a callout with a brand-colour bar.
+  - **EndCard:** an opaque clip. Logo, wordmark, offer pill, CTA and footer stagger in and settle by 0.9 s.
+- **Layout is unchanged:** the same caption-layout slots and end-card heights as the ASS path (brand 40%, line 52%, CTA 64%, footer 76%), so OCR QA reads it the same way. Any Remotion error logs `[motion]` and falls back to ASS.
+- **Failures found in the smoke run** (run_41d310961d3e clips, beat-synced cut):
+  1. Captions wrapped to 3 lines because CSS padding ate into the 84% text width. OCR read only the placed box ("quince and passion fruit é sparkle."). Fix: maxWidth = 84% + padding.
+  2. End-card lines wrapped to 2 lines and left the fixed OCR bands, and the outlined offer box and CTA underline added strokes. OCR read "50% off a9 aoa ends" and "drinkeoteor.com". Fix: one line each (`white-space: nowrap`, size fitted at about 0.63 em per character of DejaVu Sans Bold), the offer as a filled pill, and no underline.
+  - After both fixes, OCR findings on the whole export = []. Render time is about 16 s for a 15 s 486×864 cut on the 8 GB Mac. The Chrome Headless Shell download happens once.
+- **Switches:** `MOTION_GRAPHICS=0` turns it off. It is off under vitest unless `MOTION_GRAPHICS=1`, so unit tests never launch Chrome.
+- **Licence:** Remotion is free for individuals and for companies of up to 3 people. Larger companies need a Remotion Company License (remotion.dev/license). Check this before commercial use at scale.
+- **Repo pitfall (my mistake):** I stashed the Remotion work with `git stash` and then ran `git add -A` on another branch. That committed the untracked remotion/ files into PR #25 without the package.json deps, and the port-3000 build failed with "Cannot find module 'remotion'". Use `git stash -u`, or commit work in progress before switching branches.

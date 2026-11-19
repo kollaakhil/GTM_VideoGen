@@ -14,7 +14,7 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
-  serverExternalPackages: ["ffmpeg-static"],
+  serverExternalPackages: ["ffmpeg-static", "@remotion/bundler", "@remotion/renderer", "remotion"],
   outputFileTracingIncludes: { "/api/**": ["./assets/fonts/**", "./node_modules/ffmpeg-static/ffmpeg"] },
   experimental: { serverActions: { bodySizeLimit: "2mb" } },
   async headers() {
