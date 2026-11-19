@@ -177,6 +177,8 @@ export interface VideoPlan {
   musicStyle?: string;
   /** How many 480p takes one click renders (1-3). */
   takes?: number;
+  /** 480p candidates per shot (best-of-N, 1-4, default 3); vision QA keeps the best and only it is upscaled. */
+  candidates?: number;
   /** Build one consistent 3D set (World Labs) and shoot every keyframe in it. */
   realSet?: boolean;
 }

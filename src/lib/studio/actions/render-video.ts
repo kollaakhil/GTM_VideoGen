@@ -33,6 +33,7 @@ export async function planRenderVideo(run: StudioRun, body: ActionBody<"render_v
     if (m && !MODELS.some((x) => x.id === m && x.modality === "video" && providerConfigured(x.provider))) return { error: `Video model ${m} isn't available` };
   }
   if (body.draftModel) plan.draftModel = body.draftModel;
+  if (body.candidates) plan.candidates = body.candidates;
   const takes = body.tier === "final" ? 1 : Math.max(1, Math.min(3, body.takes ?? plan.takes ?? 1));
   return {
     retry: { ...body },

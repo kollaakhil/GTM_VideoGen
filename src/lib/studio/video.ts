@@ -18,6 +18,7 @@ import { now, say, live, saveRun } from "./run-state";
 import { brandFor, guidance, brandName, shortHash, swipesFor } from "./context";
 import { inspirationGuidance } from "@/lib/inspiration";
 import { negativePrompt, specBlock } from "@/lib/shot-spec";
+import { candidateCount, draftEstimate, pickCandidate } from "@/lib/best-of-n";
 import { saveCreative } from "./creatives";
 import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
 import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
@@ -199,10 +200,14 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   const perSec = (i: number) => priceOf.get(models[i]) ?? 0.12;
   const musicKey = shortHash([plan.category, seconds, run.research?.tone, plan.musicStyle ?? "auto"]);
   const reserve = 0.12 + shots.length * 0.035 + (plan.music && d.musicTrack?.key !== musicKey ? 0.6 : 0);
-  const estimated = missing.reduce((sum, i) => sum + actual[i]! * perSec(i), reserve);
-  if (estimated > cap) throw new Error(`Preflight: estimated $${estimated.toFixed(2)} exceeds the $${cap.toFixed(2)} cap. No video was requested.`);
+  // Best-of-N: N 480p candidates per missing shot (one for Higgsfield credits and for test drafts).
+  const nFor = (i: number) => (testDraft || providerOf(models[i]) === "hfmcp" ? 1 : candidateCount(plan.candidates));
+  const est = draftEstimate(missing.map((i) => ({ seconds: actual[i]!, perSec: perSec(i) * nFor(i) / Math.max(1, candidateCount(plan.candidates)) })), candidateCount(plan.candidates), reserve);
+  const estimated = est.total;
+  if (estimated > cap) throw new Error(`Preflight: estimated $${estimated.toFixed(2)} (${missing.length} shots × ${candidateCount(plan.candidates)} candidates) exceeds the $${cap.toFixed(2)} cap. No video was requested. Lower candidates per shot or raise the cap.`);
+  if (missing.length) say(run, "agent", `Cost estimate before any video spend: ${missing.length} shot${missing.length === 1 ? "" : "s"} × ${candidateCount(plan.candidates)} candidate${candidateCount(plan.candidates) === 1 ? "" : "s"} ≈ $${est.motion.toFixed(2)} motion + $${est.qa.toFixed(2)} QA + $${est.reserve.toFixed(2)} voice/music/final QA = $${estimated.toFixed(2)} (cap $${cap.toFixed(2)}).`);
   const router = await openrouterCredits();
-  const routerSpend = missing.reduce((sum, i) => sum + (providerOf(models[i]) === "openrouter" ? actual[i]! * perSec(i) : 0), 0);
+  const routerSpend = missing.reduce((sum, i) => sum + (providerOf(models[i]) === "openrouter" ? actual[i]! * perSec(i) * nFor(i) : 0), 0);
   if (router == null) throw new Error(ROUTER_UNREACHABLE);
   if (router < Math.max(0.05, routerSpend * 1.1)) {
     throw new Error(`OpenRouter has $${router.toFixed(2)} left, too low for the required review. Check Credits and Guardrails.`);
@@ -306,7 +311,7 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
       shotDone(run, i, true);
       continue;
     }
-    const pendingUsd = shots.reduce((sum, _, j) => sum + (j > i && missing.includes(j) ? actual[j]! * perSec(j) : 0), 0);
+    const pendingUsd = shots.reduce((sum, _, j) => sum + (j > i && missing.includes(j) ? actual[j]! * perSec(j) * nFor(j) : 0), 0);
     let notes = s.clipKey === cacheKeys[i] ? s.clipQa?.notes ?? [] : [];
     let best: { url: string; qa: ShotQA } | undefined;
     const hf = providerOf(models[i]) === "hfmcp";
@@ -325,13 +330,29 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
       const prompt = `Required on-screen action: ${s.expectedVisual}. Shot treatment: ${s.visual}. Camera: ${s.camera}. Look: ${CATEGORIES[plan.category].look}.${look ? ` ${look}` : ""}
 ${specBlock(s)}
 Start from the attached frame. Preserve the exact product and its real label; no invented text. Natural physical motion, one continuous shot. Avoid: ${negativePrompt(s)}. ${notes.length ? `Fix these defects: ${notes.join(" ")}` : ""}`;
-      const take = await generateVideo(models[i], prompt, { firstFrame: firsts[i], seconds: actual[i], audio: false, resolution });
-      charge(take.usage.costUsd);
-      const stored = await storeMedia(take.url, `${run.id}/${d.id}-${s.id}-clip-${randomUUID()}`);
-      Object.assign(s, { clip: stored, clipKey: cacheKeys[i], clipModel: models[i], clipQa: null });
+      // First pass renders N candidates in parallel when they fit the cap; repairs render one.
+      const n = attempt === 0 ? Math.max(1, Math.min(nFor(i), Math.floor((cap - spent - pendingUsd - qCostReserve) / (actual[i]! * perSec(i) + 0.02)))) : 1;
+      const cands = await Promise.all(Array.from({ length: n }, async () => {
+        try {
+          const take = await generateVideo(models[i], prompt, { firstFrame: firsts[i], seconds: actual[i], audio: false, resolution });
+          charge(take.usage.costUsd);
+          const stored = await storeMedia(take.url, `${run.id}/${d.id}-${s.id}-clip-${randomUUID()}`);
+          return { take, stored };
+        } catch (e) {
+          if (n === 1) throw e;
+          return null;
+        }
+      }));
+      const ok = cands.filter((c): c is NonNullable<typeof c> => !!c);
+      if (!ok.length) throw new Error(`No candidate returned for shot ${i + 1}.`);
+      Object.assign(s, { clip: ok[0].stored, clipKey: cacheKeys[i], clipModel: models[i], clipQa: null });
       await saveRun(run);
-      await step(run, d, `Shot ${i + 1}/${shots.length}: checking frames`, 2 + i, total, "rendering", { i, stage: "qa" });
-      const verdict = await assess(take.url.startsWith("data:") ? take.url : await mediaDataUrl(stored), s, i);
+      await step(run, d, `Shot ${i + 1}/${shots.length}: frame-by-frame QA on ${ok.length} candidate${ok.length === 1 ? "" : "s"}`, 2 + i, total, "rendering", { i, stage: "qa" });
+      const qas = await Promise.all(ok.map(async (c) => assess(c.take.url.startsWith("data:") ? c.take.url : await mediaDataUrl(c.stored), s, i)));
+      const w = pickCandidate(qas);
+      const verdict: ShotQA = ok.length > 1 ? { ...qas[w], notes: [...qas[w].notes, `Best of ${ok.length} candidates (scores ${qas.map((q) => q.score).join(", ")}).`] } : qas[w];
+      const take = ok[w].take, stored = ok[w].stored;
+      void take;
       if (!best || shotReady(verdict) || verdict.score > best.qa.score) best = { url: stored, qa: verdict };
       await recordTake(s, best.url, best.qa, models[i]);
       if (shotReady(verdict) || verdict.match === "review") break;
