@@ -379,3 +379,8 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 - **Failure:** the first draft of run_8a9c7c9db627 stopped before any video spend. The voice pre-check heard "Keep the cola swapping all a pop." for "Keep the cola, swap in OLIPOP.", twice. The TTS was fine. The pre-check called whisper without the brand vocabulary that final QA already uses (13.2).
 - **Fix:** `transcribeLine` takes the `asrVocabulary(line, brand)` prompt.
 - The cost estimate now counts real renders: a packshot is 1 render, a paid shot is N candidates.
+
+### 13.16 Packshot geometry
+
+- **Failure:** the first packshot keyframe scored 8 (product minor, artifacts minor): "can proportions and upper rim geometry show mild 3D modelling inaccuracies". Any keyframe under 9 forces a *test draft*, with 1 candidate and blocked for HD, so the whole take was capped.
+- **Fix:** the oversized lid cylinders were replaced with a tapered neck cone, a rolled rim and a base taper. The floor now matches the world tone and the camera looks about 3° down.
