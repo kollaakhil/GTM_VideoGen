@@ -37,6 +37,7 @@ export class BlenderQueue {
 
   /** Enqueue a job and wait for the slot. Returns true if started, throws if cancelled. */
   async enqueue(job: Omit<QueueJob, "state" | "enqueuedAt" | "startedAt" | "finishedAt" | "process" | "abortController" | "error">): Promise<boolean> {
+    const abortController = new AbortController();
     const fullJob: QueueJob = {
       ...job,
       state: "waiting",
@@ -44,7 +45,7 @@ export class BlenderQueue {
       startedAt: null,
       finishedAt: null,
       process: null,
-      abortController: null,
+      abortController,
       error: null,
     };
     this.jobs.set(job.id, fullJob);
@@ -143,6 +144,11 @@ export class BlenderQueue {
   cancel(id: string): void {
     const job = this.jobs.get(id);
     if (!job) return;
+
+    // Abort any in-flight AI video calls
+    if (job.abortController && !job.abortController.signal.aborted) {
+      job.abortController.abort();
+    }
 
     if (job.state === "waiting") {
       job.state = "cancelled";
@@ -312,6 +318,11 @@ export class BlenderQueue {
         this.jobs.delete(id);
       }
     }
+  }
+
+  /** Get the AbortSignal for a job (for passing to AI video calls) */
+  getSignal(id: string): AbortSignal | undefined {
+    return this.jobs.get(id)?.abortController?.signal;
   }
 }
 

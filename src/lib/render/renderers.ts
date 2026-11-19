@@ -32,7 +32,7 @@ export function aiVideoRenderer(deps: AiVideoDeps): Renderer {
     estimateUsd: (row) => price(modelOf(row)) * row.seconds,
     async render(row, ctx) {
       if (!ctx.prompt) throw new RendererUnavailable("ai-video", "no prompt for this shot");
-      const take = await gen(modelOf(row), ctx.prompt, { firstFrame: ctx.firstFrame, seconds: row.seconds, audio: false, resolution: ctx.resolution ?? "480p", aspect: aspectOf(ctx.width, ctx.height) });
+      const take = await gen(modelOf(row), ctx.prompt, { firstFrame: ctx.firstFrame, seconds: row.seconds, audio: false, resolution: ctx.resolution ?? "480p", aspect: aspectOf(ctx.width, ctx.height) }, ctx.signal);
       return { url: take.url, costUsd: take.usage.costUsd };
     },
   };
