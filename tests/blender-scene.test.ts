@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { findBlender, inferTemplate, lightingFrom, renderBlenderScene, sceneArgs, sceneAvailable, sceneSize } from "@/lib/render/blender-scene";
 import { aiVideoRenderer, blenderRenderer, slots } from "@/lib/render/renderers";
 import { renderRouted } from "@/lib/render/router";
@@ -48,6 +48,7 @@ describe("render arguments", () => {
 });
 
 describe("Blender missing", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
   it("findBlender returns null when no candidate exists, and honours BLENDER_BIN", async () => {
     expect(await findBlender({}, ["/nope/blender"])).toBeNull();
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bl-"));
@@ -57,10 +58,12 @@ describe("Blender missing", () => {
     await fs.rm(dir, { recursive: true });
   });
   it("is off under vitest, and renderBlenderScene says unavailable instead of crashing", async () => {
+    vi.stubEnv("BLENDER_SCENES", "0"); // even when the opt-in real-Blender run sets BLENDER_SCENES=1
     expect(await sceneAvailable()).toBe(false);
     await expect(renderBlenderScene(row(), { mode: "preview", width: 100, height: 100 })).rejects.toMatchObject({ name: "RendererUnavailable" });
   });
   it("the router falls back to AI video when the Blender scene is unavailable", async () => {
+    vi.stubEnv("BLENDER_SCENES", "0");
     const generated: string[] = [];
     const out = await renderRouted(row({ renderer: "blender" }), ctx(), {
       blender: blenderRenderer({ available: async () => true }), // claims to be up, then finds no Blender while rendering
