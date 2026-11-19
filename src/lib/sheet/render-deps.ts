@@ -59,7 +59,7 @@ export async function droneBed(description: string, seconds: number): Promise<st
 /** The real thing: renderers, the cheap vision check, FFmpeg stitching and the strict review tools. */
 export const DEFAULT_SHEET_VIDEO_MODEL = () => process.env.SHEET_VIDEO_MODEL || DEFAULT_VIDEO_MODEL;
 
-export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>): RenderDeps {
+export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>, jobContext?: { runId: string; versionId: string; priority?: "high" | "normal" }): RenderDeps {
   const sheetModel = (r: SheetRun) => r.input.visionModel;
   // Resolve models from stack or fallback to env/defaults
   const videoModel = (stackModels?.video && stackModels.video !== "auto" ? stackModels.video : "") || process.env.SHEET_VIDEO_MODEL || "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video";
@@ -70,7 +70,7 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>)
   return {
     renderers: { 
       "ai-video": aiVideoRenderer({ defaultModel: videoModel, pricePerSec: videoPricePerSec }), 
-      blender: blenderRenderer(), 
+      blender: blenderRenderer(jobContext ? { jobContext: { ...jobContext, jobId: `${jobContext.runId}-${jobContext.versionId}` } } : {}), 
       remotion: remotionRenderer() 
     },
     autoBlender: process.env.RENDER_AUTO_BLENDER === "1",

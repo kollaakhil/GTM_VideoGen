@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +7,29 @@ import ffmpegPath from "ffmpeg-static";
 import type { Shot } from "./types";
 
 const run = promisify(execFile);
+
+/** Spawn with process handle tracking */
+function spawnTracked(
+  file: string,
+  args: string[],
+  options: NonNullable<Parameters<typeof execFile>[2]>,
+  setProcess: (p: ChildProcess) => void
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, (error, stdout, stderr) => {
+      if (error) {
+        if (error.signal === "SIGTERM" || error.signal === "SIGKILL") {
+          reject(new Error("Process was killed"));
+        } else {
+          reject(error);
+        }
+      } else {
+        resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
+      }
+    });
+    setProcess(child);
+  });
+}
 
 /**
  * Blender packshot: the real product photo's label, unwrapped onto a simple can model under studio light
@@ -32,14 +55,14 @@ const write = async (file: string, media: string) =>
   fs.writeFile(file, media.startsWith("data:") ? Buffer.from(media.split(",")[1], "base64") : Buffer.from(await (await fetch(media)).arrayBuffer()));
 
 /** Renders a still (PNG data URL) or a clip (MP4 data URL) of the product. */
-export async function renderPackshot(productImage: string, o: { seconds?: number; width: number; height: number; bg?: string; still?: boolean }) {
+export async function renderPackshot(productImage: string, o: { seconds?: number; width: number; height: number; bg?: string; still?: boolean }, setProcess: (p: ChildProcess) => void = () => {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-pack-"));
   try {
     const img = path.join(dir, "product.png");
     await write(img, productImage);
     const frames = path.join(dir, "frames");
     const args = ["-b", "--factory-startup", "-P", SCRIPT(), "--", "--image", img, "--out", frames, "--width", String(o.width), "--height", String(o.height), "--seconds", String(o.seconds ?? 3), "--bg", o.bg ?? "#1b1b1b", ...(o.still ? ["--still"] : [])];
-    const { stdout } = await run(blenderBin(), args, { timeout: 600_000, maxBuffer: 32 * 1024 * 1024 });
+    const { stdout } = await spawnTracked(blenderBin(), args, { timeout: 600_000, maxBuffer: 32 * 1024 * 1024 }, setProcess);
     if (!stdout.includes("PACKSHOT_OK")) throw new Error("Blender packshot did not finish");
     if (o.still) return `data:image/png;base64,${(await fs.readFile(path.join(frames, "still.png"))).toString("base64")}`;
     const out = path.join(dir, "packshot.mp4");

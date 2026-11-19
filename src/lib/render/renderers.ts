@@ -38,37 +38,65 @@ export function aiVideoRenderer(deps: AiVideoDeps): Renderer {
   };
 }
 
+import { blenderQueue, type QueuePriority } from "./blender-queue";
+import type { ChildProcess } from "node:child_process";
+
+/** Context for a render job: includes queue metadata */
+export interface RenderJobContext {
+  jobId: string;
+  runId: string;
+  versionId: string;
+  priority?: QueuePriority;
+}
+
 export interface BlenderDeps {
   /** Renders a clip of the product; defaults to the scene templates (and the legacy packshot for packshot rows). */
-  clip?: (row: ShotRow, ctx: RenderContext) => Promise<string>;
+  clip?: (row: ShotRow, ctx: RenderContext, setProcess: (p: ChildProcess) => void) => Promise<string>;
   available?: () => Promise<boolean>;
+  /** Job context for queue management */
+  jobContext?: RenderJobContext;
 }
 
-async function defaultBlenderClip(row: ShotRow, ctx: RenderContext) {
+async function defaultBlenderClip(row: ShotRow, ctx: RenderContext, setProcess: (p: ChildProcess) => void) {
   if (row.source === "packshot") {
     if (!(await packshotAvailable())) throw new RendererUnavailable("blender", "packshot scene not available");
-    return renderPackshot(ctx.refs[0], { seconds: row.seconds + 0.2, width: ctx.width, height: ctx.height });
+    return renderPackshot(ctx.refs[0], { seconds: row.seconds + 0.2, width: ctx.width, height: ctx.height }, setProcess);
   }
-  return renderBlenderScene(row, { mode: ctx.mode, width: ctx.width, height: ctx.height, image: ctx.refs[0] });
+  return renderBlenderScene(row, { mode: ctx.mode, width: ctx.width, height: ctx.height, image: ctx.refs[0] }, setProcess);
 }
 
-/** Blender uses every core, and the Mac has 8 GB: parallel shots queue for it (BLENDER_PARALLEL, default 1). */
-export function slots(limit: number) {
-  let free = Math.max(1, limit);
-  const waiting: (() => void)[] = [];
-  return async <T>(fn: () => Promise<T>): Promise<T> => {
-    if (free <= 0) await new Promise<void>((r) => waiting.push(r));
-    else free--;
-    try {
-      return await fn();
-    } finally {
-      const next = waiting.shift();
-      if (next) next();
-      else free++;
-    }
-  };
+/** Enqueue a Blender job and execute when the slot is available */
+async function withBlenderSlot<T>(
+  ctx: RenderJobContext,
+  shotId: string,
+  fn: (setProcess: (p: ChildProcess) => void, setAbort: (c: AbortController) => void) => Promise<T>
+): Promise<T> {
+  const jobId = `${ctx.jobId}-${shotId}`;
+  
+  const started = await blenderQueue.enqueue({
+    id: jobId,
+    runId: ctx.runId,
+    versionId: ctx.versionId,
+    shotId,
+    priority: ctx.priority ?? "normal",
+  });
+
+  if (!started) {
+    throw new Error("Job was cancelled");
+  }
+
+  try {
+    const result = await fn(
+      (p) => blenderQueue.setProcess(jobId, p),
+      (c) => blenderQueue.setAbortController(jobId, c)
+    );
+    blenderQueue.finish(jobId);
+    return result;
+  } catch (err) {
+    blenderQueue.finish(jobId, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
 }
-const blenderSlot = slots(Number(process.env.BLENDER_PARALLEL) || 1);
 
 /** Local Blender: free, and the real label is never redrawn. Missing Blender is "unavailable", so the router falls back. */
 export function blenderRenderer(deps: BlenderDeps = {}): Renderer {
@@ -77,14 +105,31 @@ export function blenderRenderer(deps: BlenderDeps = {}): Renderer {
     available: deps.available ?? (async () => (await sceneAvailable()) || (await packshotAvailable())),
     estimateUsd: () => 0,
     async render(row, ctx) {
-      if (row.kit && !deps.clip) {
-        const job = kitJob(row.kit.shot, { palette: row.kit.palette }, { width: ctx.width, height: ctx.height, mode: ctx.mode, blender: row.kit.blender });
-        const image = row.kit.blender?.template === "product_hero" ? ctx.refs[0] : undefined;
-        if (row.kit.blender?.template === "product_hero" && !image) throw new RendererUnavailable("blender", "product_hero needs a product photo");
-        return { url: await blenderSlot(() => renderKit(job, { mode: ctx.mode, image })), costUsd: 0, note: `blender:${job.script === "scene_kit.py" ? "lab" : String(job.spec.template)}` };
+      const jobCtx = deps.jobContext;
+      
+      // Fallback for tests/CLI without queue context
+      if (!jobCtx) {
+        if (row.kit && !deps.clip) {
+          const job = kitJob(row.kit.shot, { palette: row.kit.palette }, { width: ctx.width, height: ctx.height, mode: ctx.mode, blender: row.kit.blender });
+          const image = row.kit.blender?.template === "product_hero" ? ctx.refs[0] : undefined;
+          if (row.kit.blender?.template === "product_hero" && !image) throw new RendererUnavailable("blender", "product_hero needs a product photo");
+          return { url: await renderKit(job, { mode: ctx.mode, image }, () => {}), costUsd: 0, note: `blender:${job.script === "scene_kit.py" ? "lab" : String(job.spec.template)}` };
+        }
+        if (!ctx.refs[0]) throw new RendererUnavailable("blender", "no product photo to unwrap the label from");
+        return { url: await (deps.clip ?? defaultBlenderClip)(row, ctx, () => {}), costUsd: 0 };
       }
-      if (!ctx.refs[0]) throw new RendererUnavailable("blender", "no product photo to unwrap the label from");
-      return { url: await blenderSlot(() => (deps.clip ?? defaultBlenderClip)(row, ctx)), costUsd: 0 };
+
+      // With queue context
+      return withBlenderSlot(jobCtx, row.id, async (setProcess, setAbort) => {
+        if (row.kit && !deps.clip) {
+          const job = kitJob(row.kit.shot, { palette: row.kit.palette }, { width: ctx.width, height: ctx.height, mode: ctx.mode, blender: row.kit.blender });
+          const image = row.kit.blender?.template === "product_hero" ? ctx.refs[0] : undefined;
+          if (row.kit.blender?.template === "product_hero" && !image) throw new RendererUnavailable("blender", "product_hero needs a product photo");
+          return { url: await renderKit(job, { mode: ctx.mode, image }, setProcess), costUsd: 0, note: `blender:${job.script === "scene_kit.py" ? "lab" : String(job.spec.template)}` };
+        }
+        if (!ctx.refs[0]) throw new RendererUnavailable("blender", "no product photo to unwrap the label from");
+        return { url: await (deps.clip ?? defaultBlenderClip)(row, ctx, setProcess), costUsd: 0 };
+      });
     },
   };
 }

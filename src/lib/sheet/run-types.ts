@@ -32,7 +32,7 @@ export type Version = {
   /** Model stack for this version: complete set of model choices. */
   stack: VersionStack;
   tier: "preview" | "final";
-  status: "queued" | "rendering" | "done" | "failed" | "refused";
+  status: "queued" | "rendering" | "done" | "failed" | "refused" | "cancelled";
   estimate: { usd: number; lines: { what: string; model: string; usd: number }[]; blocked: string[] } | null;
   shots: ShotRender[];
   videoUrl: string | null;

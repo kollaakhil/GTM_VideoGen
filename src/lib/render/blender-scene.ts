@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +7,29 @@ import ffmpegPath from "ffmpeg-static";
 import { RendererUnavailable, type BlenderTemplateId, type RenderMode, type ShotRow } from "./types";
 
 const run = promisify(execFile);
+
+/** Spawn with process handle tracking */
+function spawnTracked(
+  file: string,
+  args: string[],
+  options: NonNullable<Parameters<typeof execFile>[2]>,
+  setProcess: (p: ChildProcess) => void
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, (error, stdout, stderr) => {
+      if (error) {
+        if (error.signal === "SIGTERM" || error.signal === "SIGKILL") {
+          reject(new Error("Process was killed"));
+        } else {
+          reject(error);
+        }
+      } else {
+        resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
+      }
+    });
+    setProcess(child);
+  });
+}
 const SCRIPT = () => path.join(process.cwd(), "scripts/blender/scene.py");
 
 /** Looks for Blender: BLENDER_BIN, the macOS app, then PATH (Homebrew). Null when missing. */
@@ -94,7 +117,7 @@ const write = async (file: string, media: string) =>
   fs.writeFile(file, media.startsWith("data:") ? Buffer.from(media.split(",")[1], "base64") : Buffer.from(await (await fetch(media)).arrayBuffer()));
 
 /** Renders a template scene headless. Returns an MP4 data URL (a PNG data URL when `at` is set). */
-export async function renderBlenderScene(row: ShotRow, o: SceneOptions): Promise<string> {
+export async function renderBlenderScene(row: ShotRow, o: SceneOptions, setProcess: (p: ChildProcess) => void = () => {}): Promise<string> {
   const bin = await findBlender();
   if (!bin || !(await sceneAvailable())) throw new RendererUnavailable("blender", "Blender or scripts/blender/scene.py not found");
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-scene-"));
@@ -105,7 +128,7 @@ export async function renderBlenderScene(row: ShotRow, o: SceneOptions): Promise
       await write(img, o.image);
     }
     const frames = path.join(dir, "frames");
-    const { stdout } = await run(bin, sceneArgs(row, o, img, frames), { timeout: o.timeoutMs ?? (o.mode === "final" ? 1_800_000 : 600_000), maxBuffer: 32 * 1024 * 1024 });
+    const { stdout } = await spawnTracked(bin, sceneArgs(row, o, img, frames), { timeout: o.timeoutMs ?? (o.mode === "final" ? 1_800_000 : 600_000), maxBuffer: 32 * 1024 * 1024 }, setProcess);
     if (!stdout.includes("SCENE_OK")) throw new Error("Blender scene did not finish");
     if (o.at !== undefined) return `data:image/png;base64,${(await fs.readFile(path.join(frames, "still.png"))).toString("base64")}`;
     const out = path.join(dir, "scene.mp4");

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +11,29 @@ import { kitFallback } from "@/lib/sheet/version-estimate";
 export { kitFallback };
 
 const run = promisify(execFile);
+
+/** Spawn with process handle tracking */
+function spawnTracked(
+  file: string,
+  args: string[],
+  options: NonNullable<Parameters<typeof execFile>[2]>,
+  setProcess: (p: ChildProcess) => void
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, (error, stdout, stderr) => {
+      if (error) {
+        if (error.signal === "SIGTERM" || error.signal === "SIGKILL") {
+          reject(new Error("Process was killed"));
+        } else {
+          reject(error);
+        }
+      } else {
+        resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
+      }
+    });
+    setProcess(child);
+  });
+}
 const FPS = 24;
 
 /**
@@ -37,7 +60,7 @@ export function kitJob(s: SheetShot, sheet: Pick<ShotSheet, "palette">, o: { wid
   const k = (o.mode === "final" ? 720 : 360) / Math.min(o.width, o.height);
   const even = (n: number) => Math.max(2, Math.round((n * Math.min(1, k)) / 2) * 2);
   const samples = o.mode === "final" ? 16 : 8;
-  const base = { seconds, fps: FPS, width: even(o.width), height: even(o.height), samples };
+  const base = { mode: o.mode, seconds, fps: FPS, width: even(o.width), height: even(o.height), samples };
   if (b.template === "lab") {
     const t = `${s.subject} ${s.action}`.toLowerCase();
     const preset = /toggle|switch|relay|contact/.test(t) ? "macro_contact" : /tube|gas|trace|electrode|discharge/.test(t) && /macro|ecu|cu/i.test(`${s.shotType} ${s.framing}`) ? "macro_trace" : b.label && /macro|ecu/i.test(`${s.shotType} ${s.framing}`) ? "macro_text" : "wide";
@@ -63,7 +86,7 @@ export function kitJob(s: SheetShot, sheet: Pick<ShotSheet, "palette">, o: { wid
 }
 
 /** Renders a kit job headless and encodes the frames to an MP4 data URL. */
-export async function renderKit(job: KitJob, o: { image?: string; glb?: string; timeoutMs?: number; mode: RenderMode }): Promise<string> {
+export async function renderKit(job: KitJob, o: { image?: string; glb?: string; timeoutMs?: number; mode: RenderMode }, setProcess: (p: ChildProcess) => void = () => {}): Promise<string> {
   const bin = await findBlender();
   if (!bin) throw new RendererUnavailable("blender", "Blender not found");
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-kit-"));
@@ -80,7 +103,7 @@ export async function renderKit(job: KitJob, o: { image?: string; glb?: string; 
     const frames = path.join(dir, "frames");
     await fs.mkdir(frames);
     const script = path.join(process.cwd(), "scripts/blender", job.script);
-    await run(bin, ["-b", "--factory-startup", "-P", script, "--", "--spec", specFile, "--out", frames], { timeout: o.timeoutMs ?? (o.mode === "final" ? 1_200_000 : 300_000), maxBuffer: 64 * 1024 * 1024 });
+    await spawnTracked(bin, ["-b", "--factory-startup", "-P", script, "--", "--spec", specFile, "--out", frames], { timeout: o.timeoutMs ?? (o.mode === "final" ? 1_200_000 : 300_000), maxBuffer: 64 * 1024 * 1024 }, setProcess);
     const pngs = (await fs.readdir(frames)).filter((f) => f.endsWith(".png"));
     if (!pngs.length) throw new Error(`Blender ${job.script} rendered no frames`);
     const out = path.join(dir, "kit.mp4");

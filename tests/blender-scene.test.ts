@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { findBlender, inferTemplate, lightingFrom, renderBlenderScene, sceneArgs, sceneAvailable, sceneSize } from "@/lib/render/blender-scene";
-import { aiVideoRenderer, blenderRenderer, slots } from "@/lib/render/renderers";
+import { aiVideoRenderer, blenderRenderer } from "@/lib/render/renderers";
 import { renderRouted } from "@/lib/render/router";
 import { rowFromSheetShot, type RenderContext, type ShotRow } from "@/lib/render/types";
 import { parseSheet } from "@/lib/shot-sheet";
@@ -74,16 +74,7 @@ describe("Blender missing", () => {
   });
 });
 
-describe("Blender queue", () => {
-  it("runs at most `limit` renders at once and releases the slot when one fails", async () => {
-    const run = slots(1);
-    let live = 0, peak = 0;
-    const job = (fail = false) => run(async () => { live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 5)); live--; if (fail) throw new Error("x"); return "ok"; });
-    const out = await Promise.allSettled([job(), job(true), job(), job()]);
-    expect(peak).toBe(1);
-    expect(out.map((o) => o.status)).toEqual(["fulfilled", "rejected", "fulfilled", "fulfilled"]);
-  });
-});
+// Queue functionality is now tested in tests/blender-queue.test.ts
 
 describe("shot sheet rows", () => {
   const sheet = (engine: string, locked: boolean) => {
