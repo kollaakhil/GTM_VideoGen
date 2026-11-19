@@ -39,8 +39,8 @@ describe("script enhancer → shot sheet", () => {
   });
   it("accepts LLM responses with over-long framing and editorNote fields by clamping them", () => {
     const raw = messy();
-    raw.shots[0].framing = "The product sits on a table in the foreground with dramatic lighting coming from the left side and casting long shadows across the surface while the camera slowly pushes in to reveal intricate details of the engraved brass nameplate with its precisely machined lettering" + " extra".repeat(50);
-    raw.shots[0].editorNote = "B".repeat(500);
+    (raw.shots[0] as Record<string, unknown>).framing = "The product sits on a table in the foreground with dramatic lighting coming from the left side and casting long shadows across the surface while the camera slowly pushes in to reveal intricate details of the engraved brass nameplate with its precisely machined lettering" + " extra".repeat(50);
+    (raw.shots[0] as Record<string, unknown>).editorNote = "B".repeat(500);
     const s = normaliseSheet(raw, input);
     expect(s.shots[0].framing.length).toBeLessThanOrEqual(240);
     expect(s.shots[0].framing).toMatch(/…$/);

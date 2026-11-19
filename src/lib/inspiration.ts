@@ -7,6 +7,7 @@ import { run, withTemp, writeDataUrl } from "./local-tools";
 import { sceneCuts, wordTimings } from "./qa-tools";
 import { assertPublicUrl, safeFetchText } from "./safe-fetch";
 import type { InspirationBreakdown, Swipe } from "./types";
+import { text, list } from "./judge-schema";
 
 /**
  * Inspiration breakdown: measures an inspiration ad's structure (cuts, pacing, hook timing, speech rate, on-screen
@@ -19,16 +20,23 @@ const frameCount = () => Math.max(1, Math.min(6, Number(process.env.INSPIRATION_
 
 export type InspirationInput = { url?: string; upload?: string; name?: string };
 
-const Shot = z.object({ framing: z.string().max(80), lens: z.string().max(80), motion: z.string().max(80), purpose: z.string().max(120), textStyle: z.string().max(120) });
+const Shot = z.object({ framing: text(80), lens: text(80), motion: text(80), purpose: text(120), textStyle: text(120) });
 const Review = z.object({
-  format: z.string().max(80),
-  hook: z.string().max(240),
-  pacing: z.string().max(200),
-  textStyle: z.string().max(200),
-  whyItWorks: z.string().max(240),
-  beats: z.array(z.string().max(120)).max(8),
-  shots: z.array(Shot.partial()).max(8),
+  format: text(80),
+  hook: text(240),
+  pacing: text(200),
+  textStyle: text(200),
+  whyItWorks: text(240),
+  beats: list(text(120), 8),
+  shots: list(Shot.partial(), 8),
 });
+
+/** Test stub: parses Review schema (used in tests to verify lenient schema behavior). */
+export function breakdownStub(raw: unknown) {
+  const parsed = Review.safeParse(raw);
+  if (!parsed.success) throw new Error("Invalid review");
+  return parsed.data;
+}
 
 /** True when `text` repeats six or more consecutive words of `source` (a verbatim line, not structure). */
 export function copiesLine(text: string, source: string, n = 6) {

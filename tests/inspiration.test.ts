@@ -36,6 +36,38 @@ describe("inspiration breakdown", () => {
   });
 });
 
+describe("inspiration schema lenience", async () => {
+  const { breakdownStub } = await import("@/lib/inspiration");
+  it("clamps over-long LLM output fields in Review schema", async () => {
+    // Simulate LLM returning over-long strings that would previously fail with hard .max()
+    const raw = {
+      format: "A".repeat(150),
+      hook: "B".repeat(300),
+      pacing: "C".repeat(250),
+      textStyle: "D".repeat(250),
+      whyItWorks: "E".repeat(300),
+      beats: Array(12).fill("beat ".repeat(30)),
+      shots: Array(12).fill({ framing: "F".repeat(120), lens: "G".repeat(120), motion: "H".repeat(120), purpose: "I".repeat(200), textStyle: "J".repeat(200) }),
+    };
+    // The schema should accept and clamp, not reject
+    const result = breakdownStub(raw);
+    expect(result.format.length).toBeLessThanOrEqual(80);
+    expect(result.hook.length).toBeLessThanOrEqual(240);
+    expect(result.pacing.length).toBeLessThanOrEqual(200);
+    expect(result.textStyle.length).toBeLessThanOrEqual(200);
+    expect(result.whyItWorks.length).toBeLessThanOrEqual(240);
+    expect(result.beats.length).toBeLessThanOrEqual(8);
+    expect(result.shots.length).toBeLessThanOrEqual(8);
+    if (result.shots[0]) {
+      expect(result.shots[0].framing!.length).toBeLessThanOrEqual(80);
+      expect(result.shots[0].lens!.length).toBeLessThanOrEqual(80);
+      expect(result.shots[0].motion!.length).toBeLessThanOrEqual(80);
+      expect(result.shots[0].purpose!.length).toBeLessThanOrEqual(120);
+      expect(result.shots[0].textStyle!.length).toBeLessThanOrEqual(120);
+    }
+  });
+});
+
 describe("start screen request", async () => {
   const { Body } = await import("@/lib/studio/schema");
   const base = { action: "research", brandUrl: "https://example.com", goal: "Sell more", format: "video" };
