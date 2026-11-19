@@ -11,6 +11,7 @@ import type { Direction, JobPhase, JobProgress, Shot, StudioRun } from "@/lib/ty
 import { estimateCost } from "@/lib/video-categories";
 import { LENSES } from "@/lib/video-looks";
 import { useFlow } from "./context";
+import { CostMeter } from "./cost-meter";
 import { StageTimings } from "./stage-timings";
 import { money } from "./utils";
 
@@ -169,6 +170,7 @@ export function VideoControls({ d }: { d: Direction }) {
 
       <StepHeader n={2} title="480p previews" state={takes.length ? "done" : "active"} />
       {mine && run.job && !finalJob && <Progress job={run.job} d={d} />}
+      <CostMeter />
       <Failure run={run} d={d} />
       {!working && <StageTimings run={run} />}
       {!mine && (

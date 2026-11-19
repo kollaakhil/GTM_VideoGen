@@ -1,3 +1,4 @@
+import { paid } from "./render/cost-meter";
 import { providerOf } from "./models";
 import { buildFalBody, type FalKnobs } from "./registry/fal-knobs";
 import { FAL_KNOBS } from "./registry/fal-snapshot";
@@ -107,7 +108,15 @@ function extractJSON(text: string): unknown {
   return JSON.parse(raw);
 }
 
-export async function chatJSON<T>(model: string, system: string, user: string | Part[]): Promise<{ data: T; usage: Usage }> {
+// ---- Spend gate: every paid provider call reserves its estimate against the run's cap before any request leaves
+// (src/lib/render/cost-meter.ts). With no meter in scope (tests, scripts) these are pass-throughs.
+export const EST = { chat: 0.03, image: 0.06, transcribe: 0.01, defaultVideoPerSec: 0.12 };
+
+export function chatJSON<T>(model: string, system: string, user: string | Part[]): Promise<{ data: T; usage: Usage }> {
+  return paid(`text:${model}`, EST.chat, () => chatJSONUnmetered<T>(model, system, user));
+}
+
+async function chatJSONUnmetered<T>(model: string, system: string, user: string | Part[]): Promise<{ data: T; usage: Usage }> {
   const messages: Msg[] = [
     { role: "system", content: `${system}\nRespond with a single valid JSON object only.` },
     { role: "user", content: user },
@@ -139,7 +148,11 @@ async function falImage(model: string, prompt: string, refs: string[]): Promise<
   return { url: await downloadAsDataUrl(url), usage: { costUsd: entry ? estimateUsd(entry, { images: 1 }) : 0 } };
 }
 
-export async function generateImage(model: string, prompt: string, refs: string[] = []): Promise<{ url: string; usage: Usage }> {
+export function generateImage(model: string, prompt: string, refs: string[] = []): Promise<{ url: string; usage: Usage }> {
+  return paid(`image:${model}`, EST.image, () => generateImageUnmetered(model, prompt, refs));
+}
+
+async function generateImageUnmetered(model: string, prompt: string, refs: string[] = []): Promise<{ url: string; usage: Usage }> {
   if (providerOf(model) === "fal") return falImage(model, prompt, refs);
   const content: Part[] = [{ type: "text", text: prompt }, ...refs.map((url) => ({ type: "image_url" as const, image_url: { url } }))];
   const json = await openrouter({ model, modalities: ["image", "text"], messages: [{ role: "user", content }] });
@@ -547,6 +560,13 @@ export async function generateVideo(model: string, prompt: string, opts?: string
   const provider = providerOf(model);
   if (model.startsWith("blender:") || model.startsWith("remotion:")) throw new Error(`${model} is a local renderer, not an AI video model: route it with renderRouted`);
   if (getModel(model) && !getModel(model)?.runnable) throw new Error(`${getModel(model)?.label ?? model} is catalogued but has no adapter yet: ${getModel(model)?.note ?? "not callable"}`);
+  // Higgsfield MCP bills subscription credits (checked against its own quote), not USD.
+  const perSec = provider === "hfmcp" ? 0 : (await videoPricePerSec(model, o.resolution ?? "720p", !!o.audio).catch(() => null)) ?? EST.defaultVideoPerSec;
+  return paid(`video:${model}`, perSec * (o.seconds ?? 5), () => generateVideoUnmetered(model, prompt, o));
+}
+
+async function generateVideoUnmetered(model: string, prompt: string, o: VideoOpts): Promise<{ url: string; usage: Usage }> {
+  const provider = providerOf(model);
   if (provider === "fal") return falVideo(model, prompt, o);
   if (provider === "higgsfield") return higgsfieldVideo(model, prompt, o);
   if (provider === "hfmcp") return hfmcpVideo(model, prompt, o);
@@ -576,7 +596,11 @@ const VOICES = ["Rachel", "Aria", "Sarah", "Laura", "Charlotte", "Jessica", "Lil
 
 /** ElevenLabs voiceover via fal ($0.05 per 1k characters). */
 /** Speech-to-text via fal Whisper; returns the transcript and timed segments. */
-export async function transcribe(audio: string): Promise<{ text: string; chunks: { start: number; end: number; text: string }[]; usage: Usage }> {
+export function transcribe(audio: string): Promise<{ text: string; chunks: { start: number; end: number; text: string }[]; usage: Usage }> {
+  return paid("transcribe", EST.transcribe, () => transcribeUnmetered(audio));
+}
+
+async function transcribeUnmetered(audio: string): Promise<{ text: string; chunks: { start: number; end: number; text: string }[]; usage: Usage }> {
   const key = process.env.FAL_KEY;
   if (!key) throw new Error("fal.ai is not connected (set FAL_KEY)");
   const headers = { Authorization: `Key ${key}`, "Content-Type": "application/json" };
@@ -620,7 +644,11 @@ export function speakable(text: string, sayAs?: { brand?: string; pronunciation?
  * Stability 0.5 is v3's "Natural" setting (it accepts only 0 / 0.5 / 1).
  */
 export const VOICE_MODEL = "fal-ai/elevenlabs/tts/eleven-v3";
-export async function voiceover(text: string, voice = "Rachel", sayAs?: { brand?: string; pronunciation?: string }): Promise<{ url: string; usage: Usage }> {
+export function voiceover(text: string, voice = "Rachel", sayAs?: { brand?: string; pronunciation?: string }): Promise<{ url: string; usage: Usage }> {
+  return paid("voiceover", (text.length / 1000) * 0.1, () => voiceoverUnmetered(text, voice, sayAs));
+}
+
+async function voiceoverUnmetered(text: string, voice: string, sayAs?: { brand?: string; pronunciation?: string }): Promise<{ url: string; usage: Usage }> {
   const out = await falRun<{ audio?: { url: string } }>(VOICE_MODEL, { text: speakable(text, sayAs), voice: VOICES.includes(voice) ? voice : "Rachel", stability: 0.5 });
   if (!out.audio?.url) throw new Error("Voiceover returned no audio");
   return { url: await downloadAsDataUrl(out.audio.url), usage: { costUsd: (text.length / 1000) * 0.1 } };
@@ -633,7 +661,11 @@ export async function voiceover(text: string, voice = "Rachel", sayAs?: { brand?
  */
 export const MUSIC_MODEL = "fal-ai/stable-audio-25/text-to-audio";
 export const MUSIC_COST = 0.2;
-export async function musicBed(prompt: string, seconds: number): Promise<{ url: string; usage: Usage }> {
+export function musicBed(prompt: string, seconds: number): Promise<{ url: string; usage: Usage }> {
+  return paid("music", MUSIC_COST, () => musicBedUnmetered(prompt, seconds));
+}
+
+async function musicBedUnmetered(prompt: string, seconds: number): Promise<{ url: string; usage: Usage }> {
   const secs = Math.max(3, Math.min(190, Math.ceil(seconds)));
   const out = await falRun<{ audio?: string | { url?: string } }>(MUSIC_MODEL, { prompt, seconds_total: secs });
   const url = typeof out.audio === "string" ? out.audio : out.audio?.url;

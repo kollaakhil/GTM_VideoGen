@@ -29,6 +29,7 @@ import { sfxCues } from "@/lib/sfx";
 import { PACKSHOT_MODEL, packshotAvailable, packshotShot, renderPackshot } from "@/lib/packshot";
 import { renderRouted } from "@/lib/render/router";
 import { type CacheStore, cached, fileCache, inputHash } from "@/lib/render/cache";
+import { currentMeter } from "@/lib/render/cost-meter";
 import { runParallel } from "@/lib/render/scheduler";
 import { timer } from "@/lib/render/timing";
 import { aiVideoRenderer, blenderRenderer, remotionRenderer } from "@/lib/render/renderers";
@@ -263,6 +264,11 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   const est = draftEstimate(missing.map((i) => ({ seconds: actual[i]!, perSec: perSec(i) * nFor(i) / Math.max(1, candidateCount(plan.candidates)) })), candidateCount(plan.candidates), reserve);
   const estimated = est.total;
   if (estimated > cap) throw new Error(`Preflight: estimated $${estimated.toFixed(2)} (${missing.length} shots × ${candidateCount(plan.candidates)} candidates) exceeds the $${cap.toFixed(2)} cap. No video was requested. Lower candidates per shot or raise the cap.`);
+  const meter = currentMeter();
+  if (meter && estimated > meter.snapshot().remainingUsd + 1e-9) {
+    const m = meter.snapshot();
+    throw new Error(`Preflight: this take needs about $${estimated.toFixed(2)} but only $${m.remainingUsd.toFixed(2)} of the $${m.capUsd.toFixed(2)} run cap is left. No video was requested. Raise the run cap or lower candidates per shot.`);
+  }
   const renders = missing.reduce((t, i) => t + nFor(i), 0);
   if (missing.length) say(run, "agent", `Cost estimate before any video spend: ${missing.length} shot${missing.length === 1 ? "" : "s"}, ${renders} render${renders === 1 ? "" : "s"} (up to ${candidateCount(plan.candidates)} candidates per paid shot) ≈ $${est.motion.toFixed(2)} motion + $${est.qa.toFixed(2)} QA + $${est.reserve.toFixed(2)} voice/music/final QA = $${estimated.toFixed(2)} (cap $${cap.toFixed(2)}).`);
   const router = await openrouterCredits();
