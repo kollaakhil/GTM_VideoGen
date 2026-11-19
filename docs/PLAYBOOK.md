@@ -601,3 +601,14 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
 ### 13.36 One pour per ad; median of 5 export reviews (fix/single-pour)
 - Take 25 edit continuity was 4.5: "action reverses: a settled, filled glass in shot 2, then pouring again in shot 3". `singlePour` (in `enforceShotRules`) keeps the first pour. In every later shot, pour and tilt-over-glass beats and sentences (including the locked script's expectedVisual) become "the glass is already full: bubbles rise and the foam settles", and the negative prompt adds "pouring again".
 - Export review: `EXPORT_REVIEWS = 5` (was 3). Evidence: the identical cached s0 clip scored 10 in take 24 and a median of 3 (3, 1, 5) in take 25. The rubric and thresholds are unchanged. Only the sample count goes up, which lowers variance without biasing the result (the median, not the max). Costs about $0.01 more per shot.
+
+## 14. Five-step Studio and the shot sheet (PRs #53, #55)
+
+- Flow at `/studio`: Brand & goal -> Brief -> Shot sheet -> Previews -> Final. The old studio is at `/studio/classic`. Runs live in the `sheet_runs` table (migration 0005).
+- The shot sheet (`src/lib/shot-sheet.ts`) is the single source of truth: every shot carries time, framing, camera (angle/move/lens), subject, action, lighting, on-screen text, sound (VO/SFX/music), transition, engine and the Blender template. Renderers read the sheet and nothing else.
+- Enhancer: `src/lib/sheet/writer.ts` writes the sheet from brief + style rules; `normaliseSheet` fixes ids, drops VO in foley mode, forces the last shot to Remotion and refits timings to the exact target length. It does NOT route engines (render pipeline owns that).
+- Sheet gate (`src/lib/sheet/gate.ts`) is check 1 of 3: timing, claims vs facts, banned phrases, style rules (push-in, void background, foley-first, fade before card, macro open...). On fail the writer gets one repair pass with the errors, then the gate runs again.
+- Style rules: known reference links (the Neon lab post) use the built-in `NEON_LAB_RULES`; other links are broken down by the cheap vision model; no link uses `BASE_RULES`.
+- Editing: any edit in the table refits timings, bumps the sheet version and re-gates. Changing an engine locks it (`engineLocked`) so routing won't override it.
+- Cheap models only: gemini-3.8-flash for brief and sheet. Real cost of brief + sheet for the Neon run: $0.04, about 25 s + 48 s.
+- Gotchas: the model tends to write SFX times as absolute seconds ("at 2.1s") instead of shot-relative; components defined inside components lose input focus (keep them at module scope); every paid call is appended to `SPEND_LEDGER` with the running total in column 5.
