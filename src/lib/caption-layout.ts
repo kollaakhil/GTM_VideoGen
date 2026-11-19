@@ -39,8 +39,8 @@ export function textBox(text: string, size: number, w: number, h: number, maxFra
   return { bw: bw / w, bh: bh / h };
 }
 
-const boxAt = (y: number, size: { bw: number; bh: number }): Box => ({ x: 0.5 - size.bw / 2, y: y - size.bh / 2, w: size.bw, h: size.bh });
-const inSafe = (b: Box) => b.y >= SAFE_TOP - 1e-6 && b.y + b.h <= SAFE_BOTTOM + 1e-6;
+export const boxAt = (y: number, size: { bw: number; bh: number }): Box => ({ x: 0.5 - size.bw / 2, y: y - size.bh / 2, w: size.bw, h: size.bh });
+export const inSafe = (b: Box) => b.y >= SAFE_TOP - 1e-6 && b.y + b.h <= SAFE_BOTTOM + 1e-6;
 export const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 /** Mean edge energy inside `box` over frames in [start, end). */
@@ -77,7 +77,8 @@ export function duplicateOverlay(onScreen: string, vo: string) {
 export type Segment = { start: number; end: number; text: string; onScreen?: string; speech?: { start: number; end: number } };
 
 /** The overlays that are actually drawn: one per shot with on-screen copy, minus copies of its own voice line. */
-export function shotOverlays(segments: Segment[]) {
+export function shotOverlays(segments: Segment[], mode: "off" | "keywords" | "full" = "full") {
+  if (mode === "off") return [];
   return segments.flatMap((s) => s.onScreen?.trim() && !duplicateOverlay(s.onScreen, s.text) ? [{ start: s.start, end: s.end, text: s.onScreen.trim() }] : []);
 }
 

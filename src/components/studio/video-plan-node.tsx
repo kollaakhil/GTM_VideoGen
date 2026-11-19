@@ -89,6 +89,14 @@ export function VideoPlanNode() {
             </select>
           </label>
           <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Captions</span>
+            <select className={sel} value={p.captions ?? "keywords"} onChange={(e) => set({ captions: e.target.value as "off" | "keywords" | "full" })}>
+              <option value="keywords">Keywords (2-4 words, kept off the product)</option>
+              <option value="full">Full lines</option>
+              <option value="off">Off (voiceover + end card only)</option>
+            </select>
+          </label>
+          <label className="block space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-zinc-500">480p takes</span>
             <select className={sel} value={p.takes ?? 1} onChange={(e) => set({ takes: Number(e.target.value) })}>
               {[1, 2, 3].map((n) => <option key={n} value={n}>{n === 1 ? "1 take" : `Up to ${n} takes`}</option>)}

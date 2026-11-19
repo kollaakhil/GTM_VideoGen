@@ -177,6 +177,8 @@ export interface VideoPlan {
   visualStyle?: string;
   /** Music bed style when music is on. */
   musicStyle?: string;
+  /** "off" = voiceover only (end card keeps the offer); "keywords" (default) = 2-4 word captions; "full" = whole lines. */
+  captions?: "off" | "keywords" | "full";
   /** How many 480p takes one click renders (1-3). */
   takes?: number;
   /** 480p candidates per shot (best-of-N, 1-4, default 3); vision QA keeps the best and only it is upscaled. */
