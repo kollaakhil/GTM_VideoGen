@@ -26,6 +26,9 @@ import { endCardItems } from "@/lib/brief-policy";
 import { onBeatShare } from "@/lib/beat-sync";
 import { sfxCues } from "@/lib/sfx";
 import { PACKSHOT_MODEL, packshotAvailable, packshotShot, renderPackshot } from "@/lib/packshot";
+import { renderRouted } from "@/lib/render/router";
+import { aiVideoRenderer, blenderRenderer, remotionRenderer } from "@/lib/render/renderers";
+import { rowFromShot } from "@/lib/render/types";
 import { saveCreative } from "./creatives";
 import { exportReviewCount, qaMode, shotCheckTimes } from "@/lib/studio/qa-mode";
 import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
@@ -378,9 +381,13 @@ Start from the attached frame. Preserve the exact product and its real label; no
       const n = attempt === 0 ? Math.max(1, Math.min(nFor(i), Math.floor((cap - spent - pendingUsd - qCostReserve) / (actual[i]! * perSec(i) + 0.02)))) : 1;
       const cands = await Promise.all(Array.from({ length: n }, async () => {
         try {
-          const take = models[i] === PACKSHOT_MODEL
-            ? { url: await renderPackshot(refs[0], { seconds: actual[i]! + 0.2, width: 486, height: 864 }), usage: { costUsd: 0 } }
-            : await generateVideo(models[i], prompt, { firstFrame: firsts[i], seconds: actual[i], audio: false, resolution });
+          // One interface for every renderer: the router picks Blender, AI video or Remotion per shot (src/lib/render).
+          const row = rowFromShot({ ...s, model: models[i], seconds: actual[i]! });
+          const out = await renderRouted(row, { mode: "preview", width: 486, height: 864, refs, firstFrame: firsts[i], prompt, resolution }, {
+            "ai-video": aiVideoRenderer({ defaultModel: models[i] }), blender: blenderRenderer(), remotion: remotionRenderer(),
+          }, { autoBlender: process.env.RENDER_AUTO_BLENDER === "1" });
+          if (out.fellBackFrom) say(run, "agent", `Shot ${i + 1}: ${out.fellBackFrom} was unavailable, rendered with ${out.renderer}.`);
+          const take = { url: out.url, usage: { costUsd: out.costUsd } };
           charge(take.usage.costUsd);
           const stored = await storeMedia(take.url, `${run.id}/${d.id}-${s.id}-clip-${randomUUID()}`);
           return { take, stored };
