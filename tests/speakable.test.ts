@@ -8,3 +8,9 @@ describe("speakable", () => {
     expect(speakable("Shop at drinkolipop.com")).toBe("Shop at drinkolipop.com");
   });
 });
+
+it("speakable uses the researched pronunciation for the brand", () => {
+  expect(speakable("Keep the cola, swap in OLIPOP.", { brand: "OLIPOP", pronunciation: "Ollie-pop" })).toBe("Keep the cola, swap in Ollie-pop.");
+  expect(speakable("Visit drinkolipop.com", { brand: "OLIPOP", pronunciation: "Ollie-pop" })).toBe("Visit drinkolipop.com");
+  expect(speakable("Try OLIPOP", { brand: "OLIPOP", pronunciation: "olipop" })).toBe("Try Olipop");
+});
