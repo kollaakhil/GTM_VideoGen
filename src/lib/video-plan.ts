@@ -1,4 +1,5 @@
 import { chatJSON, generateImage, type Part } from "./ai";
+import { text, texts } from "./judge-schema";
 import { creativeBrief } from "./brief-policy";
 import { z } from "zod";
 import { CATEGORIES } from "./video-categories";
@@ -90,9 +91,9 @@ export const FRAME_CHECKS: { id: FrameCheck; ask: string }[] = [
 ];
 const FrameReview = z.object({
   score: z.number().min(0).max(10).optional(),
-  notes: z.array(z.string().max(400)).max(6),
+  notes: texts(6, 400),
   frames: z.array(z.object({
-    index: z.number().int(), match: Match, note: z.string().max(400), repair: z.enum(["source", "layout"]).optional(),
+    index: z.number().int(), match: Match, note: text(400), repair: z.enum(["source", "layout"]).optional(),
     checks: z.object(Object.fromEntries(FRAME_CHECKS.map((c) => [c.id, Sev.optional()])) as Record<FrameCheck, z.ZodOptional<typeof Sev>>).partial().optional(),
   })),
 });

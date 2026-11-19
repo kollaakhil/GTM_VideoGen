@@ -243,3 +243,9 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
   `creativeBrief(b)`, which drops operational mandatories, as a second net.
 - **Cost/latency note:** the script step (draft + judge + one full repair + re-judge) took 8.6 minutes and $0.35 with
   `openai/gpt-6.1-sol` as the judge. It is the slowest and most expensive non-video stage.
+- **The brief judge never counted (E2E run 1, both attempts): "Brief judge returned an incomplete verdict".** The
+  judge's notes were about 350 characters, and the zod schema's `.max(300)` rejected the whole verdict, so the gate
+  scored on rules only (10/10). The same strict limits sat on the research, shot, continuity and frame judges.
+  **Fix:** `src/lib/judge-schema.ts` clips long strings and lists instead of rejecting them. **Lesson:** never put a
+  hard `.max()` on free-text LLM output that you only display.
+- KPI rule: "Cost per first-time purchase" is measurable (it now matches "cost per", "rate" and "return on").

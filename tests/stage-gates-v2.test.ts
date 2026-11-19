@@ -86,3 +86,12 @@ describe("brief mandatories (Vintage Cola E2E)", () => {
     expect(combine(briefRules({ ...good, mandatories: vc }, research))).toBeLessThanOrEqual(6);
   });
 });
+
+describe("lenient judge schemas", () => {
+  it("a 350-character note no longer throws away the brief verdict", async () => {
+    chat.fn.mockResolvedValueOnce({ data: { issues: [{ severity: "major", field: "audience", note: "x".repeat(350) }] }, usage });
+    const g = await briefGate("judge", good, research, "Sell", null);
+    expect(g.score.checks.some((c) => c.by === "judge")).toBe(true);
+    expect(g.score.pass).toBe(false);
+  });
+});

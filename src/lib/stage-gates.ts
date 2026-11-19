@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { list, text, texts } from "./judge-schema";
 import { chatJSON, type Part } from "./ai";
 import { clamp, stageScore, threshold, type Check } from "./stage-policy";
 import { operationalMandatory } from "./brief-policy";
@@ -27,8 +28,8 @@ const ResearchVerdict = z.object({
   grounded: z.number().min(0).max(10),
   evidence: z.number().min(0).max(10),
   competitors: z.number().min(0).max(10),
-  unsupported: z.array(z.string().max(300)).max(10),
-  notes: z.array(z.string().max(300)).max(6),
+  unsupported: texts(10, 300),
+  notes: texts(6, 300),
 });
 
 /** Judge: every fact must trace to the site text; competitors must be real companies in the category. */
@@ -87,7 +88,7 @@ const ShotVerdict = z.object({
   lens: z.number().min(0).max(10),
   continuity: z.number().min(0).max(10),
   scriptMatch: z.number().min(0).max(10),
-  fixes: z.array(z.string().max(300)).max(8),
+  fixes: texts(8, 300),
 });
 
 export async function judgeShots(model: string, shots: Shot[]) {
@@ -155,7 +156,7 @@ export function editChecks(o: { planned: number[]; detected: number[]; shotSecon
   return checks;
 }
 
-const Continuity = z.object({ errors: z.array(z.object({ severity: z.enum(["minor", "major"]), note: z.string().max(300) })).max(10) });
+const Continuity = z.object({ errors: list(z.object({ severity: z.enum(["minor", "major"]), note: text(300) }), 10) });
 
 /**
  * One vision call over one frame per shot: do the product, cast, set and grade hold across cuts?
@@ -261,11 +262,11 @@ export function briefRules(b: Brief, r: Research): Check[] {
       const ops = b.mandatories.filter(operationalMandatory);
       return [{ name: "creative mandatories", score: ops.length ? 3 : 10, note: ops.length ? `Internal task or fine print listed as a mandatory (the script would say it): ${ops.join("; ")}` : "Every mandatory is something the ad shows or says", by: "rules" as const }];
     })(),
-    { name: "measurable KPI", score: /\d|cpa|ctr|roas|cvr|cpc|cpm|%/i.test(b.kpi) ? 10 : 6, note: b.kpi, by: "rules", weight: 0.5 },
+    { name: "measurable KPI", score: /\d|cpa|ctr|roas|cvr|cpc|cpm|%|cost per|rate|return on/i.test(b.kpi) ? 10 : 6, note: b.kpi, by: "rules", weight: 0.5 },
   ];
 }
 
-const Issues = z.object({ issues: z.array(z.object({ severity: z.enum(["minor", "major"]), field: z.string().max(40), note: z.string().max(300) })).max(10) });
+const Issues = z.object({ issues: list(z.object({ severity: z.enum(["minor", "major"]), field: text(40), note: text(300) }), 10) });
 
 /** Judge lists problems (minor/major); the score is computed (10 − 1.5/minor − 4/major), never asked for. */
 export async function judgeBrief(model: string, b: Brief, r: Research, goal: string) {
