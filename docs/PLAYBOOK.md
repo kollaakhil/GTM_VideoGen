@@ -548,3 +548,7 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
   suppressed, so the keyword cue is the shot's only required text. It now shows that approved copy ("Shop at
   drinkolipop.com") instead of a keyword pick. WER 13% on this take was Whisper misspellings ("Dred the sugargilt",
   "DrinkOlypop.com") of the same v3 lines that scored 3% on take 6. That is ASR variance, noted and not chased.
+- Captions off (take_ba6dcaef6288): 6/10, final 6, video 4.3. The export reviewer still got each shot's approved
+  overlay and marked it "absent" (s2, s3). With captions off there is no in-shot text by design, so the export review
+  no longer receives `approvedOverlay` in that mode. The filmstrip director still asks for hook and stat text on
+  sound-off grounds, which is a fair craft note and the reason keywords stay the default.

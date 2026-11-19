@@ -556,7 +556,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
         const frames = await evidenceFrames(main, frameTimes(segment.start, segment.end), segment);
         // Median of three independent reviews (13.29): one export review swung 10 -> 4 on the identical cached clip
         // between takes, so a single sample decided the gate. The median keeps a flaw two of three reviewers see.
-        const vs = await Promise.all([0, 1, 2].map(() => reviewShotFrames(run.models.vision, frames, s, refs, firsts[i], "export")));
+        const vs = await Promise.all([0, 1, 2].map(() => reviewShotFrames(run.models.vision, frames, capMode === "off" ? { ...s, onScreen: undefined } : s, refs, firsts[i], "export")));
         vs.forEach((v) => charge(v.cost));
         finalQa = medianReview(vs.map((v) => v.qa));
       } catch {
