@@ -163,6 +163,12 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
       },
       // Captions are not burned into sheet renders yet, so there is nothing to time against the voice.
       sync: async () => null,
+      patternReview: r.sheet?.patternId === "confession_loop" ? async () => {
+        const { confessionLoopReviewPrompt } = await import("@/lib/qa/pattern-review");
+        const prompt = confessionLoopReviewPrompt(r.sheet!);
+        const result = await qa(qaModel, video, "video", r.brief!, prompt);
+        return { score: result.data.score, notes: result.data.notes };
+      } : undefined,
     }),
     clipCache: cacheStore("sheet-clips"),
     judgeCache: cacheStore("sheet-judge"),
