@@ -14,6 +14,8 @@ export interface FinalDeps {
   ocr: () => Promise<QualityFinding[]>;
   /** 0..10 word-sync score of captions against the heard words (Whisper), null when there are no captions. */
   sync: () => Promise<number | null>;
+  /** Pattern-specific subjective review (optional, for confession_loop). */
+  patternReview?: () => Promise<{ score: number; notes: string[] }>;
 }
 
 export interface FinalReport {
@@ -45,11 +47,12 @@ export function loudnessScore(l: { lufs: number; peak: number } | null): { score
 
 export async function finalReview(deps: FinalDeps, o: { reviews?: number } = {}): Promise<FinalReport> {
   const n = Math.max(1, o.reviews ?? 3);
-  const [looks, loud, ocr, sync] = await Promise.all([
+  const [looks, loud, ocr, sync, patternLook] = await Promise.all([
     Promise.allSettled(Array.from({ length: n }, () => deps.review())),
     deps.loudness().catch(() => null),
     deps.ocr().catch((): QualityFinding[] => [{ kind: "coverage", at: 0, expected: "On-screen copy read back", observed: "OCR could not run", status: "review" }]),
     deps.sync().catch(() => null),
+    deps.patternReview ? deps.patternReview().catch(() => null) : Promise.resolve(null),
   ]);
   const reviews = looks.flatMap((l) => (l.status === "fulfilled" ? [{ score: l.value.score, notes: l.value.notes }] : []));
   const notes: string[] = [];
@@ -58,12 +61,22 @@ export async function finalReview(deps: FinalDeps, o: { reviews?: number } = {})
   const copyFails = ocr.filter((f) => f.status === "fail").length;
   const ocrScore = ocr.some((f) => f.kind === "coverage") ? 5 : Math.max(0, 10 - copyFails * 3);
   const l = loudnessScore(loud);
-  const rubric: Record<string, number> = { "creative review (median)": med, loudness: l.score, "on-screen spelling (OCR)": ocrScore, ...(sync != null ? { "caption sync (Whisper)": sync } : {}) };
+  const rubric: Record<string, number> = { 
+    "creative review (median)": med, 
+    loudness: l.score, 
+    "on-screen spelling (OCR)": ocrScore, 
+    ...(sync != null ? { "caption sync (Whisper)": sync } : {}),
+    ...(patternLook ? { "pattern quality": patternLook.score } : {})
+  };
   // Deterministic checks only ever cap the score: broken spelling or a quiet mix sinks the final however the reviewers felt.
   let score = med;
   if (copyFails) { score = Math.min(score, 6); notes.push(`${copyFails} line(s) of on-screen text not read back exactly`); }
   if (l.score < 7) { score = Math.min(score, 7); notes.push(`Loudness: ${l.note}`); }
   if (sync != null && sync < 7) { score = Math.min(score, 7); notes.push(`Captions out of sync with the voice (${sync}/10)`); }
+  if (patternLook && patternLook.score < 7) { 
+    score = Math.min(score, 7); 
+    notes.push(`Pattern quality: ${patternLook.notes.join("; ")}`); 
+  }
   notes.push(...reviews.flatMap((r) => r.notes).slice(0, 4));
   const rounded = Math.round(score * 10) / 10;
   return { score: rounded, pass: reviews.length >= Math.ceil(n / 2) && rounded >= FINAL_PASS, median: med, reviews, rubric, notes: notes.slice(0, 8) };

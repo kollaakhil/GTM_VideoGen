@@ -138,11 +138,11 @@ function L({ t, children }: { t: string; children: React.ReactNode }) {
   return <label className="block space-y-1 text-sm"><span className="text-zinc-400">{t}</span>{children}</label>;
 }
 
-type BrandForm = { brandUrl: string; brand: string; goal: string; offer: string; facts: string; inspirationUrl: string; targetSec: number; aspect: ShotSheet["aspect"]; audioMode: ShotSheet["audioMode"]; capUsd: number; photos: string[] };
+type BrandForm = { brandUrl: string; brand: string; goal: string; offer: string; facts: string; inspirationUrl: string; targetSec: number; aspect: ShotSheet["aspect"]; audioMode: ShotSheet["audioMode"]; patternId: string; capUsd: number; photos: string[] };
 
 function BrandStep({ run, busy, onCreate }: { run: SheetRun | null; busy: boolean; onCreate: (b: BrandForm) => void }) {
-  const [f, setF] = useState<BrandForm>(() => run ? { ...run.input, offer: run.input.offer ?? "", inspirationUrl: run.input.inspirationUrl ?? "", capUsd: run.cost.capUsd, photos: [] } :
-    { brandUrl: "https://", brand: "", goal: "", offer: "", facts: "", inspirationUrl: "", targetSec: 20, aspect: "16:9", audioMode: "foley", capUsd: 2, photos: [] });
+  const [f, setF] = useState<BrandForm>(() => run ? { ...run.input, offer: run.input.offer ?? "", inspirationUrl: run.input.inspirationUrl ?? "", patternId: run.input.patternId ?? "confession_loop", capUsd: run.cost.capUsd, photos: [] } :
+    { brandUrl: "https://", brand: "", goal: "", offer: "", facts: "", inspirationUrl: "", targetSec: 20, aspect: "16:9", audioMode: "foley", patternId: "confession_loop", capUsd: 2, photos: [] });
   const set = (p: Partial<BrandForm>) => setF((x) => ({ ...x, ...p }));
   const addPhotos = async (files: FileList | null) => {
     const urls = await Promise.all([...(files ?? [])].slice(0, 4).map((file) => new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsDataURL(file); })));
@@ -162,6 +162,10 @@ function BrandStep({ run, busy, onCreate }: { run: SheetRun | null; busy: boolea
         <div className="grid grid-cols-3 gap-3">
           <L t="Length (s)"><Input type="number" min={6} max={60} value={f.targetSec} onChange={(e) => set({ targetSec: Number(e.target.value) })} /></L>
           <L t="Aspect"><select className="h-8 w-full rounded-lg border bg-transparent px-2 text-sm" value={f.aspect} onChange={(e) => set({ aspect: e.target.value as BrandForm["aspect"] })}>{["16:9", "9:16", "1:1"].map((a) => <option key={a}>{a}</option>)}</select></L>
+          <L t="Story Pattern"><select className="h-8 w-full rounded-lg border bg-transparent px-2 text-sm" value={f.patternId} onChange={(e) => set({ patternId: e.target.value })}>
+            <option value="confession_loop">Confession loop (default)</option>
+            <option value="classic">Classic</option>
+          </select></L>
           <L t="Run cap ($)"><Input type="number" min={0} max={25} step={0.5} value={f.capUsd} onChange={(e) => set({ capUsd: Number(e.target.value) })} /></L>
         </div>
         <L t="Audio">
