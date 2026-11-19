@@ -644,12 +644,13 @@ export function speakable(text: string, sayAs?: { brand?: string; pronunciation?
  * Stability 0.5 is v3's "Natural" setting (it accepts only 0 / 0.5 / 1).
  */
 export const VOICE_MODEL = "fal-ai/elevenlabs/tts/eleven-v3";
-export function voiceover(text: string, voice = "Rachel", sayAs?: { brand?: string; pronunciation?: string }): Promise<{ url: string; usage: Usage }> {
-  return paid("voiceover", (text.length / 1000) * 0.1, () => voiceoverUnmetered(text, voice, sayAs));
+export function voiceover(text: string, voice = "Rachel", sayAs?: { brand?: string; pronunciation?: string }, model?: string): Promise<{ url: string; usage: Usage }> {
+  return paid("voiceover", (text.length / 1000) * 0.1, () => voiceoverUnmetered(text, voice, sayAs, model));
 }
 
-async function voiceoverUnmetered(text: string, voice: string, sayAs?: { brand?: string; pronunciation?: string }): Promise<{ url: string; usage: Usage }> {
-  const out = await falRun<{ audio?: { url: string } }>(VOICE_MODEL, { text: speakable(text, sayAs), voice: VOICES.includes(voice) ? voice : "Rachel", stability: 0.5 });
+async function voiceoverUnmetered(text: string, voice: string, sayAs?: { brand?: string; pronunciation?: string }, model?: string): Promise<{ url: string; usage: Usage }> {
+  const modelId = model || VOICE_MODEL;
+  const out = await falRun<{ audio?: { url: string } }>(modelId, { text: speakable(text, sayAs), voice: VOICES.includes(voice) ? voice : "Rachel", stability: 0.5 });
   if (!out.audio?.url) throw new Error("Voiceover returned no audio");
   return { url: await downloadAsDataUrl(out.audio.url), usage: { costUsd: (text.length / 1000) * 0.1 } };
 }

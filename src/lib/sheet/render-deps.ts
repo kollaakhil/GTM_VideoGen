@@ -43,7 +43,8 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>)
   // Resolve models from stack or fallback to env/defaults
   const videoModel = stackModels?.video || process.env.SHEET_VIDEO_MODEL || "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video";
   const qaModel = stackModels?.qa || process.env.SHEET_VISION_MODEL || "google/gemini-3.8-flash";
-  // Note: voice model from stack is ignored for now - voiceover() uses VOICE_MODEL constant
+  const voiceModel = stackModels?.voice; // undefined means use voiceover's VOICE_MODEL default
+  const asset3dModel = stackModels?.asset3d; // undefined means use generateProductMesh's auto
   
   return {
     renderers: { 
@@ -72,7 +73,7 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>)
       return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, beatSync: false, sfx: a.sfx, duck: a.duck, bedGain: a.bedGain });
     },
     voice: async (line) => {
-      const v = await voiceover(line);
+      const v = await voiceover(line, "Rachel", undefined, voiceModel);
       return { url: v.url, usd: v.usage.costUsd };
     },
     final: (video, r, stitched) => ({

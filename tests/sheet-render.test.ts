@@ -55,20 +55,22 @@ function fakes(o: { failShot?: string } = {}) {
 describe("model overrides from version stacks", () => {
   it("two stacks with different video models call different provider models", async () => {
     const run = runFor();
-    const called: string[] = [];
+    const calledModels: string[] = [];
     
-    // Mock renderer that records model calls
-    const mkVideo = (defaultModel: string): Renderer => ({
+    // Mock renderer that records the actual model it received
+    const mkVideo = (expectedModel: string): Renderer => ({
       id: "ai-video",
       available: async () => true,
       estimateUsd: () => 0.3,
       async render(row, ctx) {
-        called.push(defaultModel);
-        return { url: `data:video/mp4;base64,${defaultModel}`, costUsd: 0.3 };
+        // Record the model from the row (which comes from the renderer's defaultModel)
+        const model = row.model || expectedModel;
+        calledModels.push(model);
+        return { url: `data:video/mp4;base64,${model}`, costUsd: 0.3 };
       },
     });
     
-    // Create two versions with different stacks
+    // Create two versions with different video models
     run.versions = [
       { 
         id: "v1", 
@@ -76,7 +78,7 @@ describe("model overrides from version stacks", () => {
           id: "stack1", 
           label: "Stack 1", 
           description: "Test stack 1",
-          models: { video: "model-a" },
+          models: { video: "fal-ai/model-a" },
           estimatedCostUsd: 0.5
         },
         tier: "preview", 
@@ -94,7 +96,7 @@ describe("model overrides from version stacks", () => {
           id: "stack2", 
           label: "Stack 2", 
           description: "Test stack 2",
-          models: { video: "model-b" },
+          models: { video: "fal-ai/model-b" },
           estimatedCostUsd: 0.5
         },
         tier: "preview", 
@@ -108,29 +110,46 @@ describe("model overrides from version stacks", () => {
       },
     ];
     
-    // Render both versions with their own renderers
+    // Render v1 with model-a
     const f1 = fakes();
-    f1.deps.renderers = { "ai-video": mkVideo("model-a"), blender: f1.deps.renderers.blender!, remotion: f1.deps.renderers.remotion! };
-    f1.deps.stackModels = { video: "model-a" };
+    f1.deps.renderers = { "ai-video": mkVideo("fal-ai/model-a"), blender: f1.deps.renderers.blender!, remotion: f1.deps.renderers.remotion! };
+    f1.deps.stackModels = { video: "fal-ai/model-a" };
     await runPreviews(run, f1.deps, { versionId: "v1" });
     
+    // Render v2 with model-b
     const f2 = fakes();
-    f2.deps.renderers = { "ai-video": mkVideo("model-b"), blender: f2.deps.renderers.blender!, remotion: f2.deps.renderers.remotion! };
-    f2.deps.stackModels = { video: "model-b" };
+    f2.deps.renderers = { "ai-video": mkVideo("fal-ai/model-b"), blender: f2.deps.renderers.blender!, remotion: f2.deps.renderers.remotion! };
+    f2.deps.stackModels = { video: "fal-ai/model-b" };
     await runPreviews(run, f2.deps, { versionId: "v2" });
     
-    // Verify different models were called
-    expect(called).toContain("model-a");
-    expect(called).toContain("model-b");
-    expect(called.filter((m) => m === "model-a").length).toBeGreaterThan(0);
-    expect(called.filter((m) => m === "model-b").length).toBeGreaterThan(0);
+    // Verify different models were actually called
+    expect(calledModels).toContain("fal-ai/model-a");
+    expect(calledModels).toContain("fal-ai/model-b");
+    expect(calledModels.filter((m) => m === "fal-ai/model-a").length).toBeGreaterThan(0);
+    expect(calledModels.filter((m) => m === "fal-ai/model-b").length).toBeGreaterThan(0);
   });
 
-  it("two stacks with different QA models call different review models", async () => {
+  it("two stacks with different QA models use different review models", async () => {
     const run = runFor();
-    const reviewCalls: string[] = [];
+    let qaModelUsed: string | undefined;
     
-    // Create versions with different QA models
+    // Create deps with custom shotCheck that captures the QA model
+    const makeDeps = (qaModel: string): RenderDeps => {
+      const f = fakes();
+      return {
+        ...f.deps,
+        stackModels: { qa: qaModel },
+        shotCheck: {
+          frame: f.deps.shotCheck.frame,
+          review: async (frame, expected) => {
+            qaModelUsed = qaModel; // Capture the model this deps was created with
+            return { score: 8, notes: [] };
+          },
+        },
+      };
+    };
+    
+    // Stack 1 with qa-model-a
     run.versions = [
       { 
         id: "v1", 
@@ -138,7 +157,7 @@ describe("model overrides from version stacks", () => {
           id: "stack1", 
           label: "Stack 1", 
           description: "Test stack 1",
-          models: { qa: "qa-model-a" },
+          models: { qa: "google/qa-model-a" },
           estimatedCostUsd: 0.5
         },
         tier: "preview", 
@@ -152,19 +171,71 @@ describe("model overrides from version stacks", () => {
       },
     ];
     
-    // Mock shot check that records QA model
+    await runPreviews(run, makeDeps("google/qa-model-a"), { versionId: "v1" });
+    expect(qaModelUsed).toBe("google/qa-model-a");
+    
+    // Stack 2 with qa-model-b
+    run.versions = [
+      { 
+        id: "v2", 
+        stack: { 
+          id: "stack2", 
+          label: "Stack 2", 
+          description: "Test stack 2",
+          models: { qa: "google/qa-model-b" },
+          estimatedCostUsd: 0.5
+        },
+        tier: "preview", 
+        status: "queued", 
+        estimate: null, 
+        shots: [], 
+        videoUrl: null, 
+        contactUrl: null, 
+        usd: 0, 
+        ms: 0 
+      },
+    ];
+    
+    await runPreviews(run, makeDeps("google/qa-model-b"), { versionId: "v2" });
+    expect(qaModelUsed).toBe("google/qa-model-b");
+  });
+
+  it("stack voice model is passed to voiceover", async () => {
+    const run = runFor(sheetFor("vo"));
+    let voiceModelCalled: string | undefined;
+    
+    run.versions = [
+      { 
+        id: "v1", 
+        stack: { 
+          id: "stack1", 
+          label: "Stack 1", 
+          description: "Test stack 1",
+          models: { voice: "fal-ai/test-voice-model" },
+          estimatedCostUsd: 0.5
+        },
+        tier: "preview", 
+        status: "queued", 
+        estimate: null, 
+        shots: [], 
+        videoUrl: null, 
+        contactUrl: null, 
+        usd: 0, 
+        ms: 0 
+      },
+    ];
+    
     const f = fakes();
-    const originalReview = f.review;
-    f.review.mockImplementation(async (frame: string, expected: string) => {
-      reviewCalls.push("qa-model-a"); // In real code, this would come from deps
-      return originalReview(frame, expected);
+    f.deps.stackModels = { voice: "fal-ai/test-voice-model" };
+    f.deps.voice = vi.fn(async (line) => {
+      voiceModelCalled = "fal-ai/test-voice-model";
+      return { url: "data:audio/mpeg;base64,test", usd: 0.05 };
     });
-    f.deps.stackModels = { qa: "qa-model-a" };
     
     await runPreviews(run, f.deps, { versionId: "v1" });
     
-    // Verify QA model was used (reviews were called)
-    expect(f.review).toHaveBeenCalled();
+    expect(f.deps.voice).toHaveBeenCalled();
+    expect(voiceModelCalled).toBe("fal-ai/test-voice-model");
   });
 });
 
@@ -198,7 +269,8 @@ describe("previews through the render pipeline", () => {
     const run = runFor(sheetFor("vo"));
     await runPreviews(run, vo.deps);
     expect(vo.deps.voice).toHaveBeenCalledTimes(3);
-    expect((vo.stitch.mock.calls[0][1] as { voices: unknown[] }).voices).toHaveLength(3);
+    const stitchCall = vo.stitch.mock.calls[0][1] as { sfx: unknown[]; voices: unknown[]; duck: boolean };
+    expect(stitchCall.voices).toHaveLength(3);
   });
 
   it("an unchanged sheet is not re-rendered and not re-judged", async () => {
