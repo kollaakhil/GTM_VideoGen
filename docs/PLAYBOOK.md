@@ -458,3 +458,21 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 - Fixes: segments carry the measured speech span (voice start + length / tempo) and `timedCues` times captions inside it; with an
   overlay in the top band the caption slots are tried nearest to just under it first (one text group, product clear); the final
   per-line check accepts what the pre-check accepts (`brandNear`, 13.20). WER and caption thresholds unchanged.
+
+### 13.26 Take 3 (7/10): which export-level items were real
+Take 3 (take_6d74ffe04cfd): all four clips 10/10, but video 4.6 / audio 7.6 / final 5.1. Per item:
+- Export-frame scene scores 4, 10, 4, 3 (video "worst scene" ×2, final "weakest shot" ×1.5). **Real.** s0: two stacked text
+  boxes over the pour; s2: the caption box sits on the can; s3 packshot: the caption covers "vintage" on the label. Fix: one
+  text layer at a time (`ONE_TEXT_LAYER`: spoken captions only in shots without an on-screen overlay), and the Blender
+  packshot now frames the can at ~60% height, high in frame, so the caption band (0.66–0.80) is over the floor.
+- Caption word-sync 5.1 ("with just fifty calories" on screen while "half" was heard). **Real** (my 13.25 bug): the speech spans
+  used the pre-beat-sync voice starts; stitchShots moves voices with their shots. It now returns `voiceStarts` and spans use them.
+- Peak -0.4 dBFS (technical fail, loudness 8). **Real.** Single-pass loudnorm with TP=-1.5 overshoots; an `alimiter` at 0.79
+  (-2 dBFS, margin for AAC) now follows it.
+- WER 10% / caption misses "dred", "gilt", "swapin". **Partly ASR.** The word-timing whisper pass had no vocabulary hint while
+  every other recogniser did; it now gets the same coined-term hint (`asrVocabulary`, never the full line). Thresholds unchanged.
+- OCR "y a) / ' pdread the sugar guilt?" (OCR 2/10). Caused by the stacked caption sitting over the hand and bokeh; goes away
+  with one text layer. Not a judge change.
+- "Can base cropped at left in s0" (scene judge). **Real but clip-level**; clip QA passed it at 10. Left for now (needs a paid
+  re-render); noted as the next visual fix if scores stall.
+No judge or threshold was changed in this round.
