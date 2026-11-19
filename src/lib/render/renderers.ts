@@ -1,0 +1,86 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { generateVideo } from "../ai";
+import { packshotAvailable, renderPackshot } from "../packshot";
+import { motionGraphicsEnabled, renderEndCard } from "../motion-graphics";
+import { RendererUnavailable, type Renderer, type RenderContext, type ShotRow } from "./types";
+
+/** Which providers bill per second; the registry (builder B) can replace this. */
+export const DEFAULT_PER_SEC = 0.12;
+
+export interface AiVideoDeps {
+  generate?: typeof generateVideo;
+  /** USD per second at the context's resolution for a model. */
+  pricePerSec?: (model: string) => number;
+  defaultModel: string;
+}
+
+/** AI video through the existing provider switch (fal, OpenRouter, Higgsfield). The caller owns the prompt. */
+export function aiVideoRenderer(deps: AiVideoDeps): Renderer {
+  const gen = deps.generate ?? generateVideo;
+  const price = deps.pricePerSec ?? (() => DEFAULT_PER_SEC);
+  const modelOf = (row: ShotRow) => (row.model && !/^(blender|remotion):/.test(row.model) ? row.model : deps.defaultModel);
+  return {
+    id: "ai-video",
+    available: async () => true,
+    estimateUsd: (row) => price(modelOf(row)) * row.seconds,
+    async render(row, ctx) {
+      if (!ctx.prompt) throw new RendererUnavailable("ai-video", "no prompt for this shot");
+      const take = await gen(modelOf(row), ctx.prompt, { firstFrame: ctx.firstFrame, seconds: row.seconds, audio: false, resolution: ctx.resolution ?? "480p" });
+      return { url: take.url, costUsd: take.usage.costUsd };
+    },
+  };
+}
+
+export interface BlenderDeps {
+  /** Renders a clip or still of the product; defaults to the legacy packshot, PR 2 swaps in the scene templates. */
+  clip?: (row: ShotRow, ctx: RenderContext) => Promise<string>;
+  available?: () => Promise<boolean>;
+}
+
+/** Local Blender: free, and the real label is never redrawn. */
+export function blenderRenderer(deps: BlenderDeps = {}): Renderer {
+  return {
+    id: "blender",
+    available: deps.available ?? packshotAvailable,
+    estimateUsd: () => 0,
+    async render(row, ctx) {
+      if (!ctx.refs[0]) throw new RendererUnavailable("blender", "no product photo to unwrap the label from");
+      const url = deps.clip
+        ? await deps.clip(row, ctx)
+        : await renderPackshot(ctx.refs[0], { seconds: row.seconds + 0.2, width: ctx.width, height: ctx.height });
+      return { url, costUsd: 0 };
+    },
+  };
+}
+
+export interface RemotionDeps {
+  card?: (row: ShotRow, ctx: RenderContext, out: string) => Promise<string>;
+  enabled?: () => boolean;
+}
+
+/** Remotion cards (text, offer, end card), rendered locally and returned as an MP4 data URL. */
+export function remotionRenderer(deps: RemotionDeps = {}): Renderer {
+  const enabled = deps.enabled ?? motionGraphicsEnabled;
+  return {
+    id: "remotion",
+    available: async () => enabled(),
+    estimateUsd: () => 0,
+    async render(row, ctx) {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-card-"));
+      try {
+        const out = path.join(dir, "card.mp4");
+        const c = ctx.card ?? { brand: row.onScreen ?? "" };
+        const file = deps.card
+          ? await deps.card(row, ctx, out)
+          : await renderEndCard({ width: ctx.width, height: ctx.height, seconds: row.seconds, card: { brand: c.brand, line: c.line, cta: c.cta, footer: c.footer, bg: c.bg ?? "#0b0b0f", ink: c.ink ?? "white", logo: null, accent: c.accent ?? "#ffffff" } }, out);
+        return { url: `data:video/mp4;base64,${(await fs.readFile(file)).toString("base64")}`, costUsd: 0 };
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
+  };
+}
+
+export const defaultRenderers = (ai: AiVideoDeps) => ({ "ai-video": aiVideoRenderer(ai), blender: blenderRenderer(), remotion: remotionRenderer() });
