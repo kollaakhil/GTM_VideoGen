@@ -35,6 +35,7 @@ export async function planStoryboard(run: StudioRun, body: ActionBody<"storyboar
     musicStyle: p.musicStyle ?? DEFAULT_VIDEO_PLAN.musicStyle,
     takes: p.takes ?? DEFAULT_VIDEO_PLAN.takes,
     candidates: p.candidates ?? DEFAULT_VIDEO_PLAN.candidates,
+    packshot: p.packshot ?? DEFAULT_VIDEO_PLAN.packshot,
     realSet: p.realSet ?? false,
   };
   return {
