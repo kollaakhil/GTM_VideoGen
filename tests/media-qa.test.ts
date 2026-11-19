@@ -5,7 +5,7 @@ import ffmpegPath from "ffmpeg-static";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
 import { strictVideoBlock, videoReady } from "@/lib/quality-policy";
-import { captionVariants, expectedCopy, stitchShots } from "@/lib/video-post";
+import { captionVariants, expectedCopy, placedCues, stitchShots } from "@/lib/video-post";
 import type { Shot, ShotQA } from "@/lib/types";
 
 const ff = promisify(execFile);
@@ -75,9 +75,9 @@ describe("local QA (no provider calls)", () => {
     const cues = expectedCopy(segments, card, 2);
     const variants = await captionVariants(normalized.url, "", card, segments, undefined, true);
     expect(variants.map((v) => v.aspect)).toEqual(["9:16", "4:5", "1:1"]);
-    for (const v of variants) expect(await checkExport(v.url, v.aspect, 3.5, cues)).toEqual([]);
+    for (const v of variants) expect(await checkExport(v.url, v.aspect, 3.5, placedCues(v, cues))).toEqual([]);
     const [short] = await captionVariants(normalized.url, "", card, [{ ...segments[0], onScreen: "FREE SHIPPING" }], ["9:16"], true);
-    const findings = await checkExport(short.url, short.aspect, 3.5, cues);
+    const findings = await checkExport(short.url, short.aspect, 3.5, placedCues(short, cues).map((c) => c.layer === "overlay" ? { ...c, text: segments[0].onScreen } : c));
     expect(findings).toContainEqual(expect.objectContaining({ kind: "copy", expected: segments[0].onScreen, at: 1, status: "fail" }));
   }, 90_000);
 });

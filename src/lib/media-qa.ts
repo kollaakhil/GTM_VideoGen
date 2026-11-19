@@ -12,7 +12,29 @@ const run = promisify(execFile);
 const ffmpeg = ffmpegPath || "ffmpeg";
 const args = { timeout: 45_000, maxBuffer: 4 * 1024 * 1024 };
 
-export type CopyCue = { start: number; end: number; text: string; layer: "overlay" | "caption" | "end"; position?: "brand" | "line" | "cta" };
+/** `box` (fractions of the frame) is where the line was actually drawn; OCR then reads only that box. */
+export type CopyCue = { start: number; end: number; text: string; layer: "overlay" | "caption" | "end"; position?: "brand" | "line" | "cta"; box?: { x: number; y: number; w: number; h: number } };
+
+/**
+ * OCR filter for one cue. A placed caption is read from its own box (plus a small margin) and binarised: the copy is
+ * white on a dark box, so anything darker than near-white becomes background. Reading the fixed 58–82% band used to
+ * feed Tesseract the can label and fruit, which came back as noise ("35 Cal *¢ Og Added Sugars ee ae").
+ */
+export function ocrFilter(cue: CopyCue) {
+  if (cue.box && cue.layer !== "end") {
+    const m = 0.012;
+    const x = Math.max(0, cue.box.x - m), y = Math.max(0, cue.box.y - m);
+    const w = Math.min(1 - x, cue.box.w + 2 * m), h = Math.min(1 - y, cue.box.h + 2 * m);
+    const f = (n: number) => n.toFixed(4);
+    return `crop=iw*${f(w)}:ih*${f(h)}:iw*${f(x)}:ih*${f(y)},scale=1200:-2,format=gray,lutyuv=y='if(gt(val,185),0,255)'`;
+  }
+  const crop = cue.layer === "caption" ? "crop=iw*0.88:ih*0.24:iw*0.06:ih*0.58," :
+    cue.layer === "overlay" ? "crop=iw*0.84:ih*0.33:iw*0.08:ih*0.125," :
+    cue.position === "brand" ? "crop=iw:ih*0.18:0:ih*0.31," :
+    cue.position === "line" ? "crop=iw:ih*0.105:0:ih*0.47," :
+    cue.position === "cta" ? "crop=iw:ih*0.14:0:ih*0.57," : "";
+  return `${crop}scale=840:-2,format=gray`;
+}
 export type SpeechWindow = { start: number; end: number; text: string; shotId?: string };
 
 async function withMedia<T>(media: string, using: (file: string, dir: string) => Promise<T>) {
@@ -105,14 +127,9 @@ export async function checkExport(media: string, aspect: string, duration: numbe
     for (const cue of cues.filter((c) => exactCopy(c.text))) {
       const at = (cue.start + cue.end) / 2;
       try {
-        const crop = cue.layer === "caption" ? "crop=iw*0.88:ih*0.24:iw*0.06:ih*0.58," :
-          cue.layer === "overlay" ? "crop=iw*0.84:ih*0.33:iw*0.08:ih*0.125," :
-          cue.position === "brand" ? "crop=iw:ih*0.18:0:ih*0.31," :
-          cue.position === "line" ? "crop=iw:ih*0.105:0:ih*0.47," :
-          cue.position === "cta" ? "crop=iw:ih*0.14:0:ih*0.57," : "";
         const key = `${at}:${cue.layer}:${cue.position ?? ""}`;
         if (!readings.has(key)) {
-          const image = await imageAt(file, at, `${crop}scale=840:-2,format=gray`);
+          const image = await imageAt(file, at, ocrFilter(cue));
           const stdout = await new Promise<string>((resolve, reject) => {
             const p = execFile(process.env.TESSERACT_BIN || "tesseract", ["stdin", "stdout", "-l", process.env.OCR_LANG || "eng", "--psm", cue.layer === "end" ? "7" : "6"], args, (err, out) => err ? reject(err) : resolve(out));
             p.stdin?.on("error", () => {});

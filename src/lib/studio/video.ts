@@ -10,8 +10,8 @@ import { lipSync, loudness, sceneCuts, werCheck, wordTimings } from "@/lib/qa-to
 import { CATEGORIES, keyframe, planShots, QA_PASS, reviewShotFrames } from "@/lib/video-plan";
 import { checkScript, nearSpeech } from "@/lib/script-lab";
 import { approvedStoryboardLength, scriptProductionBlockers, shotReady, storyboardKeyframeFixes, videoAspects, videoReady } from "@/lib/quality-policy";
-import { captionVariants, END_SECONDS, expectedCopy, meanVolume, mediaDuration, stitchShots } from "@/lib/video-post";
-import { audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
+import { captionVariants, END_SECONDS, expectedCopy, meanVolume, mediaDuration, placedCues, stitchShots } from "@/lib/video-post";
+import { type CopyCue, audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
 import { list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
 import type { Direction, JobPhase, QAResult, QualityFinding, Shot, ShotQA, StudioRun, VideoQuality, VideoTake } from "@/lib/types";
 import { now, say, live, saveRun } from "./run-state";
@@ -423,8 +423,9 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   };
   await step(run, d, "QA: reading on-screen copy, checking speech and visuals", steps.qa, total, "qa");
   const cues = expectedCopy(segments, end, st.duration);
-  const inspect = async (files: { aspect: string; url: string }[]) => (await Promise.all(files.map(async (v) => [
-    ...await checkExport(v.url, v.aspect, st.duration + END_SECONDS, cues),
+  const inspect = async (files: { aspect: string; url: string; copy?: CopyCue[] }[]) => (await Promise.all(files.map(async (v) => [
+    // Read each line where it was actually placed (captions move off the product), end card from the fixed layout.
+    ...await checkExport(v.url, v.aspect, st.duration + END_SECONDS, placedCues(v, cues)),
     ...await audioFindings(v.url, st.duration, v.aspect),
   ]))).flat();
   let variants = await captionVariants(st.url, "", end, segments, aspects, d.compactCopy);
