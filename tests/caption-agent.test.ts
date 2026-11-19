@@ -44,7 +44,20 @@ describe("keyword captions", () => {
 /** Subject boxes as the vision locator returns them: one per sampled frame. */
 const at = (ts: number[], box: Box) => ts.map((t) => ({ t, box }));
 
+describe("CTA keyword cue", () => {
+  it("shows the approved on-screen CTA when it repeats the line, instead of a keyword pick", () => {
+    const [c] = keywordCues([{ start: 11, end: 16, text: LINES[3], onScreen: "Shop at drinkolipop.com", speech: { start: 11.15, end: 15.6 } }], "OLIPOP");
+    expect(c.text).toBe("Shop at drinkolipop.com");
+    expect(c.start).toBeGreaterThanOrEqual(11);
+  });
+});
+
 describe("caption placement agent", () => {
+  it("ignores subject frames from the previous shot", () => {
+    const subjects = at([10.6], { x: 0, y: 0, w: 1, h: 1 });
+    const box = boxFor("Shop at drinkolipop.com", CAPTION_SLOTS[0]);
+    expect(collision(box, 10.8, 16, subjects, [])).toBeNull();
+  });
   it("maps subject boxes into padded and cropped aspects", () => {
     const b = { x: 0.25, y: 0.5, w: 0.5, h: 0.25 };
     const pad = mapSubject(b, { w: 486, h: 864 }, { w: 864, h: 864 }, "pad");
