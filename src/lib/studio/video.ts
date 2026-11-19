@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { jobSteps } from "@/lib/job-progress";
 import { providerOf } from "@/lib/models";
 import { qa } from "@/lib/pipeline";
-import { aiConfigured, audioConfigured, transcribe, generateVideo, musicBed, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
+import { aiConfigured, audioConfigured, transcribe, generateVideo, musicBed, MUSIC_COST, MUSIC_MODEL, VOICE_MODEL, openrouterCredits, videoDurations, videoPricePerSec, voiceover } from "@/lib/ai";
 import { lookLine, musicPrompt } from "@/lib/video-looks";
 import { upscaleClip } from "@/lib/upscale";
 import { blenderAvailable, buildWorld, cameraPlate, REAL_SET_RESERVE, realSetStatus } from "@/lib/real-set";
 import { lipSync, loudness, sceneCuts, werCheck, wordTimings } from "@/lib/qa-tools";
-import { CATEGORIES, keyframe, planShots, QA_PASS, reviewShotFrames } from "@/lib/video-plan";
+import { CATEGORIES, keyframe, medianReview, planShots, QA_PASS, reviewShotFrames } from "@/lib/video-plan";
 import { checkScript, nearSpeech } from "@/lib/script-lab";
 import { canonExpected, canonHeard } from "@/lib/speech-canon";
 import { approvedStoryboardLength, scriptProductionBlockers, shotReady, storyboardKeyframeFixes, videoAspects, videoReady } from "@/lib/quality-policy";
@@ -215,8 +215,8 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   const toReview = (s: Shot, i: number) => s.clipKey === cacheKeys[i] && !!s.clip && (!s.clipQa || s.clipQa.match === "review");
   const missing = shots.flatMap((s, i) => reusableShot(s, cacheKeys[i]) || toReview(s, i) ? [] : [i]);
   const perSec = (i: number) => priceOf.get(models[i]) ?? 0.12;
-  const musicKey = shortHash([plan.category, seconds, run.research?.tone, plan.musicStyle ?? "auto"]);
-  const reserve = 0.12 + shots.length * 0.035 + (plan.music && d.musicTrack?.key !== musicKey ? 0.6 : 0);
+  const musicKey = shortHash([MUSIC_MODEL, plan.category, seconds, run.research?.tone, plan.musicStyle ?? "auto"]);
+  const reserve = 0.12 + shots.length * 0.035 + (plan.music && d.musicTrack?.key !== musicKey ? MUSIC_COST : 0);
   // Best-of-N: N 480p candidates per missing shot (one for Higgsfield credits and for test drafts).
   const nFor = (i: number) => (testDraft || models[i] === PACKSHOT_MODEL || providerOf(models[i]) === "hfmcp" ? 1 : candidateCount(plan.candidates));
   const est = draftEstimate(missing.map((i) => ({ seconds: actual[i]!, perSec: perSec(i) * nFor(i) / Math.max(1, candidateCount(plan.candidates)) })), candidateCount(plan.candidates), reserve);
@@ -253,7 +253,7 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
     if (!live(run)) throw new Error("Stopped before the next voiceover.");
     const line = s.vo.trim();
     if (line) {
-      const key = shortHash([line, plan.voice, s.seconds]);
+      const key = shortHash([VOICE_MODEL, line, plan.voice, s.seconds]);
       let tries = 1, lineDb: number | null = null;
       if (s.voiceTrack?.key !== key) {
         const voice = await checkedVoice(line, plan.voice, charge, (n) => { tries = n; }, run.research?.brand, run.research?.pronunciation);
@@ -537,9 +537,11 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     if (shotReady(clipQa)) {
       try {
         const frames = await evidenceFrames(main, frameTimes(segment.start, segment.end), segment);
-        const v = await reviewShotFrames(run.models.vision, frames, s, refs, firsts[i], "export");
-        finalQa = v.qa;
-        charge(v.cost);
+        // Median of three independent reviews (13.29): one export review swung 10 -> 4 on the identical cached clip
+        // between takes, so a single sample decided the gate. The median keeps a flaw two of three reviewers see.
+        const vs = await Promise.all([0, 1, 2].map(() => reviewShotFrames(run.models.vision, frames, s, refs, firsts[i], "export")));
+        vs.forEach((v) => charge(v.cost));
+        finalQa = medianReview(vs.map((v) => v.qa));
       } catch {
         finalQa = { score: 0, match: "review", notes: ["Final visual verification could not run."] };
       }

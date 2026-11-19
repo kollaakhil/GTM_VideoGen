@@ -20,7 +20,7 @@ export const LENGTHS = [6, 10, 15, 20, 30];
 /** Pre-flight cost: storyboard keyframes, or one pass of video at the model's real per-second price plus QA and audio. */
 export function estimateCost(stage: "storyboard" | "video", o: { perSec?: number | null; lengthSec: number; shots: number; music?: boolean }) {
   if (stage === "storyboard") return +(o.shots * 0.08 + 0.02).toFixed(2);
-  return +(o.lengthSec * (o.perSec ?? 0.12) + o.shots * 0.01 + 0.02 + (o.music ? 0.6 : 0)).toFixed(2);
+  return +(o.lengthSec * (o.perSec ?? 0.12) + o.shots * 0.01 + 0.02 + (o.music ? 0.2 : 0)).toFixed(2);
 }
 
 export const shotCount = (lengthSec: number, category: VideoCategory) => Math.max(2, Math.min(CATEGORIES[category].beats.length, Math.round(lengthSec / 4)));

@@ -49,7 +49,10 @@ export function lookLine(plan: Pick<VideoPlan, "lens" | "visualStyle"> | null | 
 /** Music prompt for the plan: the chosen style, or a clean bed that fits the category and tone. */
 export function musicPrompt(plan: Pick<VideoPlan, "musicStyle">, categoryLabel: string, tone?: string | null) {
   const style = pick(MUSIC_STYLES, plan.musicStyle);
+  // A stated tempo and pulse gave the steadiest grid for beat-synced cuts, and "ending button" gives a clean last hit
+  // instead of a fade (13.29). Kept mid-range so the bed leaves the voice band open.
+  const grid = "112 BPM, steady pulse on every beat, no vocals, sparse in the midrange so a voiceover sits on top, clean ending button";
   return style
-    ? `Instrumental ${style}, for a ${categoryLabel} ad, ${tone ?? "modern"} tone, no vocals, steady energy under a voiceover.`
-    : `Clean instrumental for a ${categoryLabel}, ${tone ?? "modern"} tone, no vocals.`;
+    ? `Instrumental ${style}, for a ${categoryLabel} ad, ${tone ?? "modern"} tone, ${grid}.`
+    : `Clean instrumental for a ${categoryLabel}, ${tone ?? "modern"} tone, ${grid}.`;
 }

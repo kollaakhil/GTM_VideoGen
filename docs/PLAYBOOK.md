@@ -494,3 +494,25 @@ No judge or threshold was changed in this round.
   caption filter now uses the same predicate.
 - Keyframe 4/10 "render rather than live-action" → 13.27 judge fix.
 - Still open: s0 can exits the left edge in the late pour (scene 7/10; clip-level, needs a paid re-render).
+
+### 13.29 Take 5 (6/10, rubric 7.1) + voice/music A/B: audio models, packshot colour, export-review noise
+Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still drags video (5) and final (7.1):
+- **"swap an ollipop" (ASR fail, every take). Real, voice model.** A/B on the full script (Whisper WER + pitch/pause
+  prosody, samples in /workspace/gtm-e2e/v2/ab/voice): Turbo v2.5 3% WER, 8.1 st pitch range, says "swap an";
+  Eleven v3 (fal) 3% WER, 10.6 st, says "swap in"; multilingual v2 3%, 8.5 st; Higgsfield Eleven v4 Holden 3%, 17.8 st
+  (best prosody). v4 needs the app's Higgsfield OAuth connection (not connected), so the app moves to fal Eleven v3
+  ($0.10/1k chars, about $0.015 a script vs $0.0075); v4 is the follow-up once Higgsfield is connected in /connections.
+  Voice cache keys now include the model, so cached Turbo lines re-voice once.
+- **Music.** librosa on 18 s beds (ab/music/beat.txt): current fal ElevenLabs Music 117.5 BPM, inter-beat CV 0.023,
+  voice-band (300-3400 Hz) energy 2.36; Higgsfield ElevenLabs Music v2.5 CV 0.009, voice band 1.48 (best, but OAuth);
+  Stable Audio 2.5 CV 0.015, voice band 1.82, $0.20 a clip vs $0.60 a started minute; CassetteAI CV 0.042 (drifts).
+  App moves to Stable Audio 2.5 and the prompt states 112 BPM, a steady pulse, an open midrange and an ending button.
+  Caveat: B/C/D used the tempo prompt, A the old one, so part of the gain is the prompt (both ship).
+- **Packshot label pink, "CGI softness" (s3 export 5). Real.** Blender AgX view transform desaturates saturated reds
+  toward magenta: label red measured hue 349 deg / sat 0.70 vs the photo's ~350 / 0.86; Standard + coat 0.25 + -0.25 EV
+  gives 351 / 0.74 with the highlight unclipped (cmp-agx-std2.png).
+- **s2 "label drift" 4. Judge noise, not the clip.** The same cached clip scored 10 at clip QA, 10 in take 4's export
+  review and 4 in take 5's. Fix the measurement, not the threshold: export reviews are now the median of three
+  independent reviews (`medianReview`), which neither takes the best nor the worst; a flaw two of three see still fails.
+  Cost +2 vision calls per shot (~$0.02 a take).
+- **s0 can cropped at the left edge during the pour. Real** (consistent across takes). Needs a paid re-render; open.

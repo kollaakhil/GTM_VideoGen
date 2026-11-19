@@ -161,3 +161,15 @@ Return JSON {"notes":[string],"frames":[{"index":number,"match":"pass"|"fail"|"r
   const { score, rubric } = checklistScore(report);
   return { qa: { score, match, notes: parsed.data.notes, frames: report, rubric, ...(parsed.data.score !== undefined ? { judgeScore: parsed.data.score } : {}) }, cost: usage.costUsd };
 }
+
+/**
+ * The median-scoring review of several independent ones (odd count). The whole review is kept, frames and notes
+ * included, so findings stay tied to the verdict that produced the score. Unbiased: it neither takes the best nor
+ * the worst sample, so a flaw that most reviewers see still fails the shot (13.29).
+ */
+export function medianReview(reviews: ShotQA[]): ShotQA {
+  if (!reviews.length) throw new Error("medianReview needs at least one review");
+  const sorted = [...reviews].sort((a, b) => a.score - b.score);
+  const pick = sorted[Math.floor((sorted.length - 1) / 2)];
+  return { ...pick, notes: [...pick.notes, `Median of ${reviews.length} reviews (scores ${reviews.map((r) => r.score).join(", ")}).`] };
+}
