@@ -413,3 +413,7 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 - Why this is not loosening: the pre-check guards against wrong words before spend; ASR spelling of a coined name says nothing
   about the audio. The final QA's whole-mix WER ≤ 10% and caption word-sync checks are unchanged.
 - Operator note: run_8a9c7c9db627's research predates the field, so `research.pronunciation = "Ollie-pop"` was set by hand.
+
+### 13.21 "two-plus" vs whisper's "2+"
+- Failure: the CTA line failed the pre-check: expected "Fifty percent off two-plus cases", heard "50% off 2+ cases". `%` was
+  normalised to "percent" but `+` was stripped. Fix: `N+` → "N plus" in `sameSpeech` tokens.
