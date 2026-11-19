@@ -39,8 +39,8 @@ export const STAGE_DEFAULTS: Record<Stage, string> = {
   image: "google/gemini-nano-banana-2.1",
   video: "bytedance/seedance-2.0-fast",
   voice: "fal-ai/elevenlabs/tts/eleven-v3",
-  music: "fal-ai/stable-audio-25/text-to-audio",
-  sfx: "local-synth:foley",
+  music: "elevenlabs/music/v2.5",
+  sfx: "fal-ai/mmaudio-v2",
   qa: "google/gemini-3.8-flash",
   asset3d: "speridlabs/idol/max",
 };

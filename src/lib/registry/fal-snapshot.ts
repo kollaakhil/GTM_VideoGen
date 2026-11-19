@@ -1612,5 +1612,24 @@ export const FAL_KNOBS: Record<string, FalKnobs> = {
     "9:16"
    ]
   }
+ },
+ "fal-ai/mmaudio-v2": {
+  "text": "prompt",
+  "image": "video_url",
+  "dur": {
+   "key": "duration",
+   "as": "int",
+   "min": 1,
+   "max": 10
+  }
+ },
+ "sonilo/v1.1/text-to-sound-effects": {
+  "text": "prompt",
+  "dur": {
+   "key": "duration",
+   "as": "int",
+   "min": 1,
+   "max": 30
+  }
  }
 };

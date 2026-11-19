@@ -658,22 +658,28 @@ async function voiceoverUnmetered(text: string, voice: string, sayAs?: { brand?:
 }
 
 /**
- * Instrumental music bed via fal Stable Audio 2.5 ($0.20 a clip, up to 190 s). It replaced ElevenLabs Music
- * ($0.60 per started minute) after the 13.29 A/B: steadier beat grid (inter-beat CV 0.015 vs 0.023) and less energy in
- * the 300-3400 Hz voice band (1.82 vs 2.36), so the VO sits on top of it.
+ * Instrumental music bed via fal models. Defaults to Stable Audio 2.5 ($0.20 a clip, up to 190 s) which replaced
+ * ElevenLabs Music ($0.60 per started minute) after the 13.29 A/B: steadier beat grid (inter-beat CV 0.015 vs 0.023)
+ * and less energy in the 300-3400 Hz voice band (1.82 vs 2.36), so the VO sits on top of it.
+ * Now supports model override from the version stack.
  */
 export const MUSIC_MODEL = "fal-ai/stable-audio-25/text-to-audio";
 export const MUSIC_COST = 0.2;
-export function musicBed(prompt: string, seconds: number): Promise<{ url: string; usage: Usage }> {
-  return paid("music", MUSIC_COST, () => musicBedUnmetered(prompt, seconds));
+export function musicBed(prompt: string, seconds: number, model?: string): Promise<{ url: string; usage: Usage }> {
+  const modelId = model || MUSIC_MODEL;
+  // Estimate cost based on model (rough, will be refined by paid())
+  const estimatedCost = modelId.includes("elevenlabs") ? 0.6 : 0.2;
+  return paid(`music:${modelId}`, estimatedCost, () => musicBedUnmetered(prompt, seconds, modelId));
 }
 
-async function musicBedUnmetered(prompt: string, seconds: number): Promise<{ url: string; usage: Usage }> {
+async function musicBedUnmetered(prompt: string, seconds: number, model: string): Promise<{ url: string; usage: Usage }> {
   const secs = Math.max(3, Math.min(190, Math.ceil(seconds)));
-  const out = await falRun<{ audio?: string | { url?: string } }>(MUSIC_MODEL, { prompt, seconds_total: secs });
+  const out = await falRun<{ audio?: string | { url?: string } }>(model, { prompt, seconds_total: secs });
   const url = typeof out.audio === "string" ? out.audio : out.audio?.url;
   if (!url) throw new Error("Music returned no audio");
-  return { url: await downloadAsDataUrl(url), usage: { costUsd: MUSIC_COST } };
+  // Calculate actual cost based on model
+  const actualCost = model.includes("elevenlabs") ? 0.6 : 0.2;
+  return { url: await downloadAsDataUrl(url), usage: { costUsd: actualCost } };
 }
 
 export function aiConfigured() {
