@@ -7,7 +7,7 @@ import type { Shot, ShotSpec } from "./types";
  */
 export const DEFAULT_NEGATIVE = [
   "warped, fused or extra fingers", "melting, misspelled or re-drawn product label", "garbled or invented text, letters or logos",
-  "phone screens or UI", "duplicate or morphing products", "flicker, jump cuts or sudden zooms", "plastic CGI look",
+  "phone screens or UI", "product rotating away from camera", "duplicate or morphing products", "flicker, jump cuts or sudden zooms", "plastic CGI look",
 ];
 
 const MM = /(\d{2,3})\s?mm/i;
