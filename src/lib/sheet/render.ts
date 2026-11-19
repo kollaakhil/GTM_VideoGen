@@ -17,7 +17,33 @@ import { blenderQueue } from "@/lib/render/blender-queue";
 import { shotsForStack } from "./version-estimate";
 export { blenderOnly, estimateSheetVersion, SHOT_CHECK_USD, shotsForStack, videoPricePerSec } from "./version-estimate";
 
-
+/** Builds caption cues from chunked captions in the sheet, timed to shot starts. */
+function buildChunkedCaptions(sheet: ShotSheet, shotStarts: number[]): { start: number; end: number; text: string }[] {
+  const cues: { start: number; end: number; text: string }[] = [];
+  let brightLabelAdded = false;
+  
+  for (let i = 0; i < sheet.shots.length; i++) {
+    const shot = sheet.shots[i];
+    const shotStart = shotStarts[i] ?? 0;
+    const shotDur = dur(shot);
+    
+    // Add bright label in first 3s if present
+    if (!brightLabelAdded && shot.text?.copy && shotStart < 3) {
+      cues.push({ start: shotStart, end: Math.min(shotStart + 0.8, shotStart + shotDur, 3), text: shot.text.copy });
+      brightLabelAdded = true;
+    }
+    
+    // Add chunked captions if present
+    if (shot.text?.chunks && shot.text.chunks.length > 0) {
+      const chunkDur = shotDur / shot.text.chunks.length;
+      shot.text.chunks.forEach((chunk, j) => {
+        cues.push({ start: shotStart + j * chunkDur, end: shotStart + (j + 1) * chunkDur, text: chunk });
+      });
+    }
+  }
+  
+  return cues;
+}
 
 /**
  * The render half of the Studio flow (steps 4 and 5): shot sheet in, previews and a final out.
@@ -39,6 +65,8 @@ export interface RenderDeps {
   bed?(description: string, seconds: number): Promise<string | null>;
   /** Voiceover for a line (vo mode only). Gated by the meter like every paid call. */
   voice?(line: string, run: SheetRun): Promise<{ url: string; usd: number }>;
+  /** Burns chunked captions into a video for pattern-aware sheets. */
+  burnCaptions?(video: string, cues: { start: number; end: number; text: string }[], width: number, height: number): Promise<string>;
   /** Job context for queue management (optional, used when rendering through the queue). */
   jobContext?: { runId: string; versionId: string; jobId: string };
   final: (video: string, run: SheetRun, stitched: Stitched) => FinalDeps;
@@ -208,7 +236,17 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
       silenceGaps.push({ start: beatEnd, end: beatEnd + 1.0 });
     }
   }
-  const stitched = await deps.stitch(v.shots.map((r) => r.url!), { voices, sfx: plan.sfx, duck: plan.duck, bedGain: plan.bedGain, music, shotSeconds: sheet.shots.map(dur), width, height, silenceGaps });
+  let stitched = await deps.stitch(v.shots.map((r) => r.url!), { voices, sfx: plan.sfx, duck: plan.duck, bedGain: plan.bedGain, music, shotSeconds: sheet.shots.map(dur), width, height, silenceGaps });
+  
+  // Burn chunked captions for pattern-aware sheets
+  if (sheet.patternId === "confession_loop" && deps.burnCaptions) {
+    const captionCues = buildChunkedCaptions(sheet, stitched.starts);
+    if (captionCues.length > 0) {
+      const captioned = await deps.burnCaptions(stitched.url, captionCues, width, height ?? Math.round(width * 16 / 9));
+      stitched = { ...stitched, url: captioned };
+    }
+  }
+  
   v.videoUrl = await deps.store(stitched.url, `${run.id}/${v.id}-cut`);
   addTiming(run, "edit and mix", Date.now() - t2, `audio: ${plan.mode}${plan.unmapped.length ? `, no sound for ${plan.unmapped.length} action(s)` : ""}`);
   Object.assign(v, { status: "done", ms: Date.now() - t0, error: null });

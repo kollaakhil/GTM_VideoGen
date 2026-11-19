@@ -99,6 +99,57 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
       const v = await voiceover(line, "Rachel", undefined, voiceModel);
       return { url: v.url, usd: v.usage.costUsd };
     },
+    burnCaptions: async (video, cues, width, height) => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));
+      try {
+        const videoFile = path.join(dir, "in.mp4");
+        await fs.writeFile(videoFile, video.startsWith("data:") ? Buffer.from(video.split(",")[1], "base64") : await (await fetch(video)).arrayBuffer().then(Buffer.from));
+        
+        // Generate ASS subtitle file for chunked captions
+        const size = Math.round(Math.min(width, height) * 0.075);
+        const pad = Math.max(4, Math.round(size * 0.28));
+        const marginV = Math.round(height * 0.2);
+        const assTime = (t: number) => {
+          const h = Math.floor(t / 3600);
+          const m = Math.floor((t % 3600) / 60);
+          const s = (t % 60).toFixed(2).padStart(5, "0");
+          return `${h}:${String(m).padStart(2, "0")}:${s}`;
+        };
+        const esc = (t: string) => t.replace(/[{}\\]/g, "");
+        const assContent = [
+          "[Script Info]",
+          "ScriptType: v4.00+",
+          `PlayResX: ${width}`,
+          `PlayResY: ${height}`,
+          "",
+          "[V4+ Styles]",
+          "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
+          `Style: Cap,DejaVu Sans,${size},&H00FFFFFF,&H48000000,&H00000000,1,3,${pad},0,2,${Math.round(width * 0.08)},${Math.round(width * 0.08)},${marginV}`,
+          "",
+          "[Events]",
+          "Format: Layer, Start, End, Style, Text",
+          ...cues.map((c) => `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Cap,${esc(c.text)}`),
+        ].join("\n");
+        
+        const assFile = path.join(dir, "captions.ass");
+        await fs.writeFile(assFile, assContent);
+        
+        const output = path.join(dir, "out.mp4");
+        const FFMPEG = ffmpegPath || "ffmpeg";
+        await run(FFMPEG, [
+          "-hide_banner", "-loglevel", "error",
+          "-i", videoFile,
+          "-vf", `ass=${assFile.replace(/\\/g, "\\\\")}`,
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+          "-c:a", "copy",
+          "-y", output,
+        ], { timeout: 180_000 });
+        
+        return `data:video/mp4;base64,${(await fs.readFile(output)).toString("base64")}`;
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
     final: (video, r, stitched) => ({
       review: async () => {
         // Use stack's QA model for final review
