@@ -38,6 +38,7 @@ import { saveCreative } from "./creatives";
 import { exportReviewCount, qaMode, shotCheckTimes } from "@/lib/studio/qa-mode";
 import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
 import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
+import { gateEnabled, qaGates } from "@/lib/qa/config";
 import { latestCalibration } from "@/lib/judge-calibration";
 
 async function remember(run: StudioRun, s: Shot, kind: "keyframe" | "clip", model: string, q: ShotQA) {
@@ -72,7 +73,7 @@ const renderCache = () => cacheStore<{ stored: string }>("clips");
 const judgeCache = () => cacheStore<ShotQA>("judge");
 const mediaExists = async (url: string) => !url.startsWith("/api/media/") || !!(await mediaFile(url));
 /** Independent export reviews per shot; the median decides (odd, see medianReview). */
-export const EXPORT_REVIEWS = 5;
+export const EXPORT_REVIEWS = qaGates().finalReviews;
 
 /** True-colour packshot still per run (free Blender render), cached so every labelled shot reuses one. */
 const trueColour = new Map<string, Promise<string | null>>();
@@ -116,7 +117,7 @@ export async function storyboard(run: StudioRun, d: Direction, refs: string[], s
   const winners = await winningShots(run);
   let p = await planShots(run.models.text, d, run.brief!, run.research!, run.videoPlan!, run.styleDNA, winners, rules);
   // Shot-plan gate before any keyframe spend: specific, consistent cast and set, lens and continuity, matching the script.
-  if (aiConfigured()) {
+  if (aiConfigured() && gateEnabled("shots")) {
     const cal = await latestCalibration();
     const judge = gateJudge(run);
     let gate = await shotsGate(judge, p.shots, cal);
@@ -671,9 +672,14 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
 
   let craft: QAResult = { score: 0, pass: false, notes: [] };
   try {
-    const review = await tm.time("final-review", () => qa(run.models.vision, main, "video", run.brief!, d.hook, shots.map((s) => s.onScreen).join(" ")));
-    craft = review.data;
-    charge(review.cost);
+    // Check (c): the creative review is the median of N independent reviews on a Final (one on a preview).
+    const n = Math.max(1, exportReviewCount(qaMode(tier, plan), EXPORT_REVIEWS));
+    const looks = (await Promise.allSettled(Array.from({ length: n }, () => tm.time("final-review", () => qa(run.models.vision, main, "video", run.brief!, d.hook, shots.map((s) => s.onScreen).join(" ")))))).flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    looks.forEach((l) => charge(l.cost));
+    if (!looks.length) throw new Error("no creative review ran");
+    const sorted = [...looks].sort((x, y) => x.data.score - y.data.score);
+    craft = sorted[Math.floor((sorted.length - 1) / 2)].data;
+    if (looks.length > 1) craft = { ...craft, notes: [...craft.notes, `Median of ${looks.length} reviews (${looks.map((l) => l.data.score).join(", ")}).`] };
   } catch {
     findings.push({ kind: "coverage", at: 0, expected: "Independent review of the finished creative", observed: "Creative Director review could not run", status: "review" });
   }
@@ -708,7 +714,7 @@ async function takeStages(run: StudioRun, main: string, o: {
   const shotSeconds = o.shots.map((s, i) => (o.st.starts[i + 1] ?? o.st.duration) - o.st.starts[i]);
   let continuity: number | null = null;
   const notes: string[] = [];
-  if (aiConfigured()) {
+  if (aiConfigured() && gateEnabled("edit")) {
     try {
       const frames = (await Promise.all(o.shots.map((s, i) => evidenceFrames(main, [Number((o.st.starts[i] + shotSeconds[i] / 2).toFixed(3))])))).flat();
       const c = await judgeContinuity(judge, frames);

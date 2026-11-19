@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const chat = vi.hoisted(() => ({ fn: vi.fn() }));
 vi.mock("@/lib/ai", async (original) => ({ ...await original<typeof import("@/lib/ai")>(), chatJSON: chat.fn }));
@@ -8,6 +8,10 @@ import { calibrated, combine, overrideStage, saveStage, scriptStage, stageBlock,
 import { goldenSet, summarize } from "@/lib/judge-calibration";
 import { SCRIPT_TARGET } from "@/lib/script-lab";
 import type { Research, Shot, StudioRun } from "@/lib/types";
+
+// These tests cover the per-stage gates, which the consolidated QA mode turns off (src/lib/qa/config.ts).
+beforeAll(() => { vi.stubEnv("QA_GATES", "legacy"); });
+afterAll(() => { vi.unstubAllEnvs(); });
 
 const usage = { costUsd: 0.001 };
 const research: Research = { brand: "Lumen", summary: "UV bottle", audience: "Commuters", valueProps: ["UV-C cap", "Cold 24h", "USB-C"], tone: "Clean", angles: ["a", "b", "c", "d"], sources: ["https://a", "https://b"], competitors: [{ name: "LARQ" }, { name: "Hydro Flask" }] };
