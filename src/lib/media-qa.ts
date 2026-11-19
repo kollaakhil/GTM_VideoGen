@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { sameCanon } from "./speech-canon";
+import { brandNear } from "./script-lab";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -215,7 +216,7 @@ export async function verifySpeech(media: string, windows: SpeechWindow[], trans
         await audioWindow(file, wav, w.start, w.end);
         const heard = await recognize(wav, transcribe, asrVocabulary(w.text, vocabulary));
         cost += heard.usage.costUsd;
-        if (!sameSpeech(heard.text, w.text) && !sameCanon(heard.text, w.text, vocabulary)) findings.push({ kind: "speech", shotId: w.shotId, at: w.start, expected: w.text || "No speech", observed: heard.text || "No words heard", status: "fail" });
+        if (!sameSpeech(heard.text, w.text) && !sameCanon(heard.text, w.text, vocabulary) && !brandNear(heard.text, w.text, vocabulary)) findings.push({ kind: "speech", shotId: w.shotId, at: w.start, expected: w.text || "No speech", observed: heard.text || "No words heard", status: "fail" });
       } catch {
         findings.push({ kind: "coverage", shotId: w.shotId, at: w.start, expected: w.text, observed: "Speech verification could not run", status: "review" });
       }

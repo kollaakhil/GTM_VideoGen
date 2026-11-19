@@ -29,3 +29,18 @@ describe("word-by-word captions vs voice", () => {
     expect(finalChecks({ craft: 9, findings: [], shotScores: [9] }).some((r) => r.name === "sampled frames")).toBe(false);
   });
 });
+
+import { timedCues } from "@/lib/video-post";
+import { layoutCopy } from "@/lib/caption-layout";
+it("captions follow the spoken span, not the whole shot", () => {
+  const cues = timedCues([{ start: 7, end: 11, text: "Your favorite cola, made merry, with just fifty calories.", speech: { start: 7.15, end: 10.6 } }]);
+  expect(cues[0].start).toBeCloseTo(7.15, 2);
+  expect(cues.at(-1)!.end).toBeLessThanOrEqual(10.6 + 1e-6);
+  expect(timedCues([{ start: 0, end: 3, text: "Love cola, dread the sugar guilt?" }]).at(-1)!.end).toBeCloseTo(3, 2);
+});
+it("captions sit under a top overlay instead of the lower third", () => {
+  const seg = [{ start: 0, end: 3, text: "Love cola, dread the sugar guilt?", onScreen: "Classic cola ritual. 5g sugar." }];
+  const { captions, overlays } = layoutCopy(null, 486, 864, seg, timedCues(seg), { caption: 30, overlay: 24 });
+  expect(overlays[0].y).toBeLessThanOrEqual(0.3);
+  expect(captions[0].y).toBeLessThan(0.5);
+});

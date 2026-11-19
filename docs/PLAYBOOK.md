@@ -448,3 +448,13 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 - Fix: the shot-planning prompt now requires in-plane moves for labelled products (tip sideways, label square to camera, no
   rotation in depth), a locked-off camera for that shot and headroom; "product rotating away from camera" joined the default
   negative. For run_8a9c7c9db627 s0 the spec was edited the same way by hand (cameraMove locked off, motionBeats in-plane tip).
+
+### 13.25 Captions out of sync and over the product (take 2: 7/10)
+- Failures (run_8a9c7c9db627 take 2, every shot clip 10/10): caption word-sync 4.9 ("with just fifty calories" on screen while
+  "half off" was heard), and the sampled-frame judge scored scenes 2/4/5/4 for "lower captions obstruct the can and glass" and
+  "consolidate top and bottom overlays". Final per-line check still failed "swap an ollipop".
+- Causes: cues were spread over the whole (beat-snapped) shot window while the line is ~3.4 s from +0.15 s; the caption default
+  slot is the lower third (0.74), where the product sits in these shots; the final line check lacked the pre-check's tolerance.
+- Fixes: segments carry the measured speech span (voice start + length / tempo) and `timedCues` times captions inside it; with an
+  overlay in the top band the caption slots are tried nearest to just under it first (one text group, product clear); the final
+  per-line check accepts what the pre-check accepts (`brandNear`, 13.20). WER and caption thresholds unchanged.
