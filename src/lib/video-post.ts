@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import type { CopyCue } from "./media-qa";
+import { energyMap, layoutCopy, shotOverlays } from "./caption-layout";
 
 const run = promisify(execFile);
 const FFMPEG = ffmpegPath || "ffmpeg";
@@ -57,8 +58,10 @@ export function captionCues(script: string, duration: number, wordsPerCue = 4, v
  * the outline width) that exists only while that line is on screen. Compact copy (the OCR-safe re-typeset) uses a
  * slightly darker box and smaller type; it never paints fixed full-frame panels over the product.
  */
-export function assFile(cues: { start: number; end: number; text: string }[], w: number, h: number, overlays: CopyCue[] = [], compact = false) {
-  const size = Math.round(Math.min(w, h) * (compact ? 0.058 : 0.075));
+export const captionSize = (w: number, h: number, compact = false) => Math.round(Math.min(w, h) * (compact ? 0.058 : 0.075));
+
+export function assFile(cues: { start: number; end: number; text: string }[], w: number, h: number, overlays: CopyCue[] = [], compact = false, layout?: ReturnType<typeof layoutCopy>) {
+  const size = captionSize(w, h, compact);
   // ASS alpha: 00 opaque … FF clear. ~70% (compact ~80%) opaque keeps white text readable for OCR and viewers.
   const box = compact ? "&H30000000" : "&H48000000";
   const pad = (s: number) => Math.max(4, Math.round(s * 0.28));
@@ -77,8 +80,16 @@ export function assFile(cues: { start: number; end: number; text: string }[], w:
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Text",
-    ...cues.map((c) => `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Cap,${esc(c.text)}`),
-    ...overlays.map((c) => `Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Overlay,${esc(c.text.replace(/\s+/g, " "))}`),
+    ...(layout
+      ? [
+        // Placed lines: centred on the slot picked to keep the product and subject clear (caption-layout.ts).
+        ...layout.captions.map((c) => `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Cap,{\\an5\\pos(${Math.round(w / 2)},${Math.round(c.y * h)})}${esc(c.text)}`),
+        ...layout.overlays.map((c) => `Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Overlay,{\\an5\\pos(${Math.round(w / 2)},${Math.round(c.y * h)})}${esc(c.text.replace(/\s+/g, " "))}`),
+      ]
+      : [
+        ...cues.map((c) => `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Cap,${esc(c.text)}`),
+        ...overlays.map((c) => `Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Overlay,${esc(c.text.replace(/\s+/g, " "))}`),
+      ]),
   ].join("\n");
 }
 
@@ -104,7 +115,7 @@ export const END_SECONDS = 1.5;
 
 export function expectedCopy(segments: { start: number; end: number; text: string; onScreen?: string }[], end: EndCard, duration: number): CopyCue[] {
   return [
-    ...segments.flatMap((s): CopyCue[] => s.onScreen?.trim() ? [{ start: s.start, end: s.end, text: s.onScreen, layer: "overlay" }] : []),
+    ...shotOverlays(segments).map((o): CopyCue => ({ ...o, layer: "overlay" })),
     ...timedCues(segments).map((c): CopyCue => ({ ...c, layer: "caption" })),
     ...(["brand", "line", "cta"] as const).flatMap((position): CopyCue[] => {
       const text = endCopy(end)[position];
@@ -254,6 +265,9 @@ export async function mediaDuration(media: string) {
   }
 }
 
+/** The copy to OCR on one export: lines where they were placed on that aspect, plus the fixed end card. */
+export const placedCues = (v: { copy?: CopyCue[] }, cues: CopyCue[]) => v.copy ? [...v.copy, ...cues.filter((c) => c.layer === "end")] : cues;
+
 export async function captionVariants(
   video: string,
   script: string,
@@ -261,15 +275,15 @@ export async function captionVariants(
   segments?: { start: number; end: number; text: string; onScreen?: string }[],
   aspects: readonly (typeof ASPECTS)[number]["aspect"][] = ASPECTS.map((a) => a.aspect),
   compactCopy = false,
-): Promise<{ aspect: string; url: string }[]> {
+): Promise<{ aspect: string; url: string; copy?: CopyCue[] }[]> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));
   try {
     const input = path.join(dir, "in.mp4");
     await fs.writeFile(input, video.startsWith("data:") ? Buffer.from(video.split(",")[1], "base64") : await (await fetch(video)).arrayBuffer().then(Buffer.from));
     const src = await probe(input);
     const cues = segments?.length ? timedCues(segments) : captionCues(script, src.duration);
-    const overlays = (segments ?? []).flatMap((s): CopyCue[] => s.onScreen?.trim() ? [{ start: s.start, end: s.end, text: s.onScreen, layer: "overlay" }] : []);
-    const results: { aspect: string; url: string }[] = [];
+    const overlays = shotOverlays(segments ?? []).map((o): CopyCue => ({ ...o, layer: "overlay" }));
+    const results: { aspect: string; url: string; copy?: CopyCue[] }[] = [];
     for (const a of ASPECTS.filter((row) => aspects.includes(row.aspect))) {
       let w = src.width;
       let h = Math.round((src.width * a.h) / a.w);
@@ -280,11 +294,17 @@ export async function captionVariants(
       w -= w % 2;
       h -= h % 2;
       const ass = path.join(dir, `${a.w}x${a.h}.ass`);
-      await fs.writeFile(ass, assFile(cues, w, h, overlays, compactCopy));
       const out = path.join(dir, `${a.w}x${a.h}.mp4`);
       const spatial = (segments?.length || compactCopy) && a.aspect !== "9:16"
         ? `scale=${w}:${h}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=0x151515`
         : `crop=${w}:${h}`;
+      // Shot-timed copy is placed where the frame is quietest so it never sits on the product (see caption-layout.ts).
+      let layout: ReturnType<typeof layoutCopy> | undefined;
+      if (segments?.length && (cues.length || overlays.length)) {
+        const size = captionSize(w, h, compactCopy);
+        layout = layoutCopy(await energyMap(input, spatial, w, h), w, h, segments, cues, { caption: size, overlay: Math.round(size * 0.8) });
+      }
+      await fs.writeFile(ass, assFile(cues, w, h, overlays, compactCopy, layout));
       const vf = [spatial, ...(cues.length || overlays.length ? [`subtitles=${ass}:fontsdir=${FONTS}`] : [])].join(",");
       const enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", out];
       if (!end) {
@@ -320,7 +340,11 @@ export async function captionVariants(
           { timeout: 180_000 },
         );
       }
-      results.push({ aspect: a.aspect, url: `data:video/mp4;base64,${(await fs.readFile(out)).toString("base64")}` });
+      const copy = layout ? [
+        ...layout.overlays.map((o): CopyCue => ({ start: o.start, end: o.end, text: o.text, layer: "overlay", box: o.box })),
+        ...layout.captions.map((c): CopyCue => ({ start: c.start, end: c.end, text: c.text, layer: "caption", box: c.box })),
+      ] : undefined;
+      results.push({ aspect: a.aspect, url: `data:video/mp4;base64,${(await fs.readFile(out)).toString("base64")}`, copy });
     }
     return results;
   } finally {

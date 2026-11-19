@@ -149,3 +149,24 @@ Each static direction renders `TOURNAMENT_SIZE` takes (default 2, max 4) and kee
   Test: `tests/caption-backing.test.ts` checks pixels around and after the text stay clear.
 - **Step counter jumped 4/7 → 6/8 on the final:** upscale used `shots + 3` but stitch/QA used the draft's `shots + 4`.
   One `jobSteps(tier, shots)` now numbers every step of a job.
+
+## 13. Quality push to 9/10 (2026-11-18 evening)
+
+### 13.1 Captions covered the product (OLIPOP final, 13.5 s)
+
+- **Symptom:** the bottom caption "Get notified at drinkolipop.com." sat across the top of the can, and the same CTA was
+  also drawn as a top overlay, so the line appeared twice.
+- **Cause:** captions always used one fixed lower-third slot (bottom margin 20%), which is exactly where product
+  hero shots put the can. Overlays were drawn even when they repeated the voice line word for word.
+- **Fix:** `src/lib/caption-layout.ts`. For every shot, an edge-energy map of the exported frames (FFmpeg
+  `edgedetect`, 36-column grid, 2 fps) scores each candidate slot inside the platform safe zone (top 8%, bottom 20%
+  stay clear for Reels/TikTok UI). The quietest slot wins, and the default lower third is kept unless another slot is
+  clearly quieter (15%), so captions don't jump on near-ties. Every caption cue in a shot shares one slot, and the
+  overlay and caption never overlap. An overlay that repeats its own voice line is dropped (`duplicateOverlay`).
+- **OCR noise was the same bug.** Export QA read a fixed 58–82% band for captions, so Tesseract got the can label
+  and fruit along with the caption and returned garbage ("35 Cal *¢ Og Added Sugars ee ae"). Each export now
+  returns where every line was placed (`variant.copy`), and `ocrFilter` reads only that box, binarised (white text
+  on its dark box). Use `placedCues(variant, cues)` whenever you OCR an export.
+- **Tests:** `tests/caption-layout.test.ts` covers the OLIPOP can geometry, overlay/caption collisions, the
+  duplicate-overlay rule, the OCR crop, and a pixel test where a detailed "can" under the default slot stays
+  untouched.
