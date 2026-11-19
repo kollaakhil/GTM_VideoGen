@@ -510,7 +510,7 @@ export interface SignalEvent {
   createdAt: string;
 }
 
-export type StageId = "research" | "script" | "shots" | "video" | "audio" | "edit";
+export type StageId = "research" | "brief" | "script" | "shots" | "voice" | "video" | "audio" | "edit" | "final";
 
 export interface StageScore {
   stage: StageId;

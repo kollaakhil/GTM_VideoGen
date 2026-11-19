@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { chatJSON, type Part } from "./ai";
 import { clamp, stageScore, threshold, type Check } from "./stage-policy";
-import type { JudgeCalibration, Research, Shot, ShotQA, StageScore, StudioRun, VoiceOfCustomer } from "./types";
+import type { Brief, JudgeCalibration, QualityFinding, Research, Shot, ShotQA, StageScore, StudioRun, VoiceOfCustomer } from "./types";
 
 /** Judges and rule checks for each stage gate (thresholds and blocking live in stage-policy.ts). */
 
@@ -239,3 +239,99 @@ export const better = <T extends GateResult>(a: T, b: T): T => {
   const best = b.score.score >= a.score.score ? b : a;
   return { ...best, score: { ...best.score, attempts: a.score.attempts + 1 }, cost: a.cost + b.cost };
 };
+
+// ---------- Brief ----------
+
+const wc = (s: string) => (s.match(/\S+/g) ?? []).length;
+const GENERIC = /\b(high[- ]quality|best[- ]in[- ]class|innovative|seamless|game[- ]chang\w*|revolutionary|everyone|anyone|people who|consumers)\b/i;
+
+/** Rule checks on the brief: length limits, a concrete insight and audience, an offer grounded in research. */
+export function briefRules(b: Brief, r: Research): Check[] {
+  const facts = `${r.summary} ${r.valueProps.join(" ")} ${r.angles.join(" ")}`.toLowerCase();
+  const offerWords = (b.offer.toLowerCase().match(/[a-z0-9$%]{3,}/g) ?? []);
+  const grounded = !b.offer.trim() ? 1 : offerWords.filter((w) => facts.includes(w)).length / Math.max(1, offerWords.length);
+  const over = [wc(b.objective) > 20, wc(b.audience) > 15, wc(b.insight) > 25, wc(b.offer) > 15, wc(b.kpi) > 10].filter(Boolean).length;
+  return [
+    { name: "tight", score: clamp(10 - over * 2), note: over ? `${over} fields over their word limit` : "Every field within its limit", by: "rules" },
+    { name: "concrete audience & insight", score: GENERIC.test(`${b.audience} ${b.insight}`) ? 5 : 10, note: GENERIC.test(`${b.audience} ${b.insight}`) ? "Generic wording in the audience or insight" : "", by: "rules" },
+    { name: "offer grounded", score: clamp(4 + grounded * 6), note: `${Math.round(grounded * 100)}% of offer words appear in the research`, by: "rules", weight: 1.5 },
+    { name: "mandatories", score: b.mandatories.length >= 3 && b.mandatories.length <= 5 ? 10 : 6, note: `${b.mandatories.length} mandatories (3–5)`, by: "rules", weight: 0.5 },
+    { name: "measurable KPI", score: /\d|cpa|ctr|roas|cvr|cpc|cpm|%/i.test(b.kpi) ? 10 : 6, note: b.kpi, by: "rules", weight: 0.5 },
+  ];
+}
+
+const Issues = z.object({ issues: z.array(z.object({ severity: z.enum(["minor", "major"]), field: z.string().max(40), note: z.string().max(300) })).max(10) });
+
+/** Judge lists problems (minor/major); the score is computed (10 − 1.5/minor − 4/major), never asked for. */
+export async function judgeBrief(model: string, b: Brief, r: Research, goal: string) {
+  const { data, usage } = await chatJSON<unknown>(model, "You are a strict creative-strategy reviewer. Return only JSON.", `Goal: ${goal.slice(0, 1500)}
+Research (the only facts): ${JSON.stringify({ brand: r.brand, summary: r.summary, audience: r.audience, valueProps: r.valueProps })}
+Brief to review: ${JSON.stringify(b)}
+List every problem: an offer or fact not in the research (major), an insight that is a product claim rather than a buyer truth (major), an audience too broad to cast (minor), objective not tied to the goal (major), vague mandatories or KPI (minor). Return JSON {"issues":[{"severity":"minor"|"major","field":string,"note":string (with the concrete fix)}]}; [] if none.`);
+  const v = Issues.safeParse(data);
+  if (!v.success) return { checks: [] as Check[], notes: ["Brief judge returned an incomplete verdict."], majors: 0, cost: usage.costUsd };
+  return {
+    majors: v.data.issues.filter((i) => i.severity === "major").length,
+    checks: [{ name: "strategy review (judge)", score: continuityScore(v.data.issues), note: `${v.data.issues.length} issue(s)`, by: "judge" as const, weight: 2 }],
+    notes: v.data.issues.map((i) => `${i.field}: ${i.note}`),
+    cost: usage.costUsd,
+  };
+}
+
+export async function briefGate(model: string, b: Brief, r: Research, goal: string, cal: JudgeCalibration | null, attempts = 1) {
+  const checks = briefRules(b, r);
+  let notes: string[] = [];
+  let cost = 0;
+  let majors = 0;
+  try {
+    const j = await judgeBrief(model, b, r, goal);
+    checks.push(...j.checks);
+    notes = j.notes;
+    majors = j.majors;
+    cost = j.cost;
+  } catch (e) {
+    notes = [`Brief judge unavailable: ${(e as Error).message.slice(0, 120)}`];
+  }
+  const fixes = [...notes, ...checks.filter((c) => c.by === "rules" && c.score < 8).map((c) => `${c.name}: ${c.note}`)];
+  const score = stageScore("brief", checks, model, attempts, fixes, cal);
+  // A major strategy problem (ungrounded offer, product claim posing as insight) blocks, whatever the average says.
+  if (majors && score.score >= threshold("brief")) Object.assign(score, { score: threshold("brief") - 0.5, pass: false });
+  return { score, fixes, cost };
+}
+
+// ---------- Voice & music (before any video spend) ----------
+
+/** Each generated line: heard back correctly, how much it had to be sped up to fit its beat, and its level. */
+export type VoiceLine = { heard: boolean; tries: number; tempo?: number; meanDb?: number | null };
+
+export function voiceChecks(lines: VoiceLine[], music: { planned: boolean; ok: boolean }): Check[] {
+  const n = lines.length || 1;
+  const retried = lines.filter((l) => l.tries > 1).length;
+  const stretched = lines.filter((l) => (l.tempo ?? 1) > 1.08);
+  const worstTempo = Math.max(1, ...lines.map((l) => l.tempo ?? 1));
+  const quiet = lines.filter((l) => l.meanDb != null && l.meanDb < -32).length;
+  const checks: Check[] = [
+    { name: "heard back as written", score: clamp(10 * lines.filter((l) => l.heard).length / n - retried), note: retried ? `${retried} line(s) needed a second take` : "Every line transcribed as approved", by: "rules", weight: 2 },
+    { name: "fits its beat", score: clamp(10 - (worstTempo - 1) * 40), note: stretched.length ? `${stretched.length} line(s) sped up (max ×${worstTempo.toFixed(2)}); trim the words` : "Every line fits at natural speed", by: "rules", weight: 1.5 },
+    { name: "level", score: quiet ? 6 : 10, note: quiet ? `${quiet} quiet line(s)` : "", by: "rules", weight: 0.5 },
+  ];
+  if (music.planned) checks.push({ name: "music bed", score: music.ok ? 10 : 2, note: music.ok ? "Music bed made and audible" : "Music missing or silent", by: "rules", weight: 0.5 });
+  return checks;
+}
+
+// ---------- Final QA ----------
+
+/** Rubric for the finished export: craft review plus every hard finding, so one broken area can't hide. */
+export function finalChecks(o: { craft: number; findings: QualityFinding[]; shotScores: number[] }): Check[] {
+  const count = (k: QualityFinding["kind"]) => o.findings.filter((f) => f.kind === k && f.status === "fail").length;
+  const copy = count("copy"), speech = count("speech"), visual = o.findings.filter((f) => f.kind === "visual" && f.status === "fail" && f.shotId).length, tech = count("technical");
+  const shots = o.shotScores.length ? Math.min(...o.shotScores) : 0;
+  return [
+    { name: "creative director", score: o.craft, note: "Filmstrip review of the finished ad", by: "judge", weight: 2 },
+    { name: "weakest shot", score: shots, note: `Shot scores: ${o.shotScores.join(", ")}`, by: "judge", weight: 1.5 },
+    { name: "on-screen copy (OCR)", score: clamp(10 - copy * 2), note: copy ? `${copy} line(s) not read back exactly` : "Every line read back", by: "rules" },
+    { name: "voice vs script (ASR)", score: clamp(10 - speech * 2.5), note: speech ? `${speech} speech mismatch(es)` : "Every line heard as written", by: "rules" },
+    { name: "visual findings", score: clamp(10 - visual * 2), note: visual ? `${visual} shot(s) with failing frames` : "No failing frames", by: "rules" },
+    { name: "technical", score: clamp(10 - tech * 3), note: tech ? `${tech} technical problem(s)` : "Decodes cleanly, no black or frozen frames", by: "rules", weight: 0.5 },
+  ];
+}

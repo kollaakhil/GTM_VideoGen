@@ -43,7 +43,7 @@ describe("stage policy", () => {
   it("blocks HD on a weak take stage unless that stage is overridden", () => {
     const r = run();
     const weak = stageScore("audio", [{ name: "loudness", score: 5, note: "", by: "rules" }], "rules", 1);
-    expect(takeStageBlock(r, "d1", { stages: [weak] })).toMatch(/Sound & voice scored 5\/10 on this take/);
+    expect(takeStageBlock(r, "d1", { stages: [weak] })).toMatch(/Sound mix scored 5\/10 on this take/);
     saveStage(r, weak, "d1");
     overrideStage(r, "audio:d1", "me", "Music is intentionally quiet");
     expect(takeStageBlock(r, "d1", { stages: [weak] })).toBeNull();

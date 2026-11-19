@@ -1,4 +1,5 @@
 import { chatJSON } from "./ai";
+import { GATE_THRESHOLDS } from "./gate-config";
 import type { AdScript, Brief, Direction, Research, ScriptHook, ScriptProofBrief, ScriptScore, StyleDNA, Swipe, VoiceOfCustomer } from "./types";
 import { SCRIPT_RUBRIC } from "./quality-policy";
 import { z } from "zod";
@@ -7,7 +8,8 @@ import { rehearseScript, rehearsalMetrics } from "./script-rehearsal";
 import { styleTemplate } from "./script-styles";
 import { jevScriptGate } from "./jev";
 
-export const SCRIPT_TARGET = 7;
+/** Script gate bar (default 8, NEXT_PUBLIC_GATE_THRESHOLDS="script=…"); the lab repairs until it clears it. */
+export const SCRIPT_TARGET = GATE_THRESHOLDS.script;
 export const WRITER = process.env.SCRIPT_WRITER_MODEL || "google/gemini-4-carbon";
 const JUDGE = process.env.SCRIPT_JUDGE_MODEL || "openai/gpt-6.1-sol";
 export const SCRIPT_WRITERS = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6.1-sol", "openai/gpt-6-astra"] as const;
