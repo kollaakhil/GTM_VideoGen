@@ -29,6 +29,7 @@ describe("Audio Quality Gates", () => {
       
       const femaleVoices = ["Rachel", "Aria", "Sarah", "Laura", "Charlotte", "Jessica", "Lily"];
       expect(femaleVoices).toContain(femaleVoice);
+      expect(femaleVoices).toContain("Rachel"); // sanity check
     });
   });
 
