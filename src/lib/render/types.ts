@@ -2,6 +2,8 @@
  * Render pipeline types. A `ShotRow` is the minimal slice of a shot-sheet row the renderers need; builder A owns the
  * full shot-sheet type, so everything here codes against this small interface and `rowFromShot` adapts today's `Shot`.
  */
+import type { SheetShot } from "../shot-sheet";
+import { dur } from "../shot-sheet";
 import type { Shot } from "../types";
 
 export type RendererId = "blender" | "ai-video" | "remotion";
@@ -82,5 +84,21 @@ export function rowFromShot(s: Shot, extra: Partial<ShotRow> = {}): ShotRow {
   return {
     id: s.id, beat: s.beat, seconds: s.seconds, action: s.expectedVisual || s.visual, camera: s.spec?.cameraMove || s.camera,
     lensMm: lens, lighting: s.spec?.lighting, onScreen: s.onScreen, source: s.source, model: s.model, ...extra,
+  };
+}
+
+const SHEET_ENGINE: Record<SheetShot["engine"], RendererId> = { blender: "blender", ai_video: "ai-video", remotion: "remotion", "3d": "ai-video", world: "ai-video" };
+
+/**
+ * Adapts a shot-sheet row (builder A's `SheetShot`). The sheet's engine only forces the renderer when the operator
+ * locked it; otherwise the router decides. Camera and lens come straight from the row.
+ */
+export function rowFromSheetShot(s: SheetShot, extra: Partial<ShotRow> = {}): ShotRow {
+  return {
+    id: s.id, beat: s.shotType, seconds: dur(s), action: [s.subject, s.action].filter(Boolean).join(": "),
+    camera: `${s.camera.angle}, ${s.camera.move}`, lensMm: s.camera.lensMm, lighting: s.lighting || undefined,
+    onScreen: s.text?.copy, sound: [s.audio.sfx, s.audio.vo].filter(Boolean).join(" | ") || undefined,
+    renderer: s.engineLocked ? SHEET_ENGINE[s.engine] : "auto", graphic: s.engine === "remotion" && !s.engineLocked ? true : undefined,
+    ...extra,
   };
 }

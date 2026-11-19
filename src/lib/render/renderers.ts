@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { generateVideo } from "../ai";
 import { packshotAvailable, renderPackshot } from "../packshot";
+import { renderBlenderScene, sceneAvailable } from "./blender-scene";
 import { motionGraphicsEnabled, renderEndCard } from "../motion-graphics";
 import { RendererUnavailable, type Renderer, type RenderContext, type ShotRow } from "./types";
 
@@ -34,23 +35,46 @@ export function aiVideoRenderer(deps: AiVideoDeps): Renderer {
 }
 
 export interface BlenderDeps {
-  /** Renders a clip or still of the product; defaults to the legacy packshot, PR 2 swaps in the scene templates. */
+  /** Renders a clip of the product; defaults to the scene templates (and the legacy packshot for packshot rows). */
   clip?: (row: ShotRow, ctx: RenderContext) => Promise<string>;
   available?: () => Promise<boolean>;
 }
 
-/** Local Blender: free, and the real label is never redrawn. */
+async function defaultBlenderClip(row: ShotRow, ctx: RenderContext) {
+  if (row.source === "packshot") {
+    if (!(await packshotAvailable())) throw new RendererUnavailable("blender", "packshot scene not available");
+    return renderPackshot(ctx.refs[0], { seconds: row.seconds + 0.2, width: ctx.width, height: ctx.height });
+  }
+  return renderBlenderScene(row, { mode: ctx.mode, width: ctx.width, height: ctx.height, image: ctx.refs[0] });
+}
+
+/** Blender uses every core, and the Mac has 8 GB: parallel shots queue for it (BLENDER_PARALLEL, default 1). */
+export function slots(limit: number) {
+  let free = Math.max(1, limit);
+  const waiting: (() => void)[] = [];
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (free <= 0) await new Promise<void>((r) => waiting.push(r));
+    else free--;
+    try {
+      return await fn();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else free++;
+    }
+  };
+}
+const blenderSlot = slots(Number(process.env.BLENDER_PARALLEL) || 1);
+
+/** Local Blender: free, and the real label is never redrawn. Missing Blender is "unavailable", so the router falls back. */
 export function blenderRenderer(deps: BlenderDeps = {}): Renderer {
   return {
     id: "blender",
-    available: deps.available ?? packshotAvailable,
+    available: deps.available ?? (async () => (await sceneAvailable()) || (await packshotAvailable())),
     estimateUsd: () => 0,
     async render(row, ctx) {
       if (!ctx.refs[0]) throw new RendererUnavailable("blender", "no product photo to unwrap the label from");
-      const url = deps.clip
-        ? await deps.clip(row, ctx)
-        : await renderPackshot(ctx.refs[0], { seconds: row.seconds + 0.2, width: ctx.width, height: ctx.height });
-      return { url, costUsd: 0 };
+      return { url: await blenderSlot(() => (deps.clip ?? defaultBlenderClip)(row, ctx)), costUsd: 0 };
     },
   };
 }
