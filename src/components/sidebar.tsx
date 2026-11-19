@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/studio", label: "Studio", icon: Sparkles },
+  { href: "/studio/classic", label: "Studio (classic)", icon: Sparkles },
   { href: "/library", label: "Library", icon: LayoutGrid },
   { href: "/brands", label: "Brand kits", icon: Palette },
   { href: "/campaigns", label: "Campaigns", icon: Megaphone },

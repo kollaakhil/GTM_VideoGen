@@ -59,7 +59,7 @@ export function Dock({ elapsed, notice }: { elapsed: number; notice: string | nu
       case "research":
         text = "Research didn't finish.";
         buttons = [
-          btn("Start over", () => router.push("/studio"), false),
+          btn("Start over", () => router.push("/studio/classic"), false),
           btn("Retry research", () => act("research", { brandUrl: run.brandUrl, goal: run.goal, format: run.format, referenceUrl: run.referenceUrl ?? "", offer: run.offer ?? undefined, models: run.models, autoBrief: run.autoBrief }), true),
         ];
         break;
@@ -127,7 +127,7 @@ export function Dock({ elapsed, notice }: { elapsed: number; notice: string | nu
         text = "Send passing creatives to the Inbox, or redo the ones below the QA bar.";
         buttons = [
           ...(run.format === "video" ? [] : [btn("Regenerate all", () => act("generate", { runId: run.id, refs: form.refs }), false, <RefreshCw />)]),
-          btn("New run", () => router.push("/studio"), false, <Plus />),
+          btn("New run", () => router.push("/studio/classic"), false, <Plus />),
         ];
     }
   }
