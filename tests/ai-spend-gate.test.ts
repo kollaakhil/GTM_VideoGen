@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { chatJSON, generateImage, generateVideo, musicBed, voiceover } from "@/lib/ai";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { generateProductMesh } from "@/lib/registry/product-3d";
 import { BudgetExceeded, CostMeter, withMeter } from "@/lib/render/cost-meter";
 
 const ok = (cost: number) => new Response(JSON.stringify({ choices: [{ message: { content: "{\"a\":1}", images: [{ image_url: { url: "data:image/png;base64,AA==" } }] } }], usage: { cost } }), { status: 200 });
@@ -48,5 +52,17 @@ describe("every paid call is gated server side before a request leaves", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "k");
     vi.stubGlobal("fetch", vi.fn(async () => ok(0.5)));
     await expect(chatJSON("some/model", "s", "u")).resolves.toMatchObject({ usage: { costUsd: 0.5 } });
+  });
+
+  it("the Product 3D mesh (a direct fal call) is gated too: over the cap it never reaches the provider", async () => {
+    const run = vi.fn(async () => ({}));
+    const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), "mesh-gate-"));
+    const m = new CostMeter({ capUsd: 0.05 });
+    await withMeter(m, async () => {
+      await expect(generateProductMesh({ image: "https://example.com/can.jpg", run: run as never, ready: () => true, cacheDir })).rejects.toBeInstanceOf(BudgetExceeded);
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(m.snapshot().spentUsd).toBe(0);
+    await fs.rm(cacheDir, { recursive: true, force: true });
   });
 });

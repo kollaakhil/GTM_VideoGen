@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { paid } from "../render/cost-meter";
 import { downloadAsDataUrl, falRun } from "../ai";
 import { buildFalBody } from "./fal-knobs";
 import { FAL_KNOBS } from "./fal-snapshot";
@@ -145,7 +146,10 @@ export async function generateProductMesh(o: ProductMeshOptions): Promise<Produc
   Object.assign(body, { image_type: imageType, enable_pbr: pbr });
   if (o.meshResolution !== undefined) body.mesh_resolution = o.meshResolution;
 
-  const out = ((await (o.run ?? falRun)(modelId, body)) ?? {}) as { game_glb?: { url?: string }; mesh_stats?: { num_faces?: number } };
+  const est = getModel(modelId) ? estimateUsd(getModel(modelId)!) : 0;
+  // Server-side spend gate: held against the run's cap before the request leaves (a cache hit above never reaches here).
+  const { out: raw } = await paid(`3d:${modelId}`, est, async () => ({ out: await (o.run ?? falRun)(modelId, body), usage: { costUsd: est } }));
+  const out = (raw ?? {}) as { game_glb?: { url?: string }; mesh_stats?: { num_faces?: number } };
   const url = out.game_glb?.url;
   if (!url) throw new ProductMeshError(`${getModel(modelId)?.label ?? modelId} returned no game_glb mesh`, "no_mesh");
   const buf = await (o.download ?? fetchBuffer)(url);
