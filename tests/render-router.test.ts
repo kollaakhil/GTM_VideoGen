@@ -84,6 +84,52 @@ describe("concrete renderers", () => {
     await expect(r.render(row(), ctx({ refs: [] }))).rejects.toBeInstanceOf(RendererUnavailable);
     expect(await blenderRenderer().available()).toBe(false);
   });
+  it("blender with jobContext uses the queue and tracks the child process", async () => {
+    const { blenderQueue } = await import("@/lib/render/blender-queue");
+    const { ChildProcess } = await import("node:child_process");
+    const { EventEmitter } = await import("node:events");
+    
+    // Create a fake child process
+    const fakeProcess = Object.assign(new EventEmitter(), {
+      pid: 12345,
+      killed: false,
+      kill: vi.fn(() => true),
+      stdin: null,
+      stdout: null,
+      stderr: null,
+    }) as unknown as InstanceType<typeof ChildProcess>;
+    
+    const clip = vi.fn(async (_r, _c, setProcess) => {
+      setProcess(fakeProcess);
+      await new Promise(resolve => setTimeout(resolve, 10)); // Simulate work
+      return "data:video/mp4;base64,Zg==";
+    });
+    
+    const jobContext = { jobId: "test-run-v1", runId: "test-run", versionId: "v1", priority: "normal" as const };
+    const r = blenderRenderer({ clip, available: async () => true, jobContext });
+    
+    // Start render (will enqueue and run)
+    const renderPromise = r.render(row({ id: "shot1" }), ctx());
+    
+    // Check that job appeared in queue
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const jobId = `${jobContext.jobId}-shot1`;
+    const allJobs = blenderQueue.getAll();
+    const job = allJobs.find(j => j.id === jobId);
+    expect(job).toBeDefined();
+    expect(job?.state).toBe("running");
+    expect(job?.process).toBe(fakeProcess);
+    
+    // Complete the render
+    const result = await renderPromise;
+    expect(result.url).toBe("data:video/mp4;base64,Zg==");
+    expect(clip).toHaveBeenCalledTimes(1);
+    
+    // Check job is now done
+    const finalJobs = blenderQueue.getAll();
+    const finalJob = finalJobs.find(j => j.id === jobId);
+    expect(finalJob?.state).toBe("done");
+  });
   it("remotion returns the card as an mp4 data URL", async () => {
     const r = remotionRenderer({ enabled: () => true, card: async (_r, _c, out) => { const fs = await import("node:fs/promises"); await fs.writeFile(out, "mp4"); return out; } });
     const out = await r.render(row({ graphic: true, onScreen: "OLIPOP" }), ctx());
