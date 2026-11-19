@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import type { CopyCue } from "./media-qa";
-import { energyMap, layoutCopy, shotOverlays } from "./caption-layout";
+import { duplicateOverlay, energyMap, layoutCopy, shotOverlays } from "./caption-layout";
 import { detectBeats, snapCuts } from "./beat-sync";
 import { type SfxCue, sfxFile } from "./sfx";
 import { motionGraphicsEnabled, overlayKind, renderEndCard, renderOverlay } from "./motion-graphics";
@@ -116,6 +116,11 @@ const CTA_LABEL: Record<string, string> = { SHOP_NOW: "Shop now", LEARN_MORE: "L
 const endCopy = (end: EndCard) => ({ brand: end.brand, line: end.line, cta: end.cta ? CTA_LABEL[end.cta] ?? end.cta : undefined, footer: end.footer });
 /** End card hold. 1.5 s was too short to read an offer line and a footer badge (script judge, run_8a9c7c9db627). */
 export const END_SECONDS = 2.5;
+/**
+ * The end card's audio: a short bell "button" (C-major chord with harmonics, exponential decay) instead of 2.5 s of
+ * silence after the music is cut. Synthesised with lavfi, so no licence to track (13.28).
+ */
+export const END_STING = "aevalsrc=0.16*(sin(2*PI*523.25*t)+0.9*sin(2*PI*659.25*t)+0.8*sin(2*PI*783.99*t)+0.35*sin(2*PI*1046.5*t)+0.15*sin(2*PI*2093*t))*exp(-2.4*t)|0.16*(sin(2*PI*523.25*t)+0.9*sin(2*PI*659.25*t)+0.8*sin(2*PI*783.99*t)+0.35*sin(2*PI*1046.5*t)+0.15*sin(2*PI*2093*t))*exp(-2.4*t):s=44100:c=stereo";
 const endTs = `0:00:${END_SECONDS.toFixed(2).padStart(5, "0")}`;
 
 export function expectedCopy(segments: { start: number; end: number; text: string; onScreen?: string }[], end: EndCard, duration: number): CopyCue[] {
@@ -167,7 +172,8 @@ function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) 
 /** Caption cues timed to each shot's window instead of spread evenly over the whole video. */
 /**
  * One text layer at a time: while a shot shows its on-screen overlay, the overlay is the text (it carries the message on
- * mute); spoken-word captions run only in shots without one. Both layers together were flagged on every take
+ * mute); spoken-word captions run only in shots without one. An overlay that repeats the VO is not drawn
+ * (`duplicateOverlay`), so that shot keeps its captions (take 4 showed no text at all on the packshot CTA). Both layers together were flagged on every take
  * ("consolidate stacked caption boxes", "subtitle intrudes onto the can"; run_8a9c7c9db627 takes 1–3; 13.26).
  */
 export const ONE_TEXT_LAYER = true;
@@ -175,7 +181,7 @@ export const ONE_TEXT_LAYER = true;
 export function timedCues(segments: { start: number; end: number; text: string; onScreen?: string; speech?: { start: number; end: number } }[], wordsPerCue = 4) {
   // Captions follow the voice, not the shot: spreading a 3.4 s line over a 4 s shot ran the last cue ~0.6 s late and
   // into the next line (caption word-sync 4.9, run_8a9c7c9db627 take 2; 13.25).
-  return segments.filter((s) => !(ONE_TEXT_LAYER && s.onScreen?.trim())).flatMap((s) => {
+  return segments.filter((s) => !(ONE_TEXT_LAYER && s.onScreen?.trim() && !duplicateOverlay(s.onScreen, s.text))).flatMap((s) => {
     const a = s.speech ? Math.max(s.start, s.speech.start) : s.start, b = s.speech ? Math.min(s.end, Math.max(a + 0.3, s.speech.end)) : s.end;
     return captionCues(s.text, b - a, wordsPerCue, true).map((c) => ({ ...c, start: c.start + a, end: c.end + a }));
   });
@@ -365,10 +371,10 @@ export async function captionVariants(
         : null;
       if (mg) {
         const fc = `[0:v]${spatial},setsar=1,fps=30,format=yuva420p[b];[1:v]fps=30,format=yuva420p[o];[b][o]overlay=0:0:format=auto:shortest=1,format=yuv420p[v0];[2:v]scale=${w}:${h},setsar=1,fps=30,format=yuv420p[v1];`
-          + (src.audio ? `[0:a]aresample=44100,aformat=channel_layouts=stereo[a0];[3:a]aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]` : `[v0][v1]concat=n=2:v=1:a=0[v]`);
+          + (src.audio ? `[0:a]aresample=44100,aformat=channel_layouts=stereo[a0];[3:a]aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][am];[am]aformat=sample_fmts=dbl:channel_layouts=stereo,alimiter=limit=0.708:level=disabled[a]` : `[v0][v1]concat=n=2:v=1:a=0[v]`);
         await run(FFMPEG, [
           "-hide_banner", "-loglevel", "error", "-i", input, "-i", mg.overlay, "-i", mg.card,
-          ...(src.audio ? ["-f", "lavfi", "-t", String(END_SECONDS), "-i", "anullsrc=r=44100:cl=stereo"] : []),
+          ...(src.audio ? ["-f", "lavfi", "-t", String(END_SECONDS), "-i", END_STING] : []),
           "-filter_complex", fc, "-map", "[v]", ...(src.audio ? ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"] : ["-an"]), ...enc,
         ], { timeout: 240_000 });
       } else if (!end) {
@@ -390,14 +396,14 @@ export async function captionVariants(
         const logoChain = logoFile ? `[v1raw];[${logoIdx}:v]scale=${Math.round(w * 0.42)}:-1[lg];[v1raw][lg]overlay=(W-w)/2:H*0.16:shortest=1` : "";
         const card = `subtitles=${endAss}:fontsdir=${fontsDir},setsar=1,fps=30,format=yuv420p${logoChain}`;
         const fc = src.audio
-          ? `[0:v]${vf},setsar=1,fps=30,format=yuv420p[v0];[1:v]${card}[v1];[0:a]aresample=44100,aformat=channel_layouts=stereo[a0];[2:a]aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]`
+          ? `[0:v]${vf},setsar=1,fps=30,format=yuv420p[v0];[1:v]${card}[v1];[0:a]aresample=44100,aformat=channel_layouts=stereo[a0];[2:a]aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][am];[am]aformat=sample_fmts=dbl:channel_layouts=stereo,alimiter=limit=0.708:level=disabled[a]`
           : `[0:v]${vf},setsar=1,fps=30,format=yuv420p[v0];[1:v]${card}[v1];[v0][v1]concat=n=2:v=1:a=0[v]`;
         await run(
           FFMPEG,
           [
             "-hide_banner", "-loglevel", "error", "-i", input,
             "-f", "lavfi", "-i", `color=c=0x${bg.slice(1)}:s=${w}x${h}:d=${END_SECONDS}:r=30`,
-            ...(src.audio ? ["-f", "lavfi", "-t", String(END_SECONDS), "-i", "anullsrc=r=44100:cl=stereo"] : []),
+            ...(src.audio ? ["-f", "lavfi", "-t", String(END_SECONDS), "-i", END_STING] : []),
             ...(logoFile ? ["-loop", "1", "-t", String(END_SECONDS), "-i", logoFile] : []),
             "-filter_complex", fc, "-map", "[v]", ...(src.audio ? ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"] : ["-an"]), ...enc,
           ],

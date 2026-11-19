@@ -476,3 +476,21 @@ Take 3 (take_6d74ffe04cfd): all four clips 10/10, but video 4.6 / audio 7.6 / fi
 - "Can base cropped at left in s0" (scene judge). **Real but clip-level**; clip QA passed it at 10. Left for now (needs a paid
   re-render); noted as the next visual fix if scores stall.
 No judge or threshold was changed in this round.
+
+### 13.27 Judge miscalibration: the packshot marked down for being a render
+- Evidence: the same Blender renderer scored 9/10 (13.19) and then 4/10 after a framing-only change, with every check "minor" and
+  the note "depicts a digital render of the can packshot rather than a live-action product". The shot design says "Studio
+  packshot… CGI"; the judge was scoring the medium, not the quality, and a 4 forces the draft into a 1-candidate test draft.
+- Fix (judge, not threshold): for `source === "packshot"` the frame-review prompt says it is a deliberate studio CGI packshot and
+  to judge label fidelity, geometry, lighting and framing. Pass marks and checklist are unchanged.
+
+### 13.28 Take 4 (7/10): peak got worse, packshot lost its CTA text
+- Peak +1.2 dBFS on the export (stitch output had the 13.26 limiter): the export re-decodes and re-encodes AAC and hard-cuts
+  from the mix into 2.5 s of digital silence for the end card. **Real.** The export now runs `alimiter` at 0.708 (-3 dBFS sample
+  peak, margin for AAC overshoot) after the end-card concat, and the end card gets a synthesised bell button (`END_STING`)
+  instead of silence (Akhil's "proper end-sting/button" ask).
+- Packshot (scene score 1, "missing required overlay 'Shop at drinkolipop.com'"). **Real, my 13.26 regression:** an overlay that
+  repeats the VO is dropped by `duplicateOverlay`, and ONE_TEXT_LAYER then also dropped that shot's captions, leaving no text. The
+  caption filter now uses the same predicate.
+- Keyframe 4/10 "render rather than live-action" → 13.27 judge fix.
+- Still open: s0 can exits the left edge in the late pour (scene 7/10; clip-level, needs a paid re-render).
