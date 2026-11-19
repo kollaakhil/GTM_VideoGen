@@ -10,6 +10,7 @@ import { getPresetsWithCosts, createCustomStack, normalizeStack } from "@/lib/ve
 import { ModelPickerPanel, type Picks } from "@/components/model-picker";
 import { STAGES } from "@/lib/registry";
 import { usd, secs } from "./api";
+import { estimateSheetVersion } from "@/lib/sheet/version-estimate";
 
 interface VersionsPanelProps {
   run: SheetRun;
@@ -24,14 +25,18 @@ export function VersionsPanel({ run, busy, onStartVersions, onPickWinner }: Vers
   const [customPicks, setCustomPicks] = useState<Picks>({});
   const [customLabel, setCustomLabel] = useState("");
 
+  // Estimates come from this sheet (AI-video seconds at each stack's price + shot checks), the same number the server enforces.
+  const sheetCost = (st: VersionStack) => (run.sheet ? estimateSheetVersion(run.sheet, st).usd : st.estimatedCostUsd);
   const presets = useMemo(
-    () => getPresetsWithCosts({ shots: run.sheet?.shots.length, targetSec: run.sheet?.targetSec }),
-    [run.sheet?.shots.length, run.sheet?.targetSec]
+    () => getPresetsWithCosts({ shots: run.sheet?.shots.length, targetSec: run.sheet?.targetSec }).map((p) => ({ ...p, estimatedCostUsd: sheetCost(p) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [run.sheet]
   );
 
   const totalCost = useMemo(
-    () => selectedStacks.reduce((sum, s) => sum + s.estimatedCostUsd, 0),
-    [selectedStacks]
+    () => selectedStacks.reduce((sum, s) => sum + sheetCost(s), 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedStacks, run.sheet]
   );
 
   const overBudget = totalCost > run.cost.capUsd - run.cost.spentUsd;
@@ -246,7 +251,7 @@ export function VersionsPanel({ run, busy, onStartVersions, onPickWinner }: Vers
                   )}
 
                   <div className="mb-3 flex flex-wrap gap-3 text-xs text-zinc-400">
-                    <span className="font-mono">{usd(version.usd)}</span>
+                    <span className="font-mono">{usd(version.usd)}{version.estimate ? ` (est. ${usd(version.estimate.usd)})` : ""}</span>
                     <span>{secs(version.ms)}</span>
                     {version.score != null && (
                       <span className="font-semibold text-emerald-400">Score: {version.score.toFixed(1)}/10</span>
@@ -268,7 +273,11 @@ export function VersionsPanel({ run, busy, onStartVersions, onPickWinner }: Vers
                     </details>
                   )}
 
-                  {isDone && (
+                  {run.picks?.video === version.id ? (
+                    <div className="flex items-center justify-center gap-1 rounded border border-emerald-500/40 py-1.5 text-xs font-medium text-emerald-400" data-testid={`winner-${version.id}`}>
+                      <Trophy className="size-4" /> Winner: Final renders this version
+                    </div>
+                  ) : isDone && (
                     <Button
                       size="sm"
                       onClick={() => onPickWinner(version.id)}

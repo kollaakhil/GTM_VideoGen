@@ -13,6 +13,7 @@ import ffmpegPath from "ffmpeg-static";
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { RenderDeps } from "./render";
+import { DEFAULT_VIDEO_MODEL, videoPricePerSec } from "./version-estimate";
 import type { SheetRun } from "./run-types";
 
 const run = promisify(execFile);
@@ -37,18 +38,38 @@ async function frameAt(clip: string, at: number): Promise<string> {
   }
 }
 
+/**
+ * A free drone bed for the sheet's "bed" line (foley-first keeps action sounds on top): a sub sine at the pitch the
+ * line names (default 45 Hz) with an octave and a low brown-noise rumble, slow swell, fade in and a 2 s fade out.
+ */
+export async function droneBed(description: string, seconds: number): Promise<string> {
+  const hz = Math.min(120, Math.max(30, Number(description.match(/(\d{2,3})\s*hz/i)?.[1] ?? 45)));
+  const d = Math.max(2, seconds + 0.5).toFixed(2);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sheet-bed-"));
+  try {
+    const out = path.join(dir, "bed.wav");
+    const graph = `sine=f=${hz}:d=${d}:r=44100[a];sine=f=${hz * 2}:d=${d}:r=44100,volume=0.35[b];anoisesrc=d=${d}:c=brown:a=0.25:r=44100,lowpass=f=180[c];[a][b][c]amix=inputs=3:normalize=0,tremolo=f=0.25:d=0.25,afade=t=in:d=1,afade=t=out:st=${(Number(d) - 2).toFixed(2)}:d=2,volume=0.8`;
+    await run(ffmpegPath || "ffmpeg", ["-hide_banner", "-loglevel", "error", "-filter_complex", graph, "-ac", "2", "-y", out], { timeout: 60_000 });
+    return `data:audio/wav;base64,${(await fs.readFile(out)).toString("base64")}`;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
 /** The real thing: renderers, the cheap vision check, FFmpeg stitching and the strict review tools. */
+export const DEFAULT_SHEET_VIDEO_MODEL = () => process.env.SHEET_VIDEO_MODEL || DEFAULT_VIDEO_MODEL;
+
 export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>): RenderDeps {
   const sheetModel = (r: SheetRun) => r.input.visionModel;
   // Resolve models from stack or fallback to env/defaults
-  const videoModel = stackModels?.video || process.env.SHEET_VIDEO_MODEL || "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video";
+  const videoModel = (stackModels?.video && stackModels.video !== "auto" ? stackModels.video : "") || process.env.SHEET_VIDEO_MODEL || "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video";
   const qaModel = stackModels?.qa || process.env.SHEET_VISION_MODEL || "google/gemini-3.8-flash";
   const voiceModel = stackModels?.voice; // undefined means use voiceover's VOICE_MODEL default
   const asset3dModel = stackModels?.asset3d; // undefined means use generateProductMesh's auto
   
   return {
     renderers: { 
-      "ai-video": aiVideoRenderer({ defaultModel: videoModel }), 
+      "ai-video": aiVideoRenderer({ defaultModel: videoModel, pricePerSec: videoPricePerSec }), 
       blender: blenderRenderer(), 
       remotion: remotionRenderer() 
     },
@@ -70,8 +91,9 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>)
     stitch: async (clips, a) => {
       const clipData = await Promise.all(clips.map((c) => mediaDataUrl(c)));
       const voices = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
-      return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, beatSync: false, sfx: a.sfx, duck: a.duck, bedGain: a.bedGain });
+      return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, height: a.height, beatSync: false, sfx: a.sfx, duck: a.duck, bedGain: a.bedGain });
     },
+    bed: (description, seconds) => droneBed(description, seconds),
     voice: async (line) => {
       const v = await voiceover(line, "Rachel", undefined, voiceModel);
       return { url: v.url, usd: v.usage.costUsd };

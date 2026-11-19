@@ -44,12 +44,15 @@ export class CostMeter {
   private held = 0;
   private ledger: LedgerEntry[] = [];
 
-  constructor(o: { capUsd?: number; spentUsd?: number; onChange?: (s: MeterSnapshot) => void } = {}) {
+  constructor(o: { capUsd?: number; spentUsd?: number; onChange?: (s: MeterSnapshot) => void; onCharge?: (e: LedgerEntry) => void } = {}) {
     this.capUsd = o.capUsd ?? DEFAULT_CAP_USD;
     this.spent = o.spentUsd ?? 0;
     this.onChange = o.onChange;
+    this.onCharge = o.onCharge;
   }
   private onChange?: (s: MeterSnapshot) => void;
+  /** Called once per settled (or recorded) call, so the run and the operator's ledger see every paid call. */
+  private onCharge?: (e: LedgerEntry) => void;
 
   setCap(usd: number) {
     if (!Number.isFinite(usd) || usd <= 0) throw new Error("The cap must be a positive amount in USD.");
@@ -71,7 +74,9 @@ export class CostMeter {
         close();
         const usd = Math.max(0, Number.isFinite(actual) ? actual : 0);
         this.spent = round(this.spent + usd);
-        this.ledger.push({ label, usd: round(usd), estimated: round(est), at: new Date().toISOString() });
+        const e = { label, usd: round(usd), estimated: round(est), at: new Date().toISOString() };
+        this.ledger.push(e);
+        if (e.usd > 0) this.onCharge?.(e);
         this.emit();
       },
       release: () => { if (open) { close(); this.emit(); } },
@@ -94,7 +99,9 @@ export class CostMeter {
   /** Spend recorded outside `guard` (legacy `run.costUsd += x` sites). Never throws. */
   record(label: string, usd: number) {
     this.spent = round(this.spent + Math.max(0, usd));
-    this.ledger.push({ label, usd: round(usd), estimated: round(usd), at: new Date().toISOString() });
+    const e = { label, usd: round(usd), estimated: round(usd), at: new Date().toISOString() };
+    this.ledger.push(e);
+    if (e.usd > 0) this.onCharge?.(e);
     this.emit();
   }
 
