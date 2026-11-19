@@ -280,11 +280,12 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
         let sfxPath: string;
         if ("url" in c && c.url) {
           // Generated SFX with a data URL
-          sfxPath = await toFile(dir, `gen-sfx${j}.wav`, c.url);
-        } else if ("kind" in c) {
+          sfxPath = await toFile(dir, `gen-sfx${j}.wav`, c.url as string);
+        } else if ("kind" in c && typeof c.kind === "string" && !c.kind.includes("generated")) {
           // Lavfi-synthesized SFX
-          if (!sfxFiles.has(c.kind)) sfxFiles.set(c.kind, await sfxFile(c.kind, dir));
-          sfxPath = sfxFiles.get(c.kind)!;
+          const kind = c.kind as import("@/lib/sfx").SfxKind;
+          if (!sfxFiles.has(kind)) sfxFiles.set(kind, await sfxFile(kind, dir));
+          sfxPath = sfxFiles.get(kind)!;
         } else {
           continue;
         }

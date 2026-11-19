@@ -74,10 +74,10 @@ function soundPrompt(sheet: ShotSheet, brief: Brief | null, patternName?: string
     `VO: ${s.audio.vo ?? "(none)"}. Sheet SFX: ${s.audio.sfx ?? "(none)"}. Transition: ${s.transition}.`
   ).join("\n");
 
-  const brandInfo = brief ? `Brand: ${brief.brand}. Tone: ${brief.tone}. Audience: ${brief.audience}.` : "";
+  const brandInfo = brief ? `Objective: ${brief.objective}. Audience: ${brief.audience}. Insight: ${brief.insight}.` : "";
   const patternInfo = patternName ? `Story pattern: ${patternName}.` : "";
 
-  return `You are a sound designer. From this ad's shot sheet, brand and story pattern, design unique audio that matches the content.
+  return `You are a sound designer. From this ad's shot sheet, product and story pattern, design unique audio that matches the content.
 
 ${brandInfo}
 ${patternInfo}

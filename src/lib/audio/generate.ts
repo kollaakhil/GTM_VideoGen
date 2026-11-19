@@ -28,7 +28,7 @@ const MODEL_PRICING: Record<string, { pricePerSec?: number; pricePerClip?: numbe
 
 export interface GeneratedSfx {
   url: string;
-  usd: number;
+  usage: { costUsd: number };
 }
 
 /**
@@ -67,7 +67,7 @@ export async function generateVideoToAudioSfx(
         }
 
         const url = await downloadAsDataUrl(result.audio.url);
-        return { url, usd: cost };
+        return { url, usage: { costUsd: cost } };
       } else {
         // Text-to-audio SFX
         return generateTextToAudioSfx(textPrompt, dur, modelId);
@@ -106,7 +106,7 @@ export async function generateTextToAudioSfx(
     }
 
     const url = await downloadAsDataUrl(result.audio.url);
-    return { url, usd: cost };
+    return { url, usage: { costUsd: cost } };
   });
 }
 

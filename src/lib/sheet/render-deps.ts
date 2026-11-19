@@ -96,7 +96,8 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
     stitch: async (clips, a) => {
       const clipData = await Promise.all(clips.map((c) => mediaDataUrl(c)));
       const voices = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
-      return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, height: a.height, beatSync: false, sfx: a.sfx, duck: a.duck, bedGain: a.bedGain });
+      // Cast sfx to any to allow both SfxCue and GeneratedSfxCue
+      return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, height: a.height, beatSync: false, sfx: a.sfx as any, duck: a.duck, bedGain: a.bedGain });
     },
     bed: async (description, seconds) => {
       // Only generate a drone if the bed description explicitly requests one
@@ -113,7 +114,7 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
     soundDesign: async (run) => {
       if (!run.sheet || !run.brief) return null;
       const textModel = run.input.visionModel; // Use the run's text model
-      const pattern = run.pattern?.name;
+      const pattern = (run as { pattern?: { name?: string } }).pattern?.name;
       const { plan, usd } = await designSound(run.sheet, run.brief, textModel, pattern);
       return plan;
     },
@@ -121,7 +122,8 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
     generateSfx: async (videoUrl, textPrompt, durationSeconds) => {
       try {
         // Use the SFX model from the stack
-        return await generateVideoToAudioSfx(videoUrl, textPrompt, durationSeconds, sfxModel);
+        const result = await generateVideoToAudioSfx(videoUrl, textPrompt, durationSeconds, sfxModel);
+        return { url: result.url, usd: result.usage.costUsd };
       } catch (e) {
         // Fallback: return null on failure, caller will skip this SFX
         console.warn(`[audio] SFX generation failed: ${(e as Error).message}`);
