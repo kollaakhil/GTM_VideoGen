@@ -441,3 +441,10 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
   `verifySpeech` (per line + whole script, in addition to `sameSpeech`), `captionSync` (brand param), and the whole-mix WER.
 - Not loosening: ordinary words are never rewritten, so "soda" for "cola" or a wrong brand still fails; the thresholds
   (WER ≤ 10%, caption coverage) are unchanged. Homophone spellings ("dred", "gilt") still count against WER.
+### 13.24 Label drift on a moving can (s0 crack-and-pour, 2/10 ×3 takes)
+- Failure: hook shot "hand cracks the can and immediately pours" with a slow push-in: all three Seedance candidates scored 2, 2, 1
+  ("label drifts from approved yeti art to generic script during the pour", "top rim cropped"). The can tilted in depth, so the
+  model had to invent the unseen side of the label, and the push-in cropped the rim.
+- Fix: the shot-planning prompt now requires in-plane moves for labelled products (tip sideways, label square to camera, no
+  rotation in depth), a locked-off camera for that shot and headroom; "product rotating away from camera" joined the default
+  negative. For run_8a9c7c9db627 s0 the spec was edited the same way by hand (cameraMove locked off, motionBeats in-plane tip).
