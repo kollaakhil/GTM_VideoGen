@@ -515,46 +515,69 @@ Return {"beats":[{"visual":"...","vo":"...","onScreen":"..."}]}.`);
   let cost = draft.usage.costUsd + first.cost;
   const score = first.script.score;
   if (score.overall >= SCRIPT_TARGET && !first.script.checks.length && !score.unsupported.length && !score.proofProblems?.length) return { script: first.script, cost };
-  // One repair round that addresses every fix note at once: proof problems, unsupported claims, the judge's blocker and
+  // Repair rounds that address every fix note at once: proof problems, unsupported claims, the judge's notes and
   // deterministic checks. The old loop rewrote only `blockerBeat`, so global problems (no beat) and problems in a beat
-  // other than the judge's single note were never fixed, and re-scores kept finding the same proof problems.
-  const fixes = scriptFixNotes(first.script);
-  if (!fixes.length) return { script: first.script, cost };
+  // other than the judge's single note were never fixed. A second round runs only when the first one helped but the
+  // script is still under target: run_8a9c7c9db627 went 5 → 0 blockers at 7/10 and the judge's next note (the opening
+  // overlay) was never addressed.
+  let cur = first.script;
+  let repair: AdScript["repair"] | undefined;
+  for (let round = 1; round <= MAX_REPAIRS; round++) {
+    const fixes = scriptFixNotes(cur);
+    if (!fixes.length) break;
+    const r = await repairOnce(cur, fixes, round, c, writer, judge, windows);
+    cost += r.cost;
+    repair = r.repair;
+    if (!r.kept) break;
+    cur = r.script as typeof cur;
+    if (cur.score!.overall >= SCRIPT_TARGET && !blockerCount(cur)) break;
+  }
+  return { script: { ...cur, ...(repair ? { repair: { ...repair, before: score.overall } } : {}) }, cost };
+}
+
+const MAX_REPAIRS = 2;
+
+async function repairOnce(prev: AdScript, fixes: string[], round: number, c: ScriptCtx, writer: string, judge: string | undefined, windows: { seconds: number; role?: string }[]) {
+  const score = prev.score!;
   const single = (score.blockerBeat ?? 0) - 1;
-  const only = fixes.length === 1 && single >= 1 && single < initial.beats.length ? single : -1;
-  // Beat 1's spoken line and overlay are the operator's chosen opening and stay locked, but its *visual* may be
-  // repaired: problems in the opening shot ("unmarked can", "crams three actions into 3s") were unfixable before.
-  const hookVisualFix = only < 0 && fixes.some((f) => /\b(beat 1|opening|first beat|hook)\b/i.test(f));
-  const targets = only >= 1 ? [only] : initial.beats.map((_, j) => j).filter((j) => j >= 1);
+  const only = fixes.length === 1 && single >= 1 && single < prev.beats.length ? single : -1;
+  // Beat 1's spoken line is the operator's chosen opening and stays locked. Its visual and its overlay may be repaired
+  // when a note targets the opening: "unmarked can" in the shot, or an overlay that is vague on mute.
+  const openingFix = fixes.some((f) => /\b(beat 1|opening|first beat|hook)\b/i.test(f));
+  const hookVisualFix = only < 0 && openingFix;
+  const targets = only >= 1 ? [only] : prev.beats.map((_, j) => j).filter((j) => j >= 1);
   const record = (kept: boolean, reason: string, after?: number): AdScript["repair"] => ({ fixes, kept, reason, before: score.overall, after });
+  let cost = 0;
   try {
     const revision = await chatJSON<unknown>(writer, "Repair the script beats listed without adding facts or changing the locked opening line.", `${ctxBlock(c)}
-Script: ${JSON.stringify(initial.beats)}
-${hookVisualFix ? `Beat 1's "vo" and "onScreen" are locked; you may rewrite only its "visual". Return it as "openingVisual".\n` : "The opening (beat 1) is locked. "}Rewrite ${targets.length === 1 ? `only beat ${targets[0] + 1}` : `beats ${targets.map((j) => j + 1).join(", ")}`}, keeping each beat's seconds. Fix every one of these:
+Script: ${JSON.stringify(prev.beats)}
+${hookVisualFix ? `Beat 1's "vo" is locked; you may rewrite its "visual" (return "openingVisual") and its "onScreen" overlay (return "openingOnScreen", at most 7 words).\n` : "The opening (beat 1) is locked. "}Rewrite ${targets.length === 1 ? `only beat ${targets[0] + 1}` : `beats ${targets.map((j) => j + 1).join(", ")}`}, keeping each beat's seconds. Fix every one of these:
 ${fixes.map((f) => `- ${f}`).join("\n")}
 Story roles: ${targets.map((j) => `beat ${j + 1}: ${windows[j - 1]?.role ?? "CTA"}`).join("; ")}
 ${SCRIPT_RULES(c.lengthSec)}
-Return {${hookVisualFix ? `"openingVisual":"...",` : ""}"beats":[{"visual":"...","vo":"...","onScreen":"..."}]} with exactly ${targets.length} beat(s), in order.`);
+Return {${hookVisualFix ? `"openingVisual":"...","openingOnScreen":"...",` : ""}"beats":[{"visual":"...","vo":"...","onScreen":"..."}]} with exactly ${targets.length} beat(s), in order.`);
     cost += revision.usage.costUsd;
     const Loose = z.object({ visual: z.string().trim().min(1).transform((t) => t.slice(0, 800)), vo: z.string().trim().transform((t) => t.slice(0, 300)), onScreen: z.string().trim().transform((t) => t.slice(0, 160)) });
-    const parsed = z.object({ openingVisual: z.string().trim().min(1).optional(), beats: z.array(Loose) }).safeParse(revision.data);
+    const parsed = z.object({ openingVisual: z.string().trim().min(1).optional(), openingOnScreen: z.string().trim().optional(), beats: z.array(Loose) }).safeParse(revision.data);
     if (!parsed.success || parsed.data.beats.length !== targets.length) {
       console.warn("[script] repair returned an unusable shape", parsed.success ? `${parsed.data.beats.length} beats` : parsed.error.message.slice(0, 200));
-      return { script: { ...first.script, repair: record(false, "The writer's repair came back in the wrong shape; kept the graded draft.") }, cost };
+      return { kept: false, script: prev, cost, repair: record(false, "The writer's repair came back in the wrong shape; kept the graded draft.") };
     }
     const out = parsed.data.beats;
     const openingVisual = hookVisualFix ? parsed.data.openingVisual?.slice(0, 800) : undefined;
-    const revised = initial.beats.map((b, j) => targets.includes(j) ? { ...b, ...out[targets.indexOf(j)] } : j === 0 && openingVisual ? { ...b, visual: openingVisual } : b);
-    const next: AdScript = { ...initial, beats: revised, rounds: 1, ...(openingVisual ? { hook: { ...initial.hook, visual: openingVisual } } : {}) };
-    const second = await reviewScript(next, c, writer, judge, { prior: first.script });
+    const openingOnScreen = hookVisualFix && parsed.data.openingOnScreen && parsed.data.openingOnScreen.split(/\s+/).length <= 7 ? parsed.data.openingOnScreen.slice(0, 160) : undefined;
+    const revised = prev.beats.map((b, j) => targets.includes(j) ? { ...b, ...out[targets.indexOf(j)] }
+      : j === 0 ? { ...b, ...(openingVisual ? { visual: openingVisual } : {}), ...(openingOnScreen ? { onScreen: openingOnScreen } : {}) } : b);
+    const next: AdScript = { ...prev, beats: revised, rounds: round, hook: { ...prev.hook, ...(openingVisual ? { visual: openingVisual } : {}), ...(openingOnScreen ? { onScreen: openingOnScreen } : {}) } };
+    const second = await reviewScript(next, c, writer, judge, { prior: prev });
     cost += second.cost;
-    const kept = betterScript(second.script, first.script);
-    const reason = kept ? `Repair kept: ${blockerCount(first.script)} → ${blockerCount(second.script)} blockers.` : `Repair discarded: ${blockerCount(second.script)} blockers and ${second.script.score.overall}/10 vs ${blockerCount(first.script)} and ${score.overall}/10 before.`;
+    const kept = betterScript(second.script, prev);
+    const reason = kept ? `Repair ${round} kept: ${blockerCount(prev)} → ${blockerCount(second.script)} blockers, ${score.overall} → ${second.script.score!.overall}/10.` : `Repair ${round} discarded: ${blockerCount(second.script)} blockers and ${second.script.score!.overall}/10 vs ${blockerCount(prev)} and ${score.overall}/10 before.`;
     console.log(`[script] ${reason}`);
-    return kept ? { script: { ...second.script, repair: record(true, reason, second.script.score.overall) }, cost } : { script: { ...first.script, repair: record(false, reason, second.script.score.overall) }, cost };
+    return kept ? { kept, script: second.script, cost, repair: record(true, reason, second.script.score!.overall) } : { kept, script: prev, cost, repair: record(false, reason, second.script.score!.overall) };
   } catch (e) {
     console.warn("[script] repair failed", (e as Error).message.slice(0, 200));
-    return { script: { ...first.script, repair: record(false, `Repair failed: ${(e as Error).message.slice(0, 120)}`) }, cost };
+    return { kept: false, script: prev, cost, repair: record(false, `Repair failed: ${(e as Error).message.slice(0, 120)}`) };
   }
 }
 
