@@ -580,3 +580,13 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
 - Spec edit: whole can in frame with ≥15% side margin, locked-off camera, tumbler right of centre. Keyframe redraw scored 10/10 and the can is centred.
 - Re-render (draft23, take_23a70da5396d): s0 clip QA 0 (label typography corrupted, tab warped during the tilt-pour). Video 3.4, final 6, overall 7. Worse than take_d90c705571d3 (video 6.4, final 8.1).
 - Conclusion: framing was not the binding failure. Seedance 480p can't hold label text through a tilt-pour (1 clean clip out of ~6 s0 renders). The s0 shot was restored from db.bak-s0-frame.json. Next lever: restage s0 so the label never rotates (pour from an off-frame can, or a static can beside the pour), or use i2v with a stronger model for labelled motion shots.
+
+### 13.34 Label lock + continuity locks, enforced in code (feat/label-lock)
+- Failure: the labelled can tilting or rotating was the weakest scene in 6 of 8 takes (Seedance re-draws the label mid-move; ~1 clean tilt-pour out of ~6). The framing lock in 13.33 didn't help.
+- Fix (src/lib/shot-spec.ts, `enforceShotRules`, applied in `planShots`, so it doesn't depend on the planner obeying):
+  - `applyLabelLock`: in every labelled, generated shot, beats that tilt/tip/lift/rotate the product (or pour from an in-frame can) become "can upright and still beside the glass; cola pours from a can held above, out of frame". Tilt/pour sentences are removed from the visual. A pour shot gets a locked-off camera. The negative prompt names can tilting and label turning. The packshot is exempt.
+  - `labelLockGaps` is part of `specGaps`, so the shot-plan gate flags any plan that slips through.
+  - `continuityLocks`: the hero shot's glass ("ice-filled short tumbler") and an upright, square-to-camera label become `spec.continuity` on every generated shot; `specBlock` prints them into keyframe and video prompts.
+  - Keyframes for labelled shots use the free true-colour Blender packshot still as reference 1 (real photo as 2) via `keyframeRefs`, so the i2v start frame carries a clean, front-on label.
+  - Edit judge: `judgeContinuity` now also lists glass type/size/shape changes and label-orientation changes as major errors (`CONTINUITY_LOCK_ASK`). This is a stricter rubric, not a looser one.
+- Tests: tests/label-lock.test.ts.

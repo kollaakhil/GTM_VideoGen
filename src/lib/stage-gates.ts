@@ -169,9 +169,12 @@ const Continuity = z.object({ errors: list(z.object({ severity: z.enum(["minor",
  * The judge lists errors and the score is computed from them: asked for a number, flash judges anchored on 7
  * even while writing "perfect continuity" (see PLAYBOOK §11).
  */
+/** Locks the edit judge checks on top of product/cast/set (13.34): one glass, one label orientation. */
+export const CONTINUITY_LOCK_ASK = "the drinking glass changes type, size or shape between shots (major), or the product label's orientation changes, e.g. upright in one shot and tilted or turned away in another (major).";
+
 export async function judgeContinuity(model: string, frames: { at: number; url: string }[]) {
   const parts: Part[] = [
-    { type: "text", text: `These are consecutive shots of one video ad, one frame per shot. List every continuity error between shots: the product changes (shape, color, label), a person changes (face, hair, clothes), the set, light or color grade jumps, or screen direction breaks. Different framing, angle or distance between shots is normal editing, not an error. Judge continuity only, not production value or realism. "major" = the product or a person changes, or the set is clearly different; "minor" = a slip most viewers wouldn't notice. Return JSON {"errors":[{"severity":"minor"|"major","note":string}]} with an empty list when there are none.` },
+    { type: "text", text: `These are consecutive shots of one video ad, one frame per shot. List every continuity error between shots: the product changes (shape, color, label), a person changes (face, hair, clothes), the set, light or color grade jumps, or screen direction breaks. Also check the continuity locks: ${CONTINUITY_LOCK_ASK} Different framing, angle or distance between shots is normal editing, not an error. Judge continuity only, not production value or realism. "major" = the product or a person changes, or the set is clearly different; "minor" = a slip most viewers wouldn't notice. Return JSON {"errors":[{"severity":"minor"|"major","note":string}]} with an empty list when there are none.` },
     ...frames.flatMap((f, i): Part[] => [{ type: "text", text: `Shot ${i + 1} (${f.at.toFixed(2)}s)` }, { type: "image_url", image_url: { url: f.url } }]),
   ];
   const { data, usage } = await chatJSON<unknown>(model, "You are a continuity supervisor. Return only JSON.", parts);

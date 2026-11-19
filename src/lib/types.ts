@@ -256,6 +256,8 @@ export interface ShotSpec {
   motionBeats: string[];
   /** Shot-specific things to avoid, on top of DEFAULT_NEGATIVE. */
   negative: string[];
+  /** Cross-shot locks set in code (glass size/shape, label orientation), see enforceShotRules. */
+  continuity?: string[];
 }
 
 export interface Shot {
