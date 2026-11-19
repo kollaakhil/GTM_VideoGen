@@ -379,3 +379,8 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 - **Failure:** the first draft of run_8a9c7c9db627 stopped before any video spend. The voice pre-check heard "Keep the cola swapping all a pop." for "Keep the cola, swap in OLIPOP.", twice. The TTS was fine. The pre-check called whisper without the brand vocabulary that final QA already uses (13.2).
 - **Fix:** `transcribeLine` takes the `asrVocabulary(line, brand)` prompt.
 - The cost estimate now counts real renders: a packshot is 1 render, a paid shot is N candidates.
+
+### 13.17 TTS brand pronunciation
+
+- **Failure:** with the whisper hint in place (13.15), the pre-check still heard "Keep the Cola. Swap in Olapop." ElevenLabs really does say "Olapop" for all-caps "OLIPOP".
+- **Fix:** `speakable()` sends all-caps brand words to TTS as one capitalised word ("Olipop"). Known acronyms stay as written. The script, captions and QA text are unchanged.

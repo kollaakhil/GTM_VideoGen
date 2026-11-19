@@ -545,8 +545,17 @@ export async function transcribe(audio: string): Promise<{ text: string; chunks:
   return { text: String(out.text ?? "").trim(), chunks, usage: { costUsd: 0.002 } };
 }
 
+/**
+ * Text as the TTS should read it. All-caps brand words are read as mangled acronyms or guesses ("OLIPOP" came back
+ * "Olapop" twice, run_8a9c7c9db627), so they go to the voice as one capitalised word. Known acronyms stay as they are.
+ */
+const ACRONYMS = new Set(["USA", "NASA", "FAQ", "SALE", "FREE", "CEO", "DIY", "ASAP", "HTML", "SPF"]);
+export function speakable(text: string) {
+  return text.replace(/\b[A-Z]{4,}\b/g, (w) => (ACRONYMS.has(w) ? w : w[0] + w.slice(1).toLowerCase()));
+}
+
 export async function voiceover(text: string, voice = "Rachel"): Promise<{ url: string; usage: Usage }> {
-  const out = await falRun<{ audio?: { url: string } }>("fal-ai/elevenlabs/tts/turbo-v2.5", { text, voice: VOICES.includes(voice) ? voice : "Rachel" });
+  const out = await falRun<{ audio?: { url: string } }>("fal-ai/elevenlabs/tts/turbo-v2.5", { text: speakable(text), voice: VOICES.includes(voice) ? voice : "Rachel" });
   if (!out.audio?.url) throw new Error("Voiceover returned no audio");
   return { url: await downloadAsDataUrl(out.audio.url), usage: { costUsd: (text.length / 1000) * 0.05 } };
 }
