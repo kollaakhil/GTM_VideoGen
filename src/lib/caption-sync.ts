@@ -1,4 +1,5 @@
 import type { QualityFinding } from "./types";
+import { brandTerms, canonTokens, canonWords } from "./speech-canon";
 
 /**
  * Word-by-word check of what the narrator says against what the captions show, using whisper word timings.
@@ -35,10 +36,13 @@ export function alignWords(expected: string[], heard: string[]) {
 export type CueSync = { start: number; end: number; text: string; coverage: number; missing: string[]; extra: string[] };
 
 /** Per caption cue, the share of its words heard while it is on screen (± slack seconds). */
-export function captionSync(cues: CaptionCue[], words: TimedWord[], slack = 0.35): CueSync[] {
+export function captionSync(cues: CaptionCue[], words: TimedWord[], slack = 0.35, brand = ""): CueSync[] {
+  // ASR spellings of the brand ("ollie pop", "drinkaliepop") are mapped to the script's terms first (13.23).
+  const terms = brandTerms(cues.map((c) => c.text).join(" "), brand);
   return cues.filter((c) => c.text.trim()).map((c) => {
     const exp = tokens(c.text);
-    const heard = tokens(words.filter((w) => w.start >= c.start - slack && w.start < c.end + slack).map((w) => w.word).join(" "));
+    const raw = words.filter((w) => w.start >= c.start - slack && w.start < c.end + slack).map((w) => w.word).join(" ");
+    const heard = tokens(terms.length ? canonTokens(canonWords(raw), terms).map((t) => t.word).join(" ") : raw);
     const a = alignWords(exp, heard);
     return { start: c.start, end: c.end, text: c.text, coverage: exp.length ? a.matched / exp.length : 1, missing: a.missing, extra: a.extra };
   });
