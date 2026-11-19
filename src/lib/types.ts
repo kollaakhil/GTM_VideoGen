@@ -355,6 +355,8 @@ export interface AdScript {
   score?: ScriptScore;
   checks?: string[];
   rounds?: number;
+  /** What the one automatic repair round did (shown in the script gate). */
+  repair?: { fixes: string[]; kept: boolean; reason: string; before?: number; after?: number };
   review?: { rubric: string; writer: string; judge: string; targetSeconds: number };
   proofBrief?: ScriptProofBrief;
   /** Script style id chosen at the Script checkpoint (absent = auto). */
