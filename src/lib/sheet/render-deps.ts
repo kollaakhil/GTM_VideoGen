@@ -1,5 +1,5 @@
 import path from "node:path";
-import { chatJSON, voiceover } from "@/lib/ai";
+import { chatJSON, voiceover, musicBed } from "@/lib/ai";
 import { qa } from "@/lib/pipeline";
 import { checkExport, type CopyCue } from "@/lib/media-qa";
 import { loudness } from "@/lib/qa-tools";
@@ -7,6 +7,8 @@ import { fileCache, type CacheStore } from "@/lib/render/cache";
 import { aiVideoRenderer, blenderRenderer, remotionRenderer } from "@/lib/render/renderers";
 import { mediaDataUrl, storeMedia } from "@/lib/store";
 import { stitchShots } from "@/lib/video-post";
+import { designSound } from "@/lib/audio/sound-design";
+import { generateVideoToAudioSfx, selectVoice } from "@/lib/audio/generate";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
@@ -66,6 +68,8 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
   const qaModel = stackModels?.qa || process.env.SHEET_VISION_MODEL || "google/gemini-3.8-flash";
   const voiceModel = stackModels?.voice; // undefined means use voiceover's VOICE_MODEL default
   const asset3dModel = stackModels?.asset3d; // undefined means use generateProductMesh's auto
+  const sfxModel = stackModels?.sfx || "fal-ai/mmaudio-v2";
+  const musicModel = stackModels?.music || "elevenlabs/music/v2.5";
   
   return {
     renderers: { 
@@ -94,10 +98,39 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
       const voices = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
       return stitchShots(clipData, { voices, music: a.music, shotSeconds: a.shotSeconds, width: a.width, height: a.height, beatSync: false, sfx: a.sfx, duck: a.duck, bedGain: a.bedGain });
     },
-    bed: (description, seconds) => droneBed(description, seconds),
-    voice: async (line) => {
-      const v = await voiceover(line, "Rachel", undefined, voiceModel);
+    bed: async (description, seconds) => {
+      // Only generate a drone if the bed description explicitly requests one
+      if (!description || description.trim() === "") return null;
+      const hasDrone = /drone|synth|pad|hum|ambient/i.test(description);
+      if (!hasDrone) return null;
+      return droneBed(description, seconds);
+    },
+    voice: async (line, run, voiceName) => {
+      const voice = voiceName || "Rachel";
+      const v = await voiceover(line, voice, undefined, voiceModel);
       return { url: v.url, usd: v.usage.costUsd };
+    },
+    soundDesign: async (run) => {
+      if (!run.sheet || !run.brief) return null;
+      const textModel = run.input.visionModel; // Use the run's text model
+      const pattern = run.pattern?.name;
+      const { plan, usd } = await designSound(run.sheet, run.brief, textModel, pattern);
+      return plan;
+    },
+    selectVoice: (persona, brand) => selectVoice(persona, brand),
+    generateSfx: async (videoUrl, textPrompt, durationSeconds) => {
+      try {
+        // Use the SFX model from the stack
+        return await generateVideoToAudioSfx(videoUrl, textPrompt, durationSeconds, sfxModel);
+      } catch (e) {
+        // Fallback: return null on failure, caller will skip this SFX
+        console.warn(`[audio] SFX generation failed: ${(e as Error).message}`);
+        throw e;
+      }
+    },
+    generateMusic: async (prompt, seconds) => {
+      const result = await musicBed(prompt, seconds, musicModel);
+      return result.url;
     },
     final: (video, r, stitched) => ({
       review: async () => {

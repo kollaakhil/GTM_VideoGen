@@ -210,7 +210,9 @@ export const CATALOG: ModelEntry[] = [
 
   // ---------- Sound effects ----------
   E("local-synth:foley", "Local synthesised foley (free)", "local-synth", ["sfx"], "synth", { openSource: true }, FREE, null, { source: "local" }, { note: "FFmpeg-synthesised whoosh, pop, fizz, pour and clink from src/lib/sfx.ts; the default SFX source, no API." }),
-  falAudio("elevenlabs/sound-effects/v3", "ElevenLabs Sound Effects v3 (fal)", "sfx", "eleven-sfx", 0.02, "per_clip", { max: 30 }),
+  falAudio("fal-ai/mmaudio-v2", "MMAudio V2 (fal, video-to-audio)", "sfx", "generic-audio", 0.001, "per_sec", { max: 10 }),
+  falAudio("sonilo/v1.1/text-to-sound-effects", "Sonilo v1.1 SFX (fal, text-to-audio)", "sfx", "generic-audio", 0.0018, "per_sec", { max: 30 }),
+  falAudio("elevenlabs/sound-effects/v3", "ElevenLabs Sound Effects v3 (fal)", "sfx", "eleven-sfx", 0.002, "per_sec", { max: 30 }),
   falAudio("fal-ai/stable-audio-3/small/sfx/text-to-audio", "Stable Audio 3 Small SFX (fal, open)", "sfx", "stable-audio", 0.02, "per_clip", { max: 30, open: true, hfRepo: "stabilityai/stable-audio-3-medium" }),
   falAudio("cassetteai/sound-effects-generator", "CassetteAI SFX (fal)", "sfx", "generic-audio", 0.02, "per_clip", { max: 30 }),
   falAudio("mirelo-ai/sfx2.0/text-to-audio", "Mirelo SFX 2.0 (fal)", "sfx", "generic-audio", 0.02, "per_clip", { max: 30 }),

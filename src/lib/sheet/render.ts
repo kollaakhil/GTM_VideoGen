@@ -34,11 +34,19 @@ export interface RenderDeps {
   /** Persists a data URL and returns a stable URL. */
   store(data: string, key: string): Promise<string>;
   shotCheck: ShotCheckDeps;
-  stitch(clips: string[], audio: { voices: { url: string; start: number }[]; sfx: SfxCue[]; duck: boolean; bedGain: number; music: string | null; shotSeconds: number[]; width: number; height?: number }): Promise<Stitched>;
+  stitch(clips: string[], audio: { voices: { url: string; start: number }[]; sfx: (SfxCue | { kind: string; shot: number; offset: number; gain: number; url: string })[]; duck: boolean; bedGain: number; music: string | null; shotSeconds: number[]; width: number; height?: number }): Promise<Stitched>;
   /** A free synthesised bed (drone) for the sheet's "bed" line, as a data URL; null for none. */
   bed?(description: string, seconds: number): Promise<string | null>;
   /** Voiceover for a line (vo mode only). Gated by the meter like every paid call. */
-  voice?(line: string, run: SheetRun): Promise<{ url: string; usd: number }>;
+  voice?(line: string, run: SheetRun, voiceName?: string): Promise<{ url: string; usd: number }>;
+  /** Sound design: per-video audio plan from the sheet, brief and pattern. */
+  soundDesign?(run: SheetRun): Promise<{ sfx: { description: string; shot: number; offset: number; gain: number }[]; music: { type: "none" } | { type: "cue"; prompt: string }; voice: { gender: string; age: string; energy: string; pace: string } } | null>;
+  /** Select voice from persona and brand. */
+  selectVoice?(persona: { gender: string; age: string; energy: string; pace: string }, brand: string): string;
+  /** Generate SFX from video clip (video-to-audio). */
+  generateSfx?(videoUrl: string, textPrompt: string, durationSeconds: number): Promise<{ url: string; usd: number }>;
+  /** Generate music from text prompt. */
+  generateMusic?(prompt: string, seconds: number): Promise<string>;
   /** Job context for queue management (optional, used when rendering through the queue). */
   jobContext?: { runId: string; versionId: string; jobId: string };
   final: (video: string, run: SheetRun, stitched: Stitched) => FinalDeps;
@@ -186,20 +194,83 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
     addTiming(run, "shot checks", Date.now() - t1);
   }
 
-  // Audio: the plan decides who carries the sound; stitchShots mixes it.
+  // Audio: sound design, then generation and mixing.
   const t2 = Date.now();
+  
+  // Step 1: Design sound (cheap text LLM call)
+  const soundDesign = await (async () => {
+    if (deps.soundDesign) {
+      try {
+        return await withMeter(meter, () => deps.soundDesign!(run));
+      } catch (e) {
+        console.warn(`[audio] Sound design failed: ${(e as Error).message}, using fallback`);
+        return null;
+      }
+    }
+    return null;
+  })();
+  
+  // Fallback to old behavior if sound design unavailable
   const plan = planAudio(run.input.audioMode, audioShots({ ...sheet, shots }));
   const voices: { url: string; start: number }[] = [];
+  
+  // Step 2: Generate voiceovers with selected voice
   if (plan.voice && deps.voice) {
+    const voiceName = soundDesign?.voice ? deps.selectVoice?.(soundDesign.voice, run.brief?.brand ?? "") : undefined;
     for (const [i, s] of shots.entries()) {
       if (!s.audio.vo) continue;
-      const line = await withMeter(meter, () => deps.voice!(s.audio.vo!, run));
+      const line = await withMeter(meter, () => deps.voice!(s.audio.vo!, run, voiceName));
       voices.push({ url: line.url, start: sheet.shots.slice(0, i).reduce((a, x) => a + dur(x), 0) + 0.15 });
     }
   }
+  
+  // Step 3: Generate SFX from video clips (video-to-audio)
+  const generatedSfx: { url: string; shot: number; offset: number; gain: number }[] = [];
+  if (soundDesign?.sfx && deps.generateSfx) {
+    for (const cue of soundDesign.sfx) {
+      if (cue.shot >= v.shots.length) continue;
+      const shotRender = v.shots[cue.shot];
+      if (!shotRender.url) continue;
+      try {
+        const result = await withMeter(meter, () => 
+          deps.generateSfx!(shotRender.url!, cue.description, Math.min(5, cue.offset + 3))
+        );
+        generatedSfx.push({ url: result.url, shot: cue.shot, offset: cue.offset, gain: cue.gain });
+      } catch (e) {
+        console.warn(`[audio] SFX generation failed for shot ${cue.shot}: ${(e as Error).message}`);
+      }
+    }
+  }
+  
+  // Step 4: Generate music from sound design plan
   const total = shots.reduce((a, x) => a + dur(x), 0);
-  const music = sheet.bed?.trim() && deps.bed ? await deps.bed(sheet.bed, total) : null;
-  const stitched = await deps.stitch(v.shots.map((r) => r.url!), { voices, sfx: plan.sfx, duck: plan.duck, bedGain: plan.bedGain, music, shotSeconds: sheet.shots.map(dur), width, height });
+  let music: string | null = null;
+  if (soundDesign?.music.type === "cue" && deps.generateMusic) {
+    try {
+      music = await withMeter(meter, () => deps.generateMusic!(soundDesign.music.prompt, total));
+    } catch (e) {
+      console.warn(`[audio] Music generation failed: ${(e as Error).message}`);
+    }
+  } else if (!soundDesign && sheet.bed?.trim() && deps.bed) {
+    // Fallback: use old drone bed if no sound design
+    music = await deps.bed(sheet.bed, total);
+  }
+  
+  // Convert generated SFX to the format stitchShots expects
+  const sfxCues = generatedSfx.length > 0 
+    ? generatedSfx.map(g => ({ kind: "whoosh" as const, shot: g.shot, offset: g.offset, gain: g.gain, url: g.url }))
+    : plan.sfx;
+  
+  const stitched = await deps.stitch(v.shots.map((r) => r.url!), { 
+    voices, 
+    sfx: sfxCues, 
+    duck: plan.duck, 
+    bedGain: plan.bedGain, 
+    music, 
+    shotSeconds: sheet.shots.map(dur), 
+    width, 
+    height 
+  });
   v.videoUrl = await deps.store(stitched.url, `${run.id}/${v.id}-cut`);
   addTiming(run, "edit and mix", Date.now() - t2, `audio: ${plan.mode}${plan.unmapped.length ? `, no sound for ${plan.unmapped.length} action(s)` : ""}`);
   Object.assign(v, { status: "done", ms: Date.now() - t0, error: null });
