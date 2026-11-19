@@ -91,9 +91,16 @@ export function ruleIssues(sheet: ShotSheet, rules: StyleRule[]): GateIssue[] {
         if (pics.length && quick / pics.length < 0.4) bad(`only ${quick} of ${pics.length} shots are 2 s or shorter; action beats should cut in 1–2 s.`);
         break;
       }
-      case "reveal_holds":
-        if (!pics.some((s) => dur(s) >= 3 && /wide|reveal|establish|full/i.test(`${s.shotType} ${s.framing}`))) bad("no wide reveal holds for 3 s or more.");
+      case "reveal_holds": {
+        // Parse threshold from rule text (e.g., "four full seconds" → 4)
+        const thresholdMatch = r.text.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:full\s+)?(?:second|s\b)/i);
+        const wordToNumber: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+        const threshold = thresholdMatch ? (wordToNumber[thresholdMatch[1].toLowerCase()] ?? Number(thresholdMatch[1])) : 3;
+        // Accept wide, reveal, establishing, full, long shot, extreme wide, WS, EWS
+        const isWideShot = (s: SheetShot) => /wide|reveal|establish|full|long\s+shot|extreme\s+wide|\bWS\b|\bEWS\b/i.test(`${s.shotType} ${s.framing}`);
+        if (!pics.some((s) => dur(s) >= threshold && isWideShot(s))) bad(`no wide reveal holds for ${threshold} s or more.`);
         break;
+      }
       case "macro_open": {
         const s = sheet.shots[0];
         if (s && !/macro|extreme close|ecu|detail/i.test(`${s.shotType} ${s.framing}`)) bad(`shot 1 is "${s.shotType}", not an extreme macro.`, 1);

@@ -218,6 +218,8 @@ function BriefStep({ run, busy, onSave, onNext }: { run: SheetRun; busy: boolean
 
 function SheetStep({ run, draft, setDraft, busy, onSave, onRewrite, onNext }: { run: SheetRun; draft: ShotSheet; setDraft: (s: ShotSheet) => void; busy: boolean; onSave: () => void; onRewrite: () => void; onNext: () => void }) {
   const dirty = JSON.stringify(draft) !== JSON.stringify(run.sheet);
+  const [fixingGaps, setFixingGaps] = useState(false);
+  const [fixResult, setFixResult] = useState<{ changes: string[]; fixed: number; remaining: number } | undefined>();
   const byShot = useMemo(() => {
     const m: Record<number, string[]> = {};
     for (const i of run.gate?.issues ?? []) if (i.shot && i.level === "error") (m[i.shot] ??= []).push(i.text);
@@ -225,6 +227,31 @@ function SheetStep({ run, draft, setDraft, busy, onSave, onRewrite, onNext }: { 
   }, [run.gate]);
   const errors = run.gate?.issues.filter((i) => i.level === "error") ?? [];
   const warns = run.gate?.issues.filter((i) => i.level === "warn") ?? [];
+  
+  const hasActiveRender = run.versions.some((v) => v.status === "rendering" || v.status === "queued");
+  
+  const handleFixGaps = async () => {
+    setFixingGaps(true);
+    setFixResult(undefined);
+    try {
+      const j = await call({ action: "fix_gaps", runId: run.id });
+      if (j.error) {
+        setFixResult(undefined);
+      } else {
+        const changes = Array.isArray(j.changes) ? j.changes as string[] : [];
+        const fixed = typeof j.fixed === "number" ? j.fixed : 0;
+        const remaining = typeof j.remaining === "number" ? j.remaining : 0;
+        setFixResult({ changes, fixed, remaining });
+        // Reload the run to get the updated sheet and gate
+        window.location.reload();
+      }
+    } catch (e) {
+      console.error("Fix gaps failed:", e);
+    } finally {
+      setFixingGaps(false);
+    }
+  };
+  
   return (
     <div className="space-y-4" data-testid="sheet-step">
       <div className="flex flex-wrap items-center gap-3">
@@ -232,6 +259,19 @@ function SheetStep({ run, draft, setDraft, busy, onSave, onRewrite, onNext }: { 
           {run.gate?.pass ? <Check className="size-4" /> : <AlertTriangle className="size-4" />}
           Sheet check: {run.gate?.pass ? "passed" : `${errors.length} to fix`}{dirty && " (save to re-check)"}
         </div>
+        {!run.gate?.pass && errors.length > 0 && !dirty && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={fixingGaps || hasActiveRender}
+            onClick={handleFixGaps}
+            className="border-amber-700 text-amber-300 hover:bg-amber-950/40"
+            title={hasActiveRender ? "Cannot fix gaps while a render is running" : "Let the LLM make minimal edits to satisfy gate rules"}
+            data-testid="fix-gaps"
+          >
+            {fixingGaps ? <><Loader2 className="size-3 animate-spin" /> Fixing…</> : "Fix the gaps"}
+          </Button>
+        )}
         <span className="text-xs text-zinc-500">v{draft.version} · {draft.shots.length} shots · {draft.targetSec}s · {draft.aspect} · {draft.audioMode === "foley" ? "foley-first" : "voiceover"}</span>
         <div className="ml-auto flex gap-2">
           <Button variant="outline" disabled={busy} onClick={onRewrite}>Rewrite sheet</Button>
@@ -239,6 +279,16 @@ function SheetStep({ run, draft, setDraft, busy, onSave, onRewrite, onNext }: { 
           <Button disabled={busy || dirty || !run.gate?.pass} onClick={onNext}>Previews <ChevronRight /></Button>
         </div>
       </div>
+      {fixResult && (
+        <div className="rounded-lg border border-blue-900 bg-blue-950/40 p-3 text-sm text-blue-200">
+          <p className="font-semibold">Fixed {fixResult.fixed} issue(s){fixResult.remaining > 0 && `, ${fixResult.remaining} remaining`}</p>
+          {fixResult.changes.length > 0 && (
+            <ul className="mt-2 space-y-1 text-xs">
+              {fixResult.changes.map((c, i) => <li key={i}>• {c}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
       {run.script && <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer text-zinc-300">Script</summary><pre className="mt-2 whitespace-pre-wrap text-xs text-zinc-400">{run.script}</pre></details>}
       <SheetTable sheet={draft} onChange={setDraft} issues={byShot} />
       <div className="grid gap-3 md:grid-cols-3">

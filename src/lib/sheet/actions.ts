@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { loadRun, saveProgress } from "./jobs";
+import { loadRun, saveProgress, meterFor } from "./jobs";
 import { validateStack, normalizeStack, type VersionStack } from "@/lib/versions";
 import type { Version } from "./run-types";
 import { renderAction } from "./render-actions";
@@ -8,6 +8,9 @@ import { startSheetJob } from "./jobs";
 import { estimateSheetVersion, runPreviews, type RenderDeps } from "./render";
 import { DEFAULT_SHEET_VIDEO_MODEL, defaultRenderDeps } from "./render-deps";
 import { blenderQueue } from "@/lib/render/blender-queue";
+import { writeSheet, type Chat } from "./writer";
+import { sheetGate } from "./gate";
+import { factBase } from "./flow";
 
 const VersionStackSchema = z.object({
   id: z.string(),
@@ -132,6 +135,108 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
       }
     });
     return NextResponse.json({ run });
+  }
+
+  if (a === "fix_gaps") {
+    const body = raw as { runId?: string };
+    if (!body.runId) return NextResponse.json({ error: "runId required" }, { status: 400 });
+    
+    const run = await loadRun(body.runId);
+    if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    if (run.createdBy !== user) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (!run.sheet) return NextResponse.json({ error: "No sheet to fix" }, { status: 400 });
+    if (!run.gate) return NextResponse.json({ error: "No gate result" }, { status: 400 });
+    if (run.gate.pass) return NextResponse.json({ error: "Sheet already passes the gate" }, { status: 400 });
+    
+    // Check if a render is running
+    const hasActiveRender = run.versions.some((v) => v.status === "rendering" || v.status === "queued");
+    if (hasActiveRender) return NextResponse.json({ error: "Cannot fix gaps while a render is running" }, { status: 409 });
+    
+    const meter = meterFor(run);
+    const chat: Chat = async <T,>(system: string, userPrompt: string) => {
+      const TEXT_ESTIMATE = 0.02;
+      const result = await meter.run({ stage: "fix_gaps", what: "fix gate failures", model: run.input.textModel, estimate: TEXT_ESTIMATE }, async () => {
+        const { chatJSON } = await import("@/lib/ai");
+        const { data, usage } = await chatJSON<T>(run.input.textModel, system, userPrompt);
+        return { value: { data, usd: usage.costUsd }, usd: usage.costUsd };
+      });
+      return result;
+    };
+    
+    const input = {
+      brand: run.input.brand,
+      goal: run.input.goal,
+      offer: run.input.offer,
+      facts: run.input.facts,
+      brief: run.brief,
+      research: run.research,
+      rules: run.rules,
+      targetSec: run.input.targetSec,
+      aspect: run.input.aspect,
+      audioMode: run.input.audioMode,
+      hasPhotos: run.input.photos.length > 0,
+    };
+    
+    const oldSheet = run.sheet;
+    const oldVersion = oldSheet.version;
+    let currentSheet = oldSheet;
+    let currentGate = run.gate;
+    const errors = currentGate.issues.filter((i) => i.level === "error");
+    
+    const changes: string[] = [];
+    let bestSheet = currentSheet;
+    let bestGate = currentGate;
+    const MAX_ATTEMPTS = 2;
+    
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS && !currentGate.pass; attempt++) {
+      try {
+        const fixes = currentGate.issues.filter((i) => i.level === "error");
+        const result = await writeSheet(input, chat, fixes, oldVersion + attempt);
+        currentSheet = result.sheet;
+        currentGate = sheetGate(currentSheet, { facts: factBase(run), rules: run.rules });
+        
+        // Track what changed
+        for (let i = 0; i < Math.min(currentSheet.shots.length, oldSheet.shots.length); i++) {
+          const oldShot = oldSheet.shots[i];
+          const newShot = currentSheet.shots[i];
+          const durationChanged = Math.abs((newShot.end - newShot.start) - (oldShot.end - oldShot.start)) > 0.1;
+          const framingChanged = oldShot.shotType !== newShot.shotType || oldShot.framing !== newShot.framing;
+          
+          if (durationChanged || framingChanged) {
+            const oldDur = (oldShot.end - oldShot.start).toFixed(1);
+            const newDur = (newShot.end - newShot.start).toFixed(1);
+            const parts: string[] = [];
+            if (durationChanged) parts.push(`${oldDur}s → ${newDur}s`);
+            if (framingChanged) parts.push(`framing now ${newShot.shotType}`);
+            changes.push(`Shot ${i + 1}: ${parts.join(", ")}`);
+          }
+        }
+        
+        // Keep best attempt (fewest errors, or same errors with higher implied quality)
+        const currentErrors = currentGate.issues.filter((i) => i.level === "error").length;
+        const bestErrors = bestGate.issues.filter((i) => i.level === "error").length;
+        if (currentErrors < bestErrors || currentGate.pass) {
+          bestSheet = currentSheet;
+          bestGate = currentGate;
+        }
+      } catch (e) {
+        console.error(`[fix_gaps] Attempt ${attempt} failed:`, e);
+        break;
+      }
+    }
+    
+    // Save the best result as a new revision
+    run.sheet = bestSheet;
+    run.gate = bestGate;
+    await saveProgress(run);
+    
+    const remainingErrors = bestGate.issues.filter((i) => i.level === "error");
+    return NextResponse.json({
+      run,
+      changes,
+      fixed: errors.length - remainingErrors.length,
+      remaining: remainingErrors.length,
+    });
   }
 
   if (a === "pick_winner") {
