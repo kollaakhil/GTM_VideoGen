@@ -328,3 +328,13 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 
 - **Failure:** after 13.9, the script judge's only note was that all four beats use the full 15 s, "leaving no time to read the sale terms". That was true: the end card was held for 1.5 s, and it now carries brand, offer line, CTA and footer.
 - **Fix:** `END_SECONDS` went from 1.5 to 2.5. The writer and judge are told the card is held for 2.5 s after the beats, outside the beat runtime by design. The rubric is unchanged.
+
+### 13.12 Script repair: second round and the opening overlay
+
+- **Failure:** in run_8a9c7c9db627, three script runs in a row went 5–6 blockers → 0 in the single repair round, then stopped at 7/10.
+  - Each time the judge's remaining note was new, for example "'Classic soda's holiday catch' leaves the buyer tension vague on mute". No round was left to address it.
+  - The opening overlay was locked, so it was also unfixable.
+- **Fix:**
+  - Up to 2 repair rounds. The second runs only if the first was kept and the script is still under target.
+  - When a note targets the opening, the repair may rewrite beat 1's visual and its overlay (at most 7 words). The spoken hook stays locked because it is the operator's pick.
+  - `repair.before` is the first draft's score, and `after` is the final one.
