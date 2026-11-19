@@ -1631,14 +1631,5 @@ export const FAL_KNOBS: Record<string, FalKnobs> = {
    "min": 1,
    "max": 30
   }
- },
- "elevenlabs/sound-effects/v3": {
-  "text": "prompt",
-  "dur": {
-   "key": "duration_seconds",
-   "as": "int",
-   "min": 0.5,
-   "max": 22
-  }
  }
 };
