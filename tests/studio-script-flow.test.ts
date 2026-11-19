@@ -85,7 +85,8 @@ describe("Studio script story flow (no providers)", () => {
         id: scriptId(prompt), overall: 9.6, scores: scoreFields, notes: ["Promise a specific plan."],
         blockerBeat: 2, proofProblems: ["Missing a clear plan."], unsupported: [],
       }] }))
-      .mockResolvedValueOnce(result({ ...reference.beats[1], vo: "I won't buy it. I'll rent the kit." }))
+      // Two fix notes (proof problem + blocker) → one repair round over every unlocked beat.
+      .mockResolvedValueOnce(result({ beats: [{ ...reference.beats[1], vo: "I won't buy it. I'll rent the kit." }, ...reference.beats.slice(2)].map(({ visual, vo, onScreen }) => ({ visual, vo, onScreen })) }))
       .mockImplementationOnce((_m, _s, prompt: string) => result({ scores: [{
         id: scriptId(prompt), overall: 5, scores: scoreFields, notes: [], proofProblems: [], unsupported: [],
       }] }));
@@ -304,6 +305,8 @@ describe("Studio script story flow (no providers)", () => {
     const response = await send("render_video", { tier: "final" });
     expect(response.status).toBe(400);
     expect((await response.json()).error).toContain("No payoff is shown.");
-    expect(mocks.chatJSON).toHaveBeenCalledTimes(2);
+    // Draft + review + one repair attempt (a global proof problem now gets a repair round; here it fails and the
+    // graded draft is kept). No render call.
+    expect(mocks.chatJSON).toHaveBeenCalledTimes(3);
   });
 });

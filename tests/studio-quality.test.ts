@@ -126,7 +126,8 @@ describe("Studio no-spend route checks", () => {
     ] }, usage: { costUsd: 0 } });
     const shot = { visual: "Open a box", expectedVisual: "Open the blue box", beat: "hook" } as Shot;
     const review = await reviewShotFrames("vision", [{ at: 0.1, url: "fixture-a" }, { at: 1.5, url: "fixture-b" }], shot, ["fixture-product"]);
-    expect(review.qa).toMatchObject({ score: 10, match: "fail", frames: [{ at: 0.1, match: "pass" }, { at: 1.5, match: "fail", repair: "source" }] });
+    // The judge's own 10 is kept for the record only; a failing frame is a major finding, so the shot caps at 6.
+    expect(review.qa).toMatchObject({ score: 6, judgeScore: 10, match: "fail", frames: [{ at: 0.1, match: "pass" }, { at: 1.5, match: "fail", repair: "source" }] });
     expect(JSON.stringify(state.vision.mock.calls[0])).toContain("fixture-product");
   });
 

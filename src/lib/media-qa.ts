@@ -172,11 +172,22 @@ async function audioWindow(file: string, out: string, start?: number, end?: numb
   await run(ffmpeg, ["-v", "error", ...(start !== undefined ? ["-ss", sec(start)] : []), "-i", file, ...(end !== undefined && start !== undefined ? ["-t", sec(end - start)] : []), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-y", out], args);
 }
 
-async function recognize(wav: string, transcribe: (audio: string) => Promise<{ text: string; usage: { costUsd: number } }>) {
+/**
+ * Spelling hints for speech-to-text: coined brand words and domains only ("OLIPOP", "drinkolipop.com"), never the
+ * whole expected line, so ordinary mis-speech still shows up. Without it whisper heard "drinkolipop.com" as
+ * "drinkallapop.com" / "drinkoleopop.com" on clean TTS and export QA failed the CTA every time.
+ */
+export function asrVocabulary(text: string, brand = "") {
+  const domains = text.match(/\b[a-z0-9-]+\.(?:com|co|io|ai|net|org|shop|store)\b/gi) ?? [];
+  const coined = text.match(/\b(?:[A-Z]{3,}[A-Za-z]*|[A-Z][a-z]+[A-Z][A-Za-z]*)\b/g) ?? [];
+  return [...new Set([...(brand.trim() ? [brand.trim()] : []), ...coined, ...domains])].slice(0, 8).join(", ");
+}
+
+async function recognize(wav: string, transcribe: (audio: string) => Promise<{ text: string; usage: { costUsd: number } }>, hint = "") {
   const model = localModel();
   if (!model) return transcribe(`data:audio/wav;base64,${(await fs.readFile(wav)).toString("base64")}`);
   const output = wav + "-asr";
-  await run(process.env.WHISPER_BIN || "whisper-cli", ["-m", model, "-f", wav, "-l", process.env.WHISPER_LANG || "en", "-nt", "-otxt", "-of", output], args);
+  await run(process.env.WHISPER_BIN || "whisper-cli", ["-m", model, "-f", wav, "-l", process.env.WHISPER_LANG || "en", "-nt", "-np", ...(hint ? ["--prompt", hint] : []), "-otxt", "-of", output], args);
   return { text: (await fs.readFile(output + ".txt", "utf8")).trim(), usage: { costUsd: 0 } };
 }
 
@@ -190,7 +201,8 @@ export function transcribeLine(media: string, transcribe: Transcriber) {
   });
 }
 
-export async function verifySpeech(media: string, windows: SpeechWindow[], transcribe: Transcriber) {
+/** `vocabulary`: brand names to hint (e.g. "OLIPOP"); domains and coined words in each line are added automatically. */
+export async function verifySpeech(media: string, windows: SpeechWindow[], transcribe: Transcriber, vocabulary = "") {
   return withMedia(media, async (file, dir) => {
     const findings: QualityFinding[] = [];
     let cost = 0;
@@ -198,7 +210,7 @@ export async function verifySpeech(media: string, windows: SpeechWindow[], trans
       try {
         const wav = path.join(dir, `spoken-${i}.wav`);
         await audioWindow(file, wav, w.start, w.end);
-        const heard = await recognize(wav, transcribe);
+        const heard = await recognize(wav, transcribe, asrVocabulary(w.text, vocabulary));
         cost += heard.usage.costUsd;
         if (!sameSpeech(heard.text, w.text)) findings.push({ kind: "speech", shotId: w.shotId, at: w.start, expected: w.text || "No speech", observed: heard.text || "No words heard", status: "fail" });
       } catch {

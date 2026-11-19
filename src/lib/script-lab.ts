@@ -192,7 +192,20 @@ const hasPhrase = (line: string, phrase: string) => {
   return !!expected && ` ${matchCopy(line)} `.includes(` ${expected} `);
 };
 
-/** Deterministic script checks: timing, read-aloud pace, hook length, CTA and must-say. */
+/**
+ * Scenes that need the video model to draw readable text: phone/app/web screens, product pages, signs, notifications,
+ * quoted words. Image and video models turn these into garbled pseudo-text (OLIPOP hook: "a thumb taps a page showing
+ * Out of Stock and Notify Me" → melting UI, video gate 4/10). Text belongs in the typeset overlay instead.
+ */
+const TEXT_SCENE = /\b(screens?|phones? screen|smartphone screen|app|apps|website|web ?page|product page|page|checkout|cart|ui|interface|notification|text message|dm|email|sign|signage|billboard|menu board|poster|banner|price tag|receipt|headline|caption|subtitle)\b|\b(showing|reads|reading|says|saying|labell?ed|titled|spelled)\s+["“'‘A-Z0-9]/;
+export function renderedTextProblem(visual: string) {
+  const hit = visual.match(TEXT_SCENE);
+  const quoted = /["“][^"”]{2,}["”]/.test(visual);
+  if (!hit && !quoted) return null;
+  return `The visual asks the video model to show readable text or a screen ("${(hit?.[0] ?? "quoted words").trim()}"). Generated video garbles text and UI; show the product, hands and setting instead and put the words in the on-screen overlay.`;
+}
+
+/** Deterministic script checks: timing, read-aloud pace, hook length, CTA, must-say and no generated text/UI. */
 export function checkScript(s: AdScript, lengthSec: number, mustSay: string[] = []): string[] {
   const out: string[] = [];
   const total = scriptSeconds(s);
@@ -201,6 +214,10 @@ export function checkScript(s: AdScript, lengthSec: number, mustSay: string[] = 
   s.beats.forEach((b, i) => {
     const n = words(b.vo).length;
     if (n > Math.ceil(b.seconds * WORDS_PER_SEC) + 1) out.push(`Beat ${i + 1} has ${n} words for ${b.seconds}s; max ${Math.ceil(b.seconds * WORDS_PER_SEC) + 1} at a natural pace.`);
+  });
+  s.beats.forEach((b, i) => {
+    const t = renderedTextProblem(b.visual);
+    if (t) out.push(`Beat ${i + 1}: ${t}`);
   });
   if (words(s.hook.spoken).length > 12) out.push("Hook line is over 12 words; it must land in the first 1.5–3 seconds.");
   if (s.beats[0] && s.beats[0].seconds > 4) out.push("First beat is over 4s; the hook needs a cut by 3s.");
@@ -245,7 +262,8 @@ const SCRIPT_RULES = (len: number) => `Rules:
 - Story: ${STORY}
 - "vo": only the words spoken aloud, natural speech, max ${WORDS_PER_SEC} words per second of the beat. No speaker labels or stage directions.
 - "onScreen": one readable message that fits the window; give mandatory terms their own time instead of shrinking or shortening them. Empty text is allowed.
-- "visual": one filmable action per beat; never compress several setup steps into one. No invented text or signage in generated shots. Use only established product details.
+- "visual": one filmable action per beat; never compress several setup steps into one. Never show phones, screens, web pages, apps, notifications, signs or any readable words in the scene (video models garble them); put words in "onScreen". Use only established product details.
+- Every action you suggest in VO must agree with what the visual shows (do not say "tap" or "order" over a scene that shows something else).
 - Only facts from the product facts and brief: never invent features, numbers, guarantees, timings, inclusions or customer testimonials.
 - Say and show the exact CTA in the final beat.`;
 
@@ -259,9 +277,11 @@ const Hook = z.object({
 const HookBatch = z.object({ hooks: z.array(z.unknown()).max(12) });
 export const HOOK_SECONDS = 3;
 
-function openingChecks(hook: Pick<ScriptHook, "spoken" | "onScreen">) {
+function openingChecks(hook: Pick<ScriptHook, "spoken" | "onScreen"> & { visual?: string }) {
   const m = rehearsalMetrics({ vo: hook.spoken, onScreen: hook.onScreen });
   const issues: string[] = [];
+  const t = hook.visual ? renderedTextProblem(hook.visual) : null;
+  if (t) issues.push(t);
   if (!exactCopy(hook.spoken)) issues.push("The opening needs a spoken line.");
   if (words(hook.spoken).length > 8 || m.speakingSeconds > HOOK_SECONDS) issues.push("The spoken line is too long for 3 seconds. Use at most 8 short words.");
   if (!m.fits || m.readingSeconds > HOOK_SECONDS) issues.push("The overlay is too crowded for the opening.");
@@ -400,7 +420,7 @@ Score each script 1–10 on: hook (clear and distinctive in 1.5s), clarity (one 
 A spoken hook that is just a discount or promo line scores at most 5 on hook. Never tell the writer to move a promo line into the spoken hook.
 Anchors: 7 = the offer is clear but one issue still hurts the ad (generic opening, rushed proof, or cluttered copy). 9 = a specific buyer tension lands on mute, a credible and filmable action proves the claim, the pacing leaves room for exact offer terms, and there is one clear next action. 10 = exceptional execution with no material improvement needed.
 If there is a proof brief, list material "proofProblems" when the visual does not support the selected claim, contradicts narration, or crams multiple actions into too little time. Otherwise return []. Flag invented facts even if they appear in the concept or suggested proof scene.
-If there is a proof brief, also check the required story: ${STORY} Put missing or out-of-order story steps in "proofProblems"; do not require a separate shot for each story step.
+If there is a proof brief, also check the required story: ${STORY} Put missing story steps in "proofProblems"; do not require a separate shot for each story step. Order is flexible: a "Buyer friction" opening may lead with the obstacle and a "Proof first" opening with the result, as long as the goal and stakes are clear by the end of beat 2. Do not flag that order as a problem.
 "notes": give only the biggest material blocker and one concrete, fact-supported fix. Return [] if there is none. "blockerBeat": 1-based beat to change, or omit when the problem is global or there is no blocker. Do not make up replacement claims.
 "unsupported": each claim not backed by the product facts, quoted.
 ${matchRule ? `${matchRule}\n` : ""}Return JSON: {"scores":[{"id","overall","scores":{"hook","clarity","specificity","customerLanguage","emotion","productEarly","cta","pacing","claims"${matchRule ? `,"inspirationMatch"` : ""}},"notes","unsupported","blockerBeat","proofProblems"}]}`,
@@ -490,29 +510,51 @@ Return {"beats":[{"visual":"...","vo":"...","onScreen":"..."}]}.`);
   const first = await reviewScript(initial, c, writer, judge);
   let cost = draft.usage.costUsd + first.cost;
   const score = first.script.score;
-  const i = (score.blockerBeat ?? 0) - 1;
-  const blocker = score.notes[0];
-  if (score.overall >= SCRIPT_TARGET && !first.script.checks.length && !score.unsupported.length) return { script: first.script, cost };
-  if (i < 1 || i >= initial.beats.length || !blocker) return { script: first.script, cost };
-
+  if (score.overall >= SCRIPT_TARGET && !first.script.checks.length && !score.unsupported.length && !score.proofProblems?.length) return { script: first.script, cost };
+  // One repair round that addresses every fix note at once: proof problems, unsupported claims, the judge's blocker and
+  // deterministic checks. The old loop rewrote only `blockerBeat`, so global problems (no beat) and problems in a beat
+  // other than the judge's single note were never fixed, and re-scores kept finding the same proof problems.
+  const fixes = scriptFixNotes(first.script);
+  if (!fixes.length) return { script: first.script, cost };
+  const single = (score.blockerBeat ?? 0) - 1;
+  const only = fixes.length === 1 && single >= 1 && single < initial.beats.length ? single : -1;
   try {
-    const revision = await chatJSON<unknown>(writer, "Repair exactly one beat without adding facts or changing the selected hook.", `${ctxBlock(c)}
+    const targets = only >= 1 ? [only] : initial.beats.map((_, j) => j).filter((j) => j >= 1);
+    const revision = await chatJSON<unknown>(writer, "Repair the script beats listed without adding facts or changing the locked opening.", `${ctxBlock(c)}
 Script: ${JSON.stringify(initial.beats)}
-Rewrite only beat ${i + 1}, with the same ${initial.beats[i].seconds}s window. Address this blocker: ${blocker}
-Its story role: ${windows[i - 1].role}
+The opening (beat 1) is locked. Rewrite ${targets.length === 1 ? `only beat ${targets[0] + 1}` : `beats ${targets.map((j) => j + 1).join(", ")}`}, keeping each beat's seconds. Fix every one of these:
+${fixes.map((f) => `- ${f}`).join("\n")}
+Story roles: ${targets.map((j) => `beat ${j + 1}: ${windows[j - 1]?.role ?? "CTA"}`).join("; ")}
 ${SCRIPT_RULES(c.lengthSec)}
-Return {"visual":"...","vo":"...","onScreen":"..."} for that one beat.`);
+Return {"beats":[{"visual":"...","vo":"...","onScreen":"..."}]} with exactly ${targets.length} beat(s), in order.`);
     cost += revision.usage.costUsd;
-    const revised = initial.beats.map((b, j) => j === i ? { ...b, ...BeatCopy.parse(revision.data) } : b);
-    const second = await reviewScript({ ...initial, beats: revised, rounds: 1 }, c, writer, judge);
+    const out = z.object({ beats: z.array(BeatCopy).length(targets.length) }).parse(revision.data).beats;
+    const revised = initial.beats.map((b, j) => targets.includes(j) ? { ...b, ...out[targets.indexOf(j)] } : b);
+    const second = await reviewScript({ ...initial, beats: revised, rounds: 1 }, c, writer, judge, { prior: first.script });
     cost += second.cost;
-    const blockers = (s: AdScript) => (s.score?.unsupported.length ?? 0) + (s.score?.proofProblems?.length ?? 0) + (s.checks?.length ?? 0);
-    if (blockers(second.script) <= blockers(first.script) && !second.script.score.unsupported.some((u) => !score.unsupported.includes(u)) &&
-      (blockers(second.script) < blockers(first.script) || finalScore(second.script) > finalScore(first.script))) return { script: second.script, cost };
+    if (betterScript(second.script, first.script)) return { script: second.script, cost };
   } catch {
     // Keep the already graded draft if an optional repair fails.
   }
   return { script: first.script, cost };
+}
+
+/** Everything the script gate wants fixed, deduplicated: deterministic checks first, then the judge's findings. */
+export function scriptFixNotes(s: AdScript) {
+  return [...new Set([
+    ...(s.checks ?? []),
+    ...(s.score?.unsupported ?? []).map((u) => `Remove or support this claim: ${u}`),
+    ...(s.score?.proofProblems ?? []),
+    ...(s.score?.notes ?? []),
+  ])].slice(0, 8);
+}
+
+const blockerCount = (s: AdScript) => (s.score?.unsupported.length ?? 0) + (s.score?.proofProblems?.length ?? 0) + (s.checks?.length ?? 0);
+/** Keep a repair only if it adds no new unsupported claim and has fewer blockers, or as many and a higher score. */
+export function betterScript(next: AdScript, prev: AdScript) {
+  if (next.score?.unsupported.some((u) => !prev.score?.unsupported.includes(u))) return false;
+  const a = blockerCount(next), b = blockerCount(prev);
+  return a < b || (a === b && finalScore(next) > finalScore(prev));
 }
 
 export type ScriptEdit = { hook?: string; hookOnScreen?: string; beats?: { vo: string; onScreen: string }[]; cta?: string };

@@ -194,11 +194,19 @@ export interface PromptEntry {
   createdAt: string;
 }
 
+export type FrameCheck = "action" | "product" | "label" | "hands" | "artifacts" | "framing";
+export type Severity = "ok" | "minor" | "major" | "na";
+
 export interface ShotQA {
+  /** Computed from the per-frame checklist (see `checklistScore`), not the judge's own number. */
   score: number;
   notes: string[];
   match?: "pass" | "fail" | "review";
-  frames?: { at: number; match: "pass" | "fail" | "review"; note: string; repair?: "source" | "layout" }[];
+  frames?: { at: number; match: "pass" | "fail" | "review"; note: string; repair?: "source" | "layout"; checks?: Partial<Record<FrameCheck, Severity>> }[];
+  /** The judge's own 1–10 number, kept for the record only (flash judges park good work at 7). */
+  judgeScore?: number;
+  /** Worst severity per checklist item across frames. */
+  rubric?: Partial<Record<FrameCheck, Severity>>;
 }
 
 export interface QualityFinding {
