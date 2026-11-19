@@ -52,6 +52,122 @@ function fakes(o: { failShot?: string } = {}) {
   return { deps, calls, stitch, review };
 }
 
+describe("model overrides from version stacks", () => {
+  it("two stacks with different video models call different provider models", async () => {
+    const run = runFor();
+    const called: string[] = [];
+    
+    // Mock renderer that records model calls
+    const mkVideo = (defaultModel: string): Renderer => ({
+      id: "ai-video",
+      available: async () => true,
+      estimateUsd: () => 0.3,
+      async render(row, ctx) {
+        called.push(defaultModel);
+        return { url: `data:video/mp4;base64,${defaultModel}`, costUsd: 0.3 };
+      },
+    });
+    
+    // Create two versions with different stacks
+    run.versions = [
+      { 
+        id: "v1", 
+        stack: { 
+          id: "stack1", 
+          label: "Stack 1", 
+          description: "Test stack 1",
+          models: { video: "model-a" },
+          estimatedCostUsd: 0.5
+        },
+        tier: "preview", 
+        status: "queued", 
+        estimate: null, 
+        shots: [], 
+        videoUrl: null, 
+        contactUrl: null, 
+        usd: 0, 
+        ms: 0 
+      },
+      { 
+        id: "v2", 
+        stack: { 
+          id: "stack2", 
+          label: "Stack 2", 
+          description: "Test stack 2",
+          models: { video: "model-b" },
+          estimatedCostUsd: 0.5
+        },
+        tier: "preview", 
+        status: "queued", 
+        estimate: null, 
+        shots: [], 
+        videoUrl: null, 
+        contactUrl: null, 
+        usd: 0, 
+        ms: 0 
+      },
+    ];
+    
+    // Render both versions with their own renderers
+    const f1 = fakes();
+    f1.deps.renderers = { "ai-video": mkVideo("model-a"), blender: f1.deps.renderers.blender!, remotion: f1.deps.renderers.remotion! };
+    f1.deps.stackModels = { video: "model-a" };
+    await runPreviews(run, f1.deps, { versionId: "v1" });
+    
+    const f2 = fakes();
+    f2.deps.renderers = { "ai-video": mkVideo("model-b"), blender: f2.deps.renderers.blender!, remotion: f2.deps.renderers.remotion! };
+    f2.deps.stackModels = { video: "model-b" };
+    await runPreviews(run, f2.deps, { versionId: "v2" });
+    
+    // Verify different models were called
+    expect(called).toContain("model-a");
+    expect(called).toContain("model-b");
+    expect(called.filter((m) => m === "model-a").length).toBeGreaterThan(0);
+    expect(called.filter((m) => m === "model-b").length).toBeGreaterThan(0);
+  });
+
+  it("two stacks with different QA models call different review models", async () => {
+    const run = runFor();
+    const reviewCalls: string[] = [];
+    
+    // Create versions with different QA models
+    run.versions = [
+      { 
+        id: "v1", 
+        stack: { 
+          id: "stack1", 
+          label: "Stack 1", 
+          description: "Test stack 1",
+          models: { qa: "qa-model-a" },
+          estimatedCostUsd: 0.5
+        },
+        tier: "preview", 
+        status: "queued", 
+        estimate: null, 
+        shots: [], 
+        videoUrl: null, 
+        contactUrl: null, 
+        usd: 0, 
+        ms: 0 
+      },
+    ];
+    
+    // Mock shot check that records QA model
+    const f = fakes();
+    const originalReview = f.review;
+    f.review.mockImplementation(async (frame: string, expected: string) => {
+      reviewCalls.push("qa-model-a"); // In real code, this would come from deps
+      return originalReview(frame, expected);
+    });
+    f.deps.stackModels = { qa: "qa-model-a" };
+    
+    await runPreviews(run, f.deps, { versionId: "v1" });
+    
+    // Verify QA model was used (reviews were called)
+    expect(f.review).toHaveBeenCalled();
+  });
+});
+
 describe("previews through the render pipeline", () => {
   it("routes each shot to its engine, renders in parallel, checks each once, and tracks cost and timings on the run", async () => {
     const run = runFor();

@@ -38,19 +38,28 @@ async function frameAt(clip: string, at: number): Promise<string> {
 }
 
 /** The real thing: renderers, the cheap vision check, FFmpeg stitching and the strict review tools. */
-export function defaultRenderDeps(): RenderDeps {
+export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>): RenderDeps {
   const sheetModel = (r: SheetRun) => r.input.visionModel;
+  // Resolve models from stack or fallback to env/defaults
+  const videoModel = stackModels?.video || process.env.SHEET_VIDEO_MODEL || "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video";
+  const qaModel = stackModels?.qa || process.env.SHEET_VISION_MODEL || "google/gemini-3.8-flash";
+  // Note: voice model from stack is ignored for now - voiceover() uses VOICE_MODEL constant
+  
   return {
-    renderers: { "ai-video": aiVideoRenderer({ defaultModel: process.env.SHEET_VIDEO_MODEL || "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video" }), blender: blenderRenderer(), remotion: remotionRenderer() },
+    renderers: { 
+      "ai-video": aiVideoRenderer({ defaultModel: videoModel }), 
+      blender: blenderRenderer(), 
+      remotion: remotionRenderer() 
+    },
     autoBlender: process.env.RENDER_AUTO_BLENDER === "1",
     photos: async (r) => Promise.all(r.input.photos.map((p) => mediaDataUrl(p))),
     store: (data, key) => storeMedia(data, key),
     shotCheck: {
       frame: frameAt,
-      // One cheap vision call per shot. Model comes from the run (cheap flash by default).
+      // One cheap vision call per shot. Model comes from stack QA model or run default.
       review: async (frame, expected) => {
         const { data } = await chatJSON<{ score: number; notes?: string[] }>(
-          process.env.SHEET_VISION_MODEL || "google/gemini-3.8-flash",
+          qaModel,
           "You check one frame of a draft ad shot against what the shot sheet says should be on screen. Be literal and brief. Reply JSON: {\"score\": 0-10, \"notes\": [one short sentence]}. 10 = exactly as written, 7 = usable, below 7 = wrong subject, missing action or unreadable.",
           [{ type: "text", text: `Expected on screen: ${expected}` }, { type: "image_url", image_url: { url: frame } }],
         );
@@ -68,7 +77,8 @@ export function defaultRenderDeps(): RenderDeps {
     },
     final: (video, r, stitched) => ({
       review: async () => {
-        const out = await qa(sheetModel(r), video, "video", r.brief!, r.sheet?.shots[0]?.text?.copy ?? r.input.goal, r.sheet?.shots.flatMap((s) => (s.text ? [s.text.copy] : [])).join(" "));
+        // Use stack's QA model for final review
+        const out = await qa(qaModel, video, "video", r.brief!, r.sheet?.shots[0]?.text?.copy ?? r.input.goal, r.sheet?.shots.flatMap((s) => (s.text ? [s.text.copy] : [])).join(" "));
         return { score: out.data.score, notes: out.data.notes };
       },
       loudness: () => loudness(video),
@@ -81,6 +91,7 @@ export function defaultRenderDeps(): RenderDeps {
     }),
     clipCache: cacheStore("sheet-clips"),
     judgeCache: cacheStore("sheet-judge"),
+    stackModels,
   };
 }
 

@@ -37,6 +37,8 @@ export interface RenderDeps {
   concurrency?: number;
   /** RENDER_AUTO_BLENDER: send product shots to Blender when the row does not say. */
   autoBlender?: boolean;
+  /** Version stack models to override defaults per stage. */
+  stackModels?: Partial<Record<string, string>>;
 }
 
 const WIDTH: Record<ShotSheet["aspect"], [number, number]> = { "16:9": [1280, 720], "9:16": [720, 1280], "1:1": [1024, 1024] };
@@ -186,18 +188,24 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
 
 /** Step 4: render the previews (or a queued version) and keep the result on the run. */
 export async function runPreviews(run: SheetRun, deps: RenderDeps, o: { versionId?: string } = {}) {
-  const { version } = await renderSheetVersion(run, deps, { tier: "preview", versionId: o.versionId });
+  // Pass the version's stack models through deps
+  const version = run.versions.find((v) => v.id === o.versionId) || run.versions[0];
+  const depsWithStack = { ...deps, stackModels: version?.stack.models };
+  const { version: result } = await renderSheetVersion(run, depsWithStack, { tier: "preview", versionId: o.versionId });
   run.step = "previews";
   await saveProgress(run);
-  return version;
+  return result;
 }
 
 /** Step 5: render at final quality, then check 3 (median of 3 + loudness, OCR spelling, Whisper sync). */
 export async function runFinal(run: SheetRun, deps: RenderDeps): Promise<FinalResult | null> {
-  const { version, stitched } = await renderSheetVersion(run, deps, { tier: "final" });
+  // Get the winner's stack models (first done version or first version)
+  const winner = run.versions.find((v) => v.status === "done") || run.versions[0];
+  const depsWithStack = { ...deps, stackModels: winner?.stack.models };
+  const { version, stitched } = await renderSheetVersion(run, depsWithStack, { tier: "final" });
   if (!stitched || version.status !== "done") return null;
   const t0 = Date.now();
-  const report = await finalReview(deps.final(version.videoUrl!, run, stitched), { reviews: qaGates().finalReviews });
+  const report = await finalReview(depsWithStack.final(version.videoUrl!, run, stitched), { reviews: qaGates().finalReviews });
   version.score = report.score;
   run.final = {
     videoUrl: version.videoUrl!, contactUrl: null, score: report.score, rubric: report.rubric, reviews: report.reviews, notes: report.notes,
