@@ -138,11 +138,11 @@ function L({ t, children }: { t: string; children: React.ReactNode }) {
   return <label className="block space-y-1 text-sm"><span className="text-zinc-400">{t}</span>{children}</label>;
 }
 
-type BrandForm = { brandUrl: string; brand: string; goal: string; offer: string; facts: string; inspirationUrl: string; targetSec: number; aspect: ShotSheet["aspect"]; audioMode: ShotSheet["audioMode"]; capUsd: number; photos: string[] };
+type BrandForm = { brandUrl: string; brand: string; goal: string; offer: string; facts: string; inspirationUrl: string; targetSec: number; aspect: ShotSheet["aspect"]; audioMode: ShotSheet["audioMode"]; patternId: string; capUsd: number; photos: string[] };
 
 function BrandStep({ run, busy, onCreate }: { run: SheetRun | null; busy: boolean; onCreate: (b: BrandForm) => void }) {
-  const [f, setF] = useState<BrandForm>(() => run ? { ...run.input, offer: run.input.offer ?? "", inspirationUrl: run.input.inspirationUrl ?? "", capUsd: run.cost.capUsd, photos: [] } :
-    { brandUrl: "https://", brand: "", goal: "", offer: "", facts: "", inspirationUrl: "", targetSec: 20, aspect: "16:9", audioMode: "foley", capUsd: 2, photos: [] });
+  const [f, setF] = useState<BrandForm>(() => run ? { ...run.input, offer: run.input.offer ?? "", inspirationUrl: run.input.inspirationUrl ?? "", patternId: run.input.patternId ?? "confession_loop", capUsd: run.cost.capUsd, photos: [] } :
+    { brandUrl: "https://", brand: "", goal: "", offer: "", facts: "", inspirationUrl: "", targetSec: 20, aspect: "16:9", audioMode: "foley", patternId: "confession_loop", capUsd: 2, photos: [] });
   const set = (p: Partial<BrandForm>) => setF((x) => ({ ...x, ...p }));
   const addPhotos = async (files: FileList | null) => {
     const urls = await Promise.all([...(files ?? [])].slice(0, 4).map((file) => new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsDataURL(file); })));
