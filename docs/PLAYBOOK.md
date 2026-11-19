@@ -542,3 +542,13 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
   the run chat. Subject boxes are mapped into the padded/cropped aspects.
 - Rejected: an edge-energy subject box. On take 6 it boxed 70-80% of every dinner-table frame and the agent dropped all
   four cues. Busy sets are not subjects.
+- Take 7 (keywords, take_fefb747dce74): 7/10, final 7.6 (take 6: 6), video 5.8 (4.8). Scenes 6/6/5/7; no shot fell to
+  3. Two agent bugs: (1) the packshot CTA was dropped "covering the subject at 10.6s", a frame from the previous
+  shot let in by a ±0.25 s slack (now ±0.05 s); (2) in a shot whose on-screen CTA repeats the line, the overlay is
+  suppressed, so the keyword cue is the shot's only required text. It now shows that approved copy ("Shop at
+  drinkolipop.com") instead of a keyword pick. WER 13% on this take was Whisper misspellings ("Dred the sugargilt",
+  "DrinkOlypop.com") of the same v3 lines that scored 3% on take 6. That is ASR variance, noted and not chased.
+- Captions off (take_ba6dcaef6288): 6/10, final 6, video 4.3. The export reviewer still got each shot's approved
+  overlay and marked it "absent" (s2, s3). With captions off there is no in-shot text by design, so the export review
+  no longer receives `approvedOverlay` in that mode. The filmstrip director still asks for hook and stat text on
+  sound-off grounds, which is a fair craft note and the reason keywords stay the default.

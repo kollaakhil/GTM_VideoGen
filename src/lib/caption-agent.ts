@@ -48,12 +48,19 @@ export function keywordPhrase(line: string, brand?: string, maxWords = 4): { tex
   for (let n = 2; n <= Math.min(maxWords, ws.length); n++) for (const w of keywordWindows(line, n, brand)) if (!best || w.score > best.score + 1e-9) best = w;
   return { text: best!.text, from: best!.from, words: ws.length };
 }
+const exactish = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 const tidy = (t: string) => t.replace(/^[^\p{L}\p{N}$]+/u, "").replace(/[,;:!?]+$/u, "").replace(/\.$/, "");
 
 /** Keyword cue timing: from when the phrase's first word is said (linear in word position) to the end of the line. */
-export function keywordCues(segments: { start: number; end: number; text: string; speech?: { start: number; end: number } }[], brand?: string) {
+export function keywordCues(segments: { start: number; end: number; text: string; onScreen?: string; speech?: { start: number; end: number } }[], brand?: string) {
   return segments.flatMap((s) => {
     if (!s.text.trim()) return [];
+    // A shot whose approved on-screen copy repeats its line (the CTA) shows that copy, not a keyword pick: its overlay
+    // is suppressed as a duplicate, so this cue is the shot's only required text (take 7: "approved CTA missing").
+    const own = s.onScreen?.trim();
+    if (own && own.split(/\s+/).length <= 5 && exactish(s.text).includes(exactish(own))) {
+      return [{ start: s.speech ? Math.max(s.start, s.speech.start - 0.15) : s.start, end: s.end, text: own }];
+    }
     const a = s.speech ? Math.max(s.start, s.speech.start) : s.start;
     const b = s.speech ? Math.min(s.end, Math.max(a + 0.3, s.speech.end)) : s.end;
     const k = keywordPhrase(s.text, brand);
@@ -86,7 +93,8 @@ export type AgentAction = { text: string; start: number; action: "kept" | "moved
 export function collision(box: Box, start: number, end: number, subjects: { t: number; box: Box | null }[], overlays: { start: number; end: number; box: Box }[]): string | null {
   for (const o of overlays) if (o.start < end && start < o.end && overlaps(grow(o.box, 0.01), box)) return "overlaps an overlay";
   for (const s of subjects) {
-    if (s.t < start - 0.25 || s.t > end + 0.25 || !s.box) continue;
+    // Only frames while the cue is up: a ±0.25 s slack let the previous shot's subject drop the packshot CTA (take 7).
+    if (s.t < start - 0.05 || s.t > end + 0.05 || !s.box) continue;
     if (inter(box, s.box) / area(box) > SUBJECT_OVERLAP_MAX) return `covers the subject at ${s.t.toFixed(1)}s`;
   }
   return null;
