@@ -388,3 +388,9 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 
 - **Failure:** with the whisper hint in place (13.15), the pre-check still heard "Keep the Cola. Swap in Olapop." ElevenLabs really does say "Olapop" for all-caps "OLIPOP".
 - **Fix:** `speakable()` sends all-caps brand words to TTS as one capitalised word ("Olipop"). Known acronyms stay as written. The script, captions and QA text are unchanged.
+
+### 13.18 Packshot label unwrap pulled background into the top corners
+- Failure: s3 packshot keyframe still 8/10 after 13.16 ("slight rendering inconsistencies at the top rim"). Cause: the label was
+  unwrapped with one can width for every row; near the shoulder the photo's can narrows, so the top corners sampled dark background.
+- Fix: unwrap per row using that row's own mask edges, median-smoothed over ~6% of the height (raw edges jitter with condensation
+  drops and shred the lettering), and cap the unwrap angle at 74° (beyond that the photo is the shaded edge of the can).
