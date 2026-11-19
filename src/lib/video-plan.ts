@@ -175,7 +175,7 @@ export function medianReview(reviews: ShotQA[]): ShotQA {
 }
 
 const SubjectReply = z.object({
-  frames: z.array(z.object({ index: z.number().int(), box: z.array(z.number().min(0).max(1)).length(4).nullable() })),
+  frames: z.array(z.object({ index: z.number().int(), box: z.array(z.number().min(0).max(1)).length(4).nullable(), product: z.array(z.number().min(0).max(1)).length(4).nullable().optional() })),
 });
 /**
  * Where the product (and any hand or person handling it) sits in each frame, as [x, y, w, h] fractions, for the
@@ -183,10 +183,10 @@ const SubjectReply = z.object({
  * A frame the model could not box comes back null and is not checked. Failures return no boxes (the agent then
  * checks overlays only) rather than blocking the export.
  */
-export async function locateSubjects(visionModel: string, frames: { at: number; url: string }[], product: string): Promise<{ boxes: { t: number; box: { x: number; y: number; w: number; h: number } | null }[]; cost: number }> {
+export async function locateSubjects(visionModel: string, frames: { at: number; url: string }[], product: string): Promise<{ boxes: { t: number; box: { x: number; y: number; w: number; h: number } | null; product?: { x: number; y: number; w: number; h: number } | null }[]; cost: number }> {
   if (!frames.length) return { boxes: [], cost: 0 };
   const content: Part[] = [
-    { type: "text", text: `For each numbered frame of a vertical product ad, return the tight bounding box around the advertised product (${JSON.stringify(product.slice(0, 120))}) together with any hand, glass or person directly interacting with it, as [x, y, w, h] fractions of the frame (origin top-left). Use null when the product is not visible. Ignore on-screen text. Return JSON {"frames":[{"index":number,"box":[x,y,w,h]|null}]} with one entry per frame.` },
+    { type: "text", text: `For each numbered frame of a vertical product ad, return the tight bounding box around the advertised product (${JSON.stringify(product.slice(0, 120))}) together with any hand, glass or person directly interacting with it, as [x, y, w, h] fractions of the frame (origin top-left). Use null when the product is not visible. Also return "product": the tight box around the product package alone (its label), without hands, glass or liquid. Ignore on-screen text. Return JSON {"frames":[{"index":number,"box":[x,y,w,h]|null,"product":[x,y,w,h]|null}]} with one entry per frame.` },
     ...frames.flatMap((f, i): Part[] => [{ type: "text", text: `Frame ${i + 1}` }, { type: "image_url", image_url: { url: f.url } }]),
   ];
   try {
@@ -195,8 +195,9 @@ export async function locateSubjects(visionModel: string, frames: { at: number; 
     if (!parsed.success) return { boxes: [], cost: usage.costUsd };
     return {
       boxes: frames.map((f, i) => {
-        const b = parsed.data.frames.find((x) => x.index === i + 1)?.box;
-        return { t: f.at, box: b ? { x: b[0], y: b[1], w: Math.min(b[2], 1 - b[0]), h: Math.min(b[3], 1 - b[1]) } : null };
+        const row = parsed.data.frames.find((x) => x.index === i + 1);
+        const fit = (b?: number[] | null) => (b ? { x: b[0], y: b[1], w: Math.min(b[2], 1 - b[0]), h: Math.min(b[3], 1 - b[1]) } : null);
+        return { t: f.at, box: fit(row?.box), product: fit(row?.product) };
       }),
       cost: usage.costUsd,
     };
