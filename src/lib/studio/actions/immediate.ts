@@ -5,7 +5,8 @@ import { MODELS, providerConfigured } from "@/lib/models";
 import { put } from "@/lib/store";
 import type { Brief, StudioRun } from "@/lib/types";
 import type { Parsed } from "../schema";
-import { jobs, now, say, stopProgress } from "../run-state";
+import { CostMeter } from "@/lib/render/cost-meter";
+import { jobs, meters, now, say, stopProgress } from "../run-state";
 import { saveStoryboardPhotos } from "../context";
 
 /** Actions that update the run right away and respond with it (no background job). */
@@ -95,6 +96,18 @@ export async function overrideStage(run: StudioRun, body: Body<"override_stage">
   if (!setOverride(run, body.key, user, body.reason)) return NextResponse.json({ error: "That stage hasn't been scored yet" }, { status: 404 });
   const s = run.stageScores![body.key];
   say(run, "agent", `${user} overrode the ${s.stage} gate at ${s.score}/10: ${body.reason}`);
+  run.updatedAt = now();
+  await put("studio_runs", run);
+  return NextResponse.json({ run });
+}
+
+/** Raises or lowers the run's spend cap. Takes effect immediately, including for a job already running. */
+export async function setCap(run: StudioRun, body: Body<"set_cap">) {
+  run.capUsd = body.capUsd;
+  const live = meters.get(run.id);
+  if (live) live.setCap(body.capUsd);
+  else run.meter = new CostMeter({ capUsd: body.capUsd, spentUsd: run.costUsd }).snapshot();
+  say(run, "agent", `Spend cap for this run set to $${body.capUsd.toFixed(2)} ($${run.costUsd.toFixed(2)} spent so far).`);
   run.updatedAt = now();
   await put("studio_runs", run);
   return NextResponse.json({ run });

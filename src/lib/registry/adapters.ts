@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { paid } from "../render/cost-meter";
 import { chatJSON, downloadAsDataUrl, falRun, generateImage, generateVideo, musicBed, MUSIC_MODEL, speakable, voiceover, VOICE_MODEL, type Part, type Usage, type VideoOpts } from "../ai";
 import { buildFalBody } from "./fal-knobs";
 import { FAL_KNOBS } from "./fal-snapshot";
@@ -84,10 +85,11 @@ async function voiceStage(e: ModelEntry, text: string, voice?: string, sayAs?: {
   if (e.family === "gemini-tts" && voice) body.voice = voice;
   // MiniMax answers with hex audio unless asked for a URL.
   if (e.family === "minimax-speech") body.output_format = "url";
-  const out = await falRun<unknown>(e.id, body);
+  const est = estimateUsd(e, { chars: text.length });
+  const { out } = await paid(`voice:${e.id}`, est, async () => ({ out: await falRun<unknown>(e.id, body), usage: { costUsd: est } }));
   const url = pickUrl(out, AUDIO_KEYS, /\.(mp3|wav|ogg|opus|flac|m4a|aac)$/i);
   if (!url) throw new Error(`${e.label} returned no audio`);
-  return { url: await downloadAsDataUrl(url), usage: { costUsd: estimateUsd(e, { chars: text.length }) } };
+  return { url: await downloadAsDataUrl(url), usage: { costUsd: est } };
 }
 
 const FOLEY: [RegExp, SfxKind][] = [[/pour|stream|liquid|fill/i, "pour"], [/fizz|bubbl|carbon|sparkl/i, "fizz"], [/pop|crack|snap|click|tab/i, "pop"], [/clink|ice|glass|ting/i, "clink"], [/.*/, "whoosh"]];
@@ -111,20 +113,22 @@ async function audioStage(e: ModelEntry, prompt: string, seconds: number): Promi
   const body: Record<string, unknown> = buildFalBody(kn(e.id), prompt, { seconds: Math.max(2, Math.min(max, Math.ceil(seconds))) });
   if (e.family === "eleven-music") body.force_instrumental = true;
   if (e.family === "ace-step") body.lyrics = "[instrumental]";
-  const out = await falRun<unknown>(e.id, body);
+  const est = estimateUsd(e);
+  const { out } = await paid(`audio:${e.id}`, est, async () => ({ out: await falRun<unknown>(e.id, body), usage: { costUsd: est } }));
   const url = pickUrl(out, AUDIO_KEYS, /\.(mp3|wav|ogg|opus|flac|m4a|aac)$/i);
   if (!url) throw new Error(`${e.label} returned no audio`);
-  return { url: await downloadAsDataUrl(url), usage: { costUsd: estimateUsd(e) } };
+  return { url: await downloadAsDataUrl(url), usage: { costUsd: est } };
 }
 
 async function asset3dStage(e: ModelEntry, prompt?: string, imageUrl?: string): Promise<StageResult> {
   const k = kn(e.id);
   if ((k.image || k.imageArray) && !imageUrl && !prompt) throw new Error(`${e.label} needs a product image`);
   if (!k.image && !k.imageArray && !prompt) throw new Error(`${e.label} needs a text prompt`);
-  const out = await falRun<unknown>(e.id, buildFalBody(k, prompt ?? "", { firstFrame: imageUrl, refs: imageUrl ? [imageUrl] : undefined }));
+  const est = estimateUsd(e);
+  const { out } = await paid(`3d:${e.id}`, est, async () => ({ out: await falRun<unknown>(e.id, buildFalBody(k, prompt ?? "", { firstFrame: imageUrl, refs: imageUrl ? [imageUrl] : undefined })), usage: { costUsd: est } }));
   const url = pickUrl(out, MESH_KEYS, /\.(glb|gltf|obj|fbx|usdz)$/i);
   if (!url) throw new Error(`${e.label} returned no 3D file`);
-  return { url, usage: { costUsd: estimateUsd(e) } };
+  return { url, usage: { costUsd: est } };
 }
 
 /** Runs one stage on one registry model. */

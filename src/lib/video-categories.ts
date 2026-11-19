@@ -1,7 +1,7 @@
 import type { VideoCategory, VideoPlan } from "./types";
 
 /** Video plan defaults shared by the Studio form and the storyboard action. */
-export const DEFAULT_VIDEO_PLAN: VideoPlan = { category: "product_demo", lengthSec: 10, draftModel: "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video", finalModel: "hfmcp:kling3_0", voice: "Rachel", music: true, budgetUsd: 3, lens: "auto", visualStyle: "natural", musicStyle: "auto", takes: 1, candidates: 3, packshot: true, realSet: false };
+export const DEFAULT_VIDEO_PLAN: VideoPlan = { category: "product_demo", lengthSec: 10, draftModel: "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video", finalModel: "hfmcp:kling3_0", voice: "Rachel", music: true, budgetUsd: 2, lens: "auto", visualStyle: "natural", musicStyle: "auto", takes: 1, candidates: 3, packshot: true, realSet: false };
 
 /** Shot recipes per ad category: the beat order and the look each category is known for. */
 export const CATEGORIES: Record<VideoCategory, { label: string; beats: string[]; look: string; voice: string }> = {

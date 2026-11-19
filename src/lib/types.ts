@@ -136,6 +136,7 @@ export interface OrganicPack {
   carousel: { title: string; body: string }[];
 }
 
+import type { MeterSnapshot } from "./render/cost-meter";
 import type { StageTiming } from "./render/timing";
 
 export interface Brief {
@@ -510,6 +511,10 @@ export interface StudioRun {
   costUsd: number;
   /** Per-stage timings of the latest render (src/lib/render/timing.ts), shown in the Studio UI. */
   timings?: StageTiming[];
+  /** Per-run spend cap in USD (default $2), enforced on the server before every paid call. */
+  capUsd?: number;
+  /** Live meter snapshot of the latest job: spent, held for calls in flight, remaining. */
+  meter?: MeterSnapshot;
   createdAt: string;
 }
 
