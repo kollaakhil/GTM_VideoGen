@@ -59,7 +59,7 @@ export function keywordCues(segments: { start: number; end: number; text: string
     // is suppressed as a duplicate, so this cue is the shot's only required text (take 7: "approved CTA missing").
     const own = s.onScreen?.trim();
     if (own && own.split(/\s+/).length <= 6 && exactish(s.text).includes(exactish(own))) {
-      return [{ start: s.speech ? Math.max(s.start, s.speech.start - 0.15) : s.start, end: s.end, text: own }];
+      return [{ start: s.speech ? Math.max(s.start, s.speech.start - 0.15) : s.start, end: s.end, text: own, required: true }];
     }
     const a = s.speech ? Math.max(s.start, s.speech.start) : s.start;
     const b = s.speech ? Math.min(s.end, Math.max(a + 0.3, s.speech.end)) : s.end;
@@ -86,8 +86,8 @@ const grow = (b: Box, m: number): Box => ({ x: b.x - m, y: b.y - m, w: b.w + 2 *
 /** A caption may graze the subject's edge; more than this share of the caption box over the subject is a collision. */
 export const SUBJECT_OVERLAP_MAX = 0.2;
 
-export type PlacedCaption = { start: number; end: number; text: string; y: number; box: Box };
-export type AgentAction = { text: string; start: number; action: "kept" | "moved" | "shrunk" | "dropped"; from?: number; to?: number; to_text?: string; reason?: string };
+export type PlacedCaption = { start: number; end: number; text: string; y: number; box: Box; required?: boolean };
+export type AgentAction = { text: string; start: number; action: "kept" | "moved" | "shrunk" | "dropped" | "least-overlap"; from?: number; to?: number; to_text?: string; reason?: string };
 
 /** Collision reason for `box` during [start, end), or null when it is clear in every sampled frame. */
 export function collision(box: Box, start: number, end: number, subjects: { t: number; box: Box | null }[], overlays: { start: number; end: number; box: Box }[]): string | null {
@@ -130,6 +130,18 @@ export function placeCaptions(
         first ??= why;
       }
       if (done) break;
+    }
+    if (!done && c.required) {
+      // Approved copy (the hook or CTA the plan put on screen) is never dropped: it goes, unshortened, to the slot that
+      // covers the least of the subject in its worst frame (take 9 dropped the hook and the director marked it missing).
+      const worst = (box: Box) => Math.max(0, ...subjects.filter((x) => x.box && x.t >= c.start - 0.05 && x.t <= c.end + 0.05).map((x) => inter(box, x.box!) / area(box)));
+      const opts = order.map((y) => ({ y, box: boxFor(c.text, y) })).filter((o) => inSafe(o.box) && !collision(o.box, c.start, c.end, [], [...overlays, ...out]));
+      const pick = opts.sort((a, b) => worst(a.box) - worst(b.box))[0];
+      if (pick) {
+        out.push({ ...c, y: pick.y, box: pick.box });
+        log.push({ text: c.text, start: c.start, action: "least-overlap", to: pick.y, reason: first ?? undefined });
+        done = true;
+      }
     }
     if (!done) log.push({ text: c.text, start: c.start, action: "dropped", reason: first ?? "no safe slot" });
   }

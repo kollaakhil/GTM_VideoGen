@@ -569,3 +569,9 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
   dinner-table shots" note and the 15 s target; v3 says the line in 2.59 s, inside the 2.84 s limit), and s0's overlay
   becomes the hook question (the director asked for it on every take). An overlay that repeats the line is drawn once, as the
   shot's caption (<= 6 words).
+- Take 9 (take_77971ee8be8a, s0 and s1 re-rendered, $0.46): 6/10. Audio 8.9 (WER 3%) and caption word sync 10 after
+  the canon fix; s3 8 with its CTA. But the agent dropped the hook caption (the can and hand fill the top at 0.1 s)
+  and the director again marked the hook missing. Approved copy (`required`: the shot's on-screen hook/CTA) is now
+  never dropped. It goes unshortened to the slot covering the least of the subject in its worst frame
+  ("least-overlap"). Keyword picks can still be dropped. The new s0 render smeared the label (scene 0), so the run
+  goes back to take_a8c72359e92a's s0 clip (clip QA 10, export review 8): same cache key, and that clip passed.
