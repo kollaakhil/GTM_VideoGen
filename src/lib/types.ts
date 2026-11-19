@@ -33,6 +33,8 @@ export interface Research {
   colors?: string[];
   /** Real competitors in the category, named by the research model and checked by the research gate. */
   competitors?: { name: string; url?: string; difference?: string }[];
+  /** How a voice should say the brand, respelled for TTS ("Ollie-pop" for OLIPOP); absent when obvious. */
+  pronunciation?: string;
 }
 
 export interface VoiceOfCustomer {

@@ -255,7 +255,7 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
       const key = shortHash([line, plan.voice, s.seconds]);
       let tries = 1, lineDb: number | null = null;
       if (s.voiceTrack?.key !== key) {
-        const voice = await checkedVoice(line, plan.voice, charge, (n) => { tries = n; }, run.research?.brand);
+        const voice = await checkedVoice(line, plan.voice, charge, (n) => { tries = n; }, run.research?.brand, run.research?.pronunciation);
         const [len, db] = await Promise.all([mediaDuration(voice), meanVolume(voice)]);
         lineDb = db;
         const room = s.seconds - 0.3;
@@ -632,15 +632,15 @@ async function wordLevelFindings(main: string, segments: { shotId: string; start
   return { findings, wer, via, linesOutside, level, captionSync: sync.score };
 }
 
-async function checkedVoice(line: string, voice: string, charge: (n: number) => void, onTry?: (n: number) => void, brand = "") {
+async function checkedVoice(line: string, voice: string, charge: (n: number) => void, onTry?: (n: number) => void, brand = "", pronunciation = "") {
   let last = "";
   for (let i = 0; i < 2; i++) {
     onTry?.(i + 1);
-    const v = await voiceover(line, voice);
+    const v = await voiceover(line, voice, { brand, pronunciation });
     charge(v.usage.costUsd);
     const heard = await transcribeLine(v.url, transcribe, asrVocabulary(line, brand));
     charge(heard.usage.costUsd);
-    if (nearSpeech(heard.text, line)) return v.url;
+    if (nearSpeech(heard.text, line, brand)) return v.url;
     last = heard.text;
   }
   throw new Error(`The narration did not match an approved line after two attempts (expected “${line}”, heard “${last.slice(0, 160)}”). Check pronunciation or reapprove revised wording before video spend.`);

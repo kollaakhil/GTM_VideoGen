@@ -160,8 +160,9 @@ export function sameSpeech(heard: string, expected: string) {
  * domains ("drinkolipop.com" → "drinkallapop.com"). Every word outside the domain must still match exactly, and the
  * domain may differ by at most 3 characters.
  */
-export function nearSpeech(heard: string, expected: string) {
+export function nearSpeech(heard: string, expected: string, brand = "") {
   if (sameSpeech(heard, expected)) return true;
+  if (brandNear(heard, expected, brand)) return true;
   const domain = expected.match(/\b[a-z0-9-]+\.(com|co|io|ai|net|org|shop|store)\b/i)?.[0];
   if (!domain) return false;
   const [before, after] = expected.split(domain);
@@ -173,6 +174,34 @@ export function nearSpeech(heard: string, expected: string) {
   const mid = h.slice(b.length, h.length - a.length).join("").replace(/(com|co|io|ai|net|org|shop|store)$/, "");
   const want = exactCopy(domain.replace(/\.[a-z]+$/i, "")).replace(/\s+/g, "");
   return levenshtein(mid, want) <= 3;
+}
+
+const FUNCTION_WORDS = new Set(["a", "an", "in", "and", "on", "the", "to", "of"]);
+
+/**
+ * Coined brand names are the one place speech-to-text and TTS disagree on clean audio: with the brand voiced
+ * correctly ("Ollie-pop") whisper still writes "OLLIPOP", and the unstressed "in" before it comes back "an"
+ * (run_8a9c7c9db627). Tolerance: the brand (5+ letters) may be heard as up to 3 tokens within 2 edits, and at most
+ * one unstressed function word may be swapped for another. Every other word must match exactly; the final QA's
+ * WER ≤ 10% check on the whole mix is unchanged.
+ */
+export function brandNear(heard: string, expected: string, brand = "") {
+  const want = exactCopy(brand).replace(/\s+/g, "");
+  if (want.length < 5) return false;
+  const h = exactCopy(heard).split(/\s+/).filter(Boolean), e = exactCopy(expected).split(/\s+/).filter(Boolean);
+  if (!e.some((w) => w === want)) return false;
+  let i = 0, swaps = 0;
+  for (const w of e) {
+    if (w === want) {
+      let took = 0;
+      for (let k = 1; k <= 3 && i + k <= h.length; k++) if (levenshtein(h.slice(i, i + k).join(""), want) <= 2) { took = k; break; }
+      if (!took) return false;
+      i += took;
+    } else if (h[i] === w) i++;
+    else if (FUNCTION_WORDS.has(w) && FUNCTION_WORDS.has(h[i] ?? "") && swaps++ < 1) i++;
+    else return false;
+  }
+  return i === h.length;
 }
 
 function levenshtein(a: string, b: string) {

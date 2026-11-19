@@ -134,3 +134,15 @@ describe("judgeFor", () => {
     expect(judgeFor("google/gemini-4-carbon")).toBe("openai/gpt-6.1-sol");
   });
 });
+
+it("brand tolerance: coined brand heard within 2 edits, one function-word swap, nothing else", async () => {
+  const { brandNear } = await import("@/lib/script-lab");
+  expect(nearSpeech("Keep the cola, swap an OLLIPOP.", "Keep the cola, swap in OLIPOP.", "OLIPOP")).toBe(true);
+  expect(nearSpeech("Keep the cola swap and ollie pop", "Keep the cola, swap in OLIPOP.", "OLIPOP")).toBe(true);
+  expect(nearSpeech("Keep the cola, swap an OLLIPOP.", "Keep the cola, swap in OLIPOP.")).toBe(false); // no brand given
+  expect(brandNear("Keep the soda, swap in OLIPOP.", "Keep the cola, swap in OLIPOP.", "OLIPOP")).toBe(false); // content word
+  expect(brandNear("Keep a cola, swap an OLIPOP.", "Keep the cola, swap in OLIPOP.", "OLIPOP")).toBe(false); // two swaps
+  expect(brandNear("Keep the cola, swap in Pepsi.", "Keep the cola, swap in OLIPOP.", "OLIPOP")).toBe(false);
+  expect(brandNear("Keep the cola, swap in OLIPOP now.", "Keep the cola, swap in OLIPOP.", "OLIPOP")).toBe(false); // extra word
+  expect(brandNear("Try the Lux one", "Try the Lux one", "Lux")).toBe(false); // short names get no tolerance
+});

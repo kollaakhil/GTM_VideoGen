@@ -402,3 +402,14 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
   vertical gradient (horizon = backdrop tone, bright top). Brighter, smoother aluminium (0.91 / roughness 0.12); a darker, glossier
   floor (roughness 0.16) that mirrors the can; a backdrop spot pool. Off-camera emissive strips are kept but EEVEE's screen-space
   tracing can't see off-screen objects, so the dome does the real work (lesson: in EEVEE, put reflection sources in the world).
+
+### 13.20 Brand pronunciation + brand-tolerant voice pre-check
+- Failure: draft blocked twice more at the voice pre-check after 13.17: TTS of "Olipop" was heard "Alapop" / "all up pop".
+  Measured on the Mac (5 respellings × whisper with and without the vocabulary hint, ~$0.01): "Ollie-pop" is voiced right and
+  heard "ollie pop" / "OLLIPOP"; even then the unstressed "in" before it comes back "an".
+- Fix: research returns `pronunciation` (a TTS respelling of the brand); `speakable()` swaps it in for the brand. The pre-check
+  (`nearSpeech(..., brand)` → `brandNear`) allows the brand (5+ letters) to be heard as up to 3 tokens within 2 edits and one
+  unstressed function-word swap (a/an/in/and/on/the/to/of). Every other word must match exactly.
+- Why this is not loosening: the pre-check guards against wrong words before spend; ASR spelling of a coined name says nothing
+  about the audio. The final QA's whole-mix WER ≤ 10% and caption word-sync checks are unchanged.
+- Operator note: run_8a9c7c9db627's research predates the field, so `research.pronunciation = "Ollie-pop"` was set by hand.

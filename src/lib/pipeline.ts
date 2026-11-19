@@ -121,7 +121,7 @@ export async function research(model: string, brandUrl: string, goal: string, fi
   const { data, usage } = await chatJSON<Research>(
     model,
     "You are a senior performance-marketing strategist. Analyse the brand from its website copy.",
-    `Goal: ${goal}\nWebsite (${brandUrl}) text:\n${site.text || `(could not fetch site: ${site.error}; infer from URL and say so in the summary)`}\n\nReturn JSON: {"brand": string (the brand name exactly as the site writes it), "summary": string (max 60 words), "audience": string, "valueProps": string[], "tone": string, "angles": string[] (5-6 distinct ad angles), "sources": string[], "competitors": [{"name": string, "url": string, "difference": string}] (2-4 real companies selling a similar product; only ones you are sure exist, never invented)}
+    `Goal: ${goal}\nWebsite (${brandUrl}) text:\n${site.text || `(could not fetch site: ${site.error}; infer from URL and say so in the summary)`}\n\nReturn JSON: {"brand": string (the brand name exactly as the site writes it), "pronunciation": string (how a voice-over should say the brand name, respelled for a text-to-speech voice, e.g. "Ollie-pop" for OLIPOP; repeat the brand if it is an ordinary word), "summary": string (max 60 words), "audience": string, "valueProps": string[], "tone": string, "angles": string[] (5-6 distinct ad angles), "sources": string[], "competitors": [{"name": string, "url": string, "difference": string}] (2-4 real companies selling a similar product; only ones you are sure exist, never invented)}
 Only state facts the website text supports; when unsure, leave it out.${fixes.length ? `\nA fact-checker rejected the last version. Fix these: ${fixes.join(" | ")}` : ""}`,
   );
   return {
