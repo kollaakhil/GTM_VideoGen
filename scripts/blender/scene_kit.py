@@ -35,6 +35,7 @@ while i < len(argv):
         args[argv[i]] = argv[i + 1]; i += 2
 SPEC = json.load(open(args["--spec"]))
 OUT = args["--out"]
+MODE = SPEC.get("mode", "final")
 FPS = int(SPEC.get("fps", 24))
 SECONDS = float(SPEC.get("seconds", 2))
 FRAMES = max(2, round(SECONDS * FPS))
@@ -70,8 +71,11 @@ for eng in ("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"):
     except TypeError:
         continue
 ee = scene.eevee
-for k, v in (("taa_render_samples", int(SPEC.get("samples", 32))), ("use_raytracing", True), ("volumetric_tile_size", "4"),
-             ("volumetric_samples", 48), ("volumetric_end", 6.0), ("use_shadows", True), ("fast_gi_method", "GLOBAL_ILLUMINATION")):
+samples = int(SPEC.get("samples", 32 if MODE == "final" else 8))
+use_raytracing = MODE == "final"
+volumetric_samples = 48 if MODE == "final" else 0
+for k, v in (("taa_render_samples", samples), ("use_raytracing", use_raytracing), ("volumetric_tile_size", "4"),
+             ("volumetric_samples", volumetric_samples), ("volumetric_end", 6.0), ("use_shadows", True), ("fast_gi_method", "GLOBAL_ILLUMINATION")):
     try:
         setattr(ee, k, v)
     except Exception:

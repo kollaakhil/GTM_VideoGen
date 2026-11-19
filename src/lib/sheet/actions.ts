@@ -7,6 +7,7 @@ import { renderAction } from "./render-actions";
 import { startSheetJob } from "./jobs";
 import { estimateSheetVersion, runPreviews, type RenderDeps } from "./render";
 import { DEFAULT_SHEET_VIDEO_MODEL, defaultRenderDeps } from "./render-deps";
+import { blenderQueue } from "@/lib/render/blender-queue";
 
 const VersionStackSchema = z.object({
   id: z.string(),
@@ -17,8 +18,44 @@ const VersionStackSchema = z.object({
 });
 
 /** Steps 4 and 5 of POST /api/sheet: start_versions (render 2-4 stacks), pick_winner, previews and final. */
-export async function sheetActions(raw: unknown, _user: string, deps: (stackModels?: Partial<Record<string, string>>) => RenderDeps = defaultRenderDeps): Promise<Response | null> {
+export async function sheetActions(raw: unknown, user: string, deps: (stackModels?: Partial<Record<string, string>>, jobContext?: { runId: string; versionId: string; priority?: "high" | "normal" }) => RenderDeps = defaultRenderDeps): Promise<Response | null> {
   const a = (raw as { action?: string } | null)?.action;
+  
+  // Cancel action: cancel render queue jobs for a run or version
+  if (a === "cancel") {
+    const body = raw as { runId?: string; versionId?: string };
+    if (!body.runId) return NextResponse.json({ error: "runId required" }, { status: 400 });
+    
+    const run = await loadRun(body.runId);
+    if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    if (run.createdBy !== user) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    
+    if (body.versionId) {
+      blenderQueue.cancelVersion(body.versionId);
+      // Mark version as cancelled
+      const version = run.versions.find((v) => v.id === body.versionId);
+      if (version && (version.status === "rendering" || version.status === "queued")) {
+        version.status = "cancelled";
+        version.error = "Cancelled by user";
+      }
+    } else {
+      blenderQueue.cancelRun(body.runId);
+      // Mark all queued/rendering versions as cancelled
+      run.versions.filter((v) => v.status === "rendering" || v.status === "queued").forEach((v) => {
+        v.status = "cancelled";
+        v.error = "Cancelled by user";
+      });
+    }
+    
+    // Release the 409 guard
+    if (run.status === "working") {
+      run.status = "idle";
+      run.activity = null;
+    }
+    
+    await saveProgress(run);
+    return NextResponse.json({ run });
+  }
   
   if (a === "start_versions") {
     const body = raw as { runId?: string; stacks?: unknown[] };

@@ -873,3 +873,106 @@ models: { video: "alibaba/wan-3.0/image-to-video", voice: "fal-ai/chatterbox/tex
 - All 460 tests pass
 - pnpm build succeeds
 - TypeScript type-safe
+
+## 21. Blender Queue Visibility and Cancellation (Studio Quality Gates branch)
+
+**Symptom (2026-11-19):** A user's Studio UI render sat invisibly behind a test run's Final that had queued 6-7 Blender shots (about 45 s each with EEVEE). The single process-wide `blenderSlot` was a FIFO queue with no visibility and no way to cancel. Previews took 4m27s for 6 Blender shots, blocking the user's interactive render.
+
+**Problem:** The Mac has 8 GB and Blender uses every core, so shots queue for the one slot (`BLENDER_PARALLEL=1`). Every Blender shot from every run waits in this one invisible line. When one run's Final queued 6-7 shots, the user's own render from the Studio UI had no indication of queue state and no way to cancel. Previews were slow even for picking a version.
+
+**Solution (5 parts):**
+
+### 1. Queue Visibility
+- Made the Blender slot an **observable queue** (`src/lib/render/blender-queue.ts`). Each job has `id`, `runId`, `versionId`, `shotId`, `state` (`waiting`/`running`/`done`/`cancelled`/`failed`), `priority`, `enqueuedAt`, `startedAt`, `finishedAt`, `process`, `abortController`, and `error`.
+- Exposed it with **`GET /api/studio/queue`** using the same auth as other studio API routes. Returns jobs filtered by `runId` or `versionId`, with position, duration, and wait times.
+- In the **Studio Previews and Final steps**, show per-shot state: "waiting, #N in line", "rendering", "done" or "cached". Also show a small global strip with the number of jobs ahead and which run they belong to. **Poll every 2 s while anything is active** (optional; implement when wiring the UI).
+
+### 2. Cancel
+- Added **`POST /api/studio/queue`** for cancelling by `runId`, `versionId`, or `jobId`. It:
+  - Removes waiting jobs from the queue
+  - Kills the running Blender child process (stores handle, uses `SIGTERM`, then `SIGKILL` after 3 s)
+  - Aborts in-flight AI-video or provider calls through `AbortController` (wired where the provider client supports it)
+- Marks the version `cancelled` (added to the status union in `src/lib/sheet/run-types.ts`).
+- **Clears the run's "working" status** so the 409 guard in `src/lib/sheet/render-actions.ts` releases.
+- Added a **Cancel button** in the UI next to each rendering version and each run (optional; implement when wiring the UI).
+
+### 3. Auto-Cancel Superseded Jobs
+- When a run starts a new render step, **`autoCancel`** that same run's earlier **queued** jobs for the same version, since they're superseded. Running jobs are not auto-cancelled.
+
+### 4. Faster Previews
+**Preview mode Blender:**
+- **Resolution:** 480p-class resolution (854×480 for 16:9, scaled for other aspects) and 24 fps (no interpolation needed since Blender renders at native fps).
+- **EEVEE `taa_render_samples`:** 8 in preview, the spec value (16 or 32) in Final.
+- **Raytracing and volumetrics:** Off in preview mode. Set `use_raytracing = False` and `volumetric_samples = 0` in preview. Both `scripts/blender/shot_kit.py` and `scripts/blender/scene_kit.py` read the `mode` field from the spec JSON.
+- **Final mode:** keeps the current quality (720p or requested size, full samples, raytracing, volumetrics).
+
+**Priority:**
+- Interactive (Studio UI) jobs get `priority: "high"`.
+- Background or scripted runs use `priority: "normal"`.
+- The queue serves high-priority waiting jobs before normal-priority ones.
+
+**Timing log:** Added per-shot timing (stored in `durationMs` on the queue job; optional to expose in UI).
+
+### 5. Tests (Vitest, mocked processes, no paid calls)
+All tests in `tests/blender-queue.test.ts`:
+- ✅ **Queue order and priority**: FIFO for same priority, high priority goes first.
+- ✅ **Queue position reporting**: `getPosition()` returns 1-indexed position for waiting jobs, `null` for running/done.
+- ✅ **Cancel removes waiting jobs** and kills the running one (fake child process).
+- ✅ **Superseded auto-cancel**: new job for same run+version cancels earlier waiting jobs, not the current one.
+- ✅ **409 guard is released** after cancel (slot freed for next job).
+- ✅ **Preview spec**: samples 8, raytracing off, 854×480 for 16:9.
+
+**Test results:**
+- All queue tests pass.
+- Existing Blender tests still pass (fallback for no job context).
+- `pnpm tsc --noEmit` is clean.
+- `pnpm build` passes.
+
+### Implementation Notes
+- **Process handle tracking:** `spawnTracked()` in `blender-scene.ts`, `blender-kit.ts`, and `packshot.ts` registers the `ChildProcess` with the queue via `setProcess()`.
+- **Job context:** `RenderJobContext` (in `renderers.ts`) carries `jobId`, `runId`, `versionId`, `priority`. Passed through `defaultRenderDeps()` to `blenderRenderer()`.
+- **AbortController:** Registered via `setAbortController()` for cancellable AI calls (wired where the provider supports it; stubbed for now).
+- **Queue cleanup:** `cleanup(maxAgeMs)` removes old finished jobs (default 1 hour). Not called automatically; invoke it periodically or on demand.
+
+### Wiring Status
+- ✅ Queue manager (`blender-queue.ts`)
+- ✅ API endpoint (`/api/studio/queue`)
+- ✅ Cancel action (`/api/sheet` via `sheetActions`)
+- ✅ Auto-cancel in render actions
+- ✅ Preview optimizations (Python scripts, TypeScript spec)
+- ✅ Process tracking (Blender, packshot)
+- ✅ Priority support
+- ✅ Tests
+- ⚠️ **UI wiring (queue display, Cancel buttons, polling):** Not yet implemented. The API is ready; the Studio UI needs to call `GET /api/studio/queue` every 2 s while active, and add Cancel buttons that call `POST /api/studio/queue` with `action: "cancel"`.
+- ⚠️ **AI-video AbortController:** Stubbed in the queue but not wired to actual provider calls. Fal, OpenRouter, and Higgsfield clients need to accept `signal: AbortSignal` and pass it to their HTTP fetch calls.
+
+### Provider Cancellation (Not Yet Wired)
+**Which providers support abort?**
+- **Fal:** Supports `signal` on `fal.subscribe()`. Wire it in `src/lib/ai.ts` `generateVideo()`.
+- **OpenRouter:** HTTP-based, can pass `signal` to `fetch()`. Wire it in the same function.
+- **Higgsfield:** Uses its own client; check if it accepts a signal. If not, abort is a no-op (the request completes server-side, but we stop waiting).
+
+**What's stubbed:**
+- `setAbortController()` is called with a fresh `AbortController` in `withBlenderSlot()`.
+- Cancel triggers `controller.abort()`.
+- **To complete:** AI renderers (`ai-video`) must create an `AbortController`, pass its `signal` to the provider call, and register the controller via `setAbort()` in the `withBlenderSlot()` callback. For now, cancel only stops Blender; AI-video jobs run to completion server-side.
+
+### How to Use
+**In the Studio UI:**
+1. Poll `GET /api/studio/queue?runId=<id>` every 2 s while `hasActive` is true.
+2. For each job, show its `state` and `position` (if waiting).
+3. Add a Cancel button next to rendering versions/runs that calls `POST /api/studio/queue` with `{ action: "cancel", versionId: "<id>" }` (or `runId`).
+
+**Priority:**
+- Studio UI renders: pass `priority: "high"` in the render action body.
+- Background/script runs: omit it (defaults to `"normal"`).
+
+### Future Enhancements (Not in This PR)
+- **Multi-slot queue**: If `BLENDER_PARALLEL > 1`, the queue can run N jobs concurrently. The implementation supports it; just set the env var.
+- **Per-user priority**: Team admins could get higher priority than free users.
+- **ETA display**: "~2m remaining" based on average Blender shot time.
+- **Queue history**: Keep finished jobs longer for debugging (currently 1 hour, configurable).
+
+### Related
+- PR branch: `devin/1794972912-studio-quality-gates`
+- See also: PLAYBOOK §14 (Studio flow), §9 (Video plan), §6 (Stage gates)
