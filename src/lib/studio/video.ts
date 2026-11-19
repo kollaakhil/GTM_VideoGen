@@ -18,7 +18,7 @@ import { now, say, live, saveRun } from "./run-state";
 import { brandFor, guidance, brandName, shortHash, swipesFor } from "./context";
 import { inspirationGuidance } from "@/lib/inspiration";
 import { saveCreative } from "./creatives";
-import { better, gateJudge, shotsGate, audioChecks, editChecks, judgeContinuity, videoChecks } from "@/lib/stage-gates";
+import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
 import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
 import { latestCalibration } from "@/lib/judge-calibration";
 
@@ -224,20 +224,24 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   await step(run, d, "Making and verifying voice and music before motion spend", 1, total, "voice");
   let start = 0;
   const voices: Voice[] = [];
+  const voiceLines: VoiceLine[] = [];
   for (const [i, s] of shots.entries()) {
     if (!live(run)) throw new Error("Stopped before the next voiceover.");
     const line = s.vo.trim();
     if (line) {
       const key = shortHash([line, plan.voice, s.seconds]);
+      let tries = 1, lineDb: number | null = null;
       if (s.voiceTrack?.key !== key) {
-        const voice = await checkedVoice(line, plan.voice, charge);
+        const voice = await checkedVoice(line, plan.voice, charge, (n) => { tries = n; });
         const [len, db] = await Promise.all([mediaDuration(voice), meanVolume(voice)]);
+        lineDb = db;
         const room = s.seconds - 0.3;
         if (len < 0.3 || db < SILENT_DB || len > room * 1.3) throw new Error(`Voice for shot ${i + 1} is silent or too long for the approved beat. Shorten the script and review it again; no video was requested.`);
         s.voiceTrack = { key, url: await storeMedia(voice, `${run.id}/${d.id}-voice-${i}-${key}`), tempo: len > room ? len / room : undefined };
         await saveRun(run);
       }
       voices.push({ url: s.voiceTrack.url, start: start + 0.15, tempo: s.voiceTrack.tempo });
+      voiceLines.push({ heard: true, tries, tempo: s.voiceTrack.tempo, meanDb: lineDb });
     }
     start += s.seconds;
   }
@@ -257,6 +261,13 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
       throw new Error("The selected music bed is unavailable or silent. No video was requested. Retry or disable music in the video plan.");
     }
   }
+
+  // Voice & music gate, before any motion spend: every line heard back, fits its beat at natural speed, music audible.
+  const voiceGate = stageScore("voice", voiceChecks(voiceLines, { planned: !!plan.music, ok: !!music }), "rules", 1,
+    voiceChecks(voiceLines, { planned: !!plan.music, ok: !!music }).filter((c) => c.score < 8).map((c) => `${c.name}: ${c.note}`));
+  saveStage(run, voiceGate, d.id);
+  const voiceBlock = stageBlock(run, "voice", d.id);
+  if (voiceBlock) throw new Error(`${voiceBlock} ${voiceGate.notes.join(" ")} No video was requested.`);
 
   const firsts = await Promise.all(shots.map((s) => mediaDataUrl(s.keyframe!)));
   const assess = async (video: string, s: Shot, i: number): Promise<ShotQA> => {
@@ -495,8 +506,11 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     const segment = segments[n - 1];
     findings.push({ kind: "preflight", at: segment.start, shotId: segment.shotId, expected: `Keyframe match and ${QA_PASS}/10 before HD`, observed: `Keyframe ${n} still needs review.`, status: "review" });
   }
+  const finalGate = stageScore("final", finalChecks({ craft: craft.score, findings, shotScores: evidence.map((e) => e.qa?.score ?? 0) }), run.models.vision, 1,
+    [...craft.notes, ...findings.filter((f) => f.status === "fail").map((f) => `${f.at.toFixed(1)}s ${f.kind}: ${f.observed}`)].slice(0, 6));
   const stages = await takeStages(run, main, { shots, st, evidence, craft: craft.score, words, music: a.music, speechFails: speech.findings.filter((f) => f.kind === "speech" && f.status === "fail").length, charge, beats: d.approvedScript?.beats.map((b) => b.seconds) });
   for (const g of stages) saveStage(run, g, d.id);
+  saveStage(run, finalGate, d.id);
   const quality = { ...exportVerdict(tier, craft.score, evidence, findings, variants.map((v) => v.aspect)), storyboardKey: d.storyboardKey! };
   const pass = videoReady(quality);
   const result = { score: quality.score, pass, notes: [...findings.slice(0, 5).map((f) => f.observed), ...craft.notes] };
@@ -565,9 +579,10 @@ async function wordLevelFindings(main: string, segments: { shotId: string; start
   return { findings, wer, via, linesOutside, level };
 }
 
-async function checkedVoice(line: string, voice: string, charge: (n: number) => void) {
+async function checkedVoice(line: string, voice: string, charge: (n: number) => void, onTry?: (n: number) => void) {
   let last = "";
   for (let i = 0; i < 2; i++) {
+    onTry?.(i + 1);
     const v = await voiceover(line, voice);
     charge(v.usage.costUsd);
     const heard = await transcribeLine(v.url, transcribe);

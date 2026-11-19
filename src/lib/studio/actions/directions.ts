@@ -9,7 +9,7 @@ import type { Job, ActionBody } from "./types";
 export async function planDirections(run: StudioRun, body: ActionBody<"directions">): Promise<Job> {
   const m = run.models;
   if (!run.brief || !run.research) return { error: "Write the brief first" };
-  const gate = stageBlock(run, "research");
+  const gate = stageBlock(run, "research") ?? stageBlock(run, "brief");
   if (gate) return { error: gate };
   if (body.format) run.format = body.format;
   return {

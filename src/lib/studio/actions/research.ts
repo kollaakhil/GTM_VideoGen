@@ -1,4 +1,5 @@
-import { brief, research, styleDNA } from "@/lib/pipeline";
+import { research, styleDNA } from "@/lib/pipeline";
+import { gatedBrief } from "../brief-gate";
 import { brandRules } from "@/lib/brand-rules";
 import { voiceOfCustomer, vocBlock } from "@/lib/ad-wisdom";
 import { breakdownInspiration, swipeStructure } from "@/lib/inspiration";
@@ -53,9 +54,9 @@ export async function planResearch(run: StudioRun, body?: ActionBody<"research">
         say(run, "agent", `Research is done${parts.length ? `, and I ${parts.join(" and ")}` : ""}. Next: write the creative brief.${gateLine}`);
         return;
       }
-      const b = await brief(m.text, run.research!, goalCtx(run, (await guidance(run)) + vocBlock(run.voc)), run.styleDNA);
+      const b = await gatedBrief(run, m.text, goalCtx(run, (await guidance(run)) + vocBlock(run.voc)));
       Object.assign(run, { brief: b.data, stage: "directions", directions: [], concepts: [], costUsd: run.costUsd + b.cost });
-      say(run, "agent", `Research${parts.length ? ` (I ${parts.join(" and ")})` : ""} and the brief are ready. Review both here, edit the brief if you like, then approve it.${gateLine}`);
+      say(run, "agent", `Research${parts.length ? ` (I ${parts.join(" and ")})` : ""} and the brief are ready. Review both here, edit the brief if you like, then approve it.${gateLine}${b.line}`);
     },
   };
 }

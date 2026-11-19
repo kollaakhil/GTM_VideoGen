@@ -1,4 +1,5 @@
 import { scriptProductionBlockers, storyboardKeyframeFixes, VIDEO_PASS } from "./quality-policy";
+import { GATE_THRESHOLDS } from "./gate-config";
 import type { AdScript, JudgeCalibration, StageId, StageScore, StudioRun, VideoTake } from "./types";
 
 /**
@@ -8,12 +9,15 @@ import type { AdScript, JudgeCalibration, StageId, StageScore, StudioRun, VideoT
  * Pure helpers only (the UI imports this); judges live in stage-gates.ts.
  */
 export const STAGES: { id: StageId; label: string; threshold: number }[] = [
-  { id: "research", label: "Research", threshold: 8 },
-  { id: "script", label: "Script", threshold: 7 },
-  { id: "shots", label: "Shot plan", threshold: 8 },
-  { id: "video", label: "Video", threshold: VIDEO_PASS },
-  { id: "audio", label: "Sound & voice", threshold: 8 },
-  { id: "edit", label: "Edit", threshold: 8 },
+  { id: "research", label: "Research", threshold: GATE_THRESHOLDS.research },
+  { id: "brief", label: "Brief", threshold: GATE_THRESHOLDS.brief },
+  { id: "script", label: "Script", threshold: GATE_THRESHOLDS.script },
+  { id: "shots", label: "Shot plan", threshold: GATE_THRESHOLDS.shots },
+  { id: "voice", label: "Voice & music", threshold: GATE_THRESHOLDS.voice },
+  { id: "video", label: "Shot renders", threshold: GATE_THRESHOLDS.video },
+  { id: "audio", label: "Sound mix", threshold: GATE_THRESHOLDS.audio },
+  { id: "edit", label: "Edit", threshold: GATE_THRESHOLDS.edit },
+  { id: "final", label: "Final QA", threshold: GATE_THRESHOLDS.final },
 ];
 export const threshold = (stage: StageId) => STAGES.find((s) => s.id === stage)!.threshold;
 
@@ -44,7 +48,7 @@ export function stageScore(stage: StageId, checks: Check[], judge: string, attem
   return { stage, score, raw, pass: score >= threshold(stage), checks, notes: notes.slice(0, 6), attempts, judge: judged ? judge : "rules", override: null, at: new Date().toISOString() };
 }
 
-export const stageKey = (stage: StageId, directionId?: string) => (directionId && stage !== "research" ? `${stage}:${directionId}` : stage);
+export const stageKey = (stage: StageId, directionId?: string) => (directionId && stage !== "research" && stage !== "brief" ? `${stage}:${directionId}` : stage);
 
 export function saveStage(run: StudioRun, s: StageScore, directionId?: string) {
   run.stageScores = { ...(run.stageScores ?? {}), [stageKey(s.stage, directionId)]: s };
@@ -82,7 +86,8 @@ export function scriptStage(s?: AdScript | null): StageScore | null {
   if (!s?.score) return null;
   const checks: Check[] = Object.entries(s.score.scores).map(([name, score]) => ({ name, score, note: "", by: "judge" as const }));
   checks.push({ name: "overall", score: s.score.overall, note: s.score.notes?.[0] ?? "", by: "judge", weight: 3 });
-  return { ...stageScore("script", checks, s.review?.judge ?? "judge", s.rounds ?? 1, s.score.notes ?? []), score: s.score.overall, raw: s.score.overall, pass: s.score.overall >= threshold("script") && !s.score.unsupported.length };
+  const notes = [...new Set([...(s.checks ?? []), ...(s.score.proofProblems ?? []), ...(s.score.notes ?? [])])];
+  return { ...stageScore("script", checks, s.review?.judge ?? "judge", (s.rounds ?? 0) + 1, notes), score: s.score.overall, raw: s.score.overall, pass: s.score.overall >= threshold("script") && !s.score.unsupported.length && !s.score.proofProblems?.length && !s.checks?.length };
 }
 
 

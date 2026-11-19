@@ -205,3 +205,26 @@ Each static direction renders `TOURNAMENT_SIZE` takes (default 2, max 4) and kee
 `verifySpeech` now passes whisper a `--prompt` that lists only the brand name, domains and coined all-caps or
 CamelCase words (`asrVocabulary`), never the whole line, so real mis-speech still fails. On the stored OLIPOP final,
 the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
+
+### 13.3 A gate at every stage (PR "stage gates v2")
+
+- **Nine chips, in order:** Research, Brief, Script, Shot plan, Voice & music, Shot renders, Sound mix, Edit and
+  Final QA. Every gate gives a 0–10 score, a threshold and fix notes (hover a chip).
+- **Thresholds are configurable** with `NEXT_PUBLIC_GATE_THRESHOLDS="script=8.5,final=9"`. It is inlined at build
+  time, so rebuild after changing it. The default is 8; Shot renders and Final QA default to the 9/10 publish bar.
+  **The script bar went from 7 to 8.** The script lab's repair target (`SCRIPT_TARGET`) is the same number, and a
+  script only passes with no proof problems and no failed checks.
+- **Brief gate (new):** rule checks (word limits, generic wording, the share of offer words found in the research,
+  3–5 mandatories, a measurable KPI) plus one judge call that lists issues as minor or major, with the score
+  computed from them. Any major issue blocks. One rewrite runs with the fix notes, and the better brief is kept. A
+  failing brief blocks concepts and directions, just like research, unless it is overridden.
+- **Voice & music gate (new, free, before any video spend):** every line must be heard back as written (a second TTS
+  take costs a point), fit its beat at natural speed (lines sped up past ×1.08 lose points; trim the words), sit at a
+  sensible level, and the planned music bed must be audible. Under the bar the take stops with "No video was
+  requested". Override the chip to continue, and cached voice tracks are reused.
+- **Final QA gate (new):** a rubric of creative director (×2), weakest shot (×1.5), OCR copy, ASR voice vs script,
+  failing visual frames and technical. The old OLIPOP final (craft 6, 7 OCR misses, 2 speech misses, shot 1 at 4)
+  scores ≤ 6 on it, which matches what we saw.
+- **Retries:** research and the shot plan already re-ran once with notes. The brief rewrites once. The script does
+  one full-note repair round (§13.2). Each shot render re-shoots once with its QA notes. Copy failures on the export
+  are re-typeset for free.
