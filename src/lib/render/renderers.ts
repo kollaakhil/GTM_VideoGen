@@ -5,6 +5,7 @@ import { generateVideo } from "../ai";
 import { packshotAvailable, renderPackshot } from "../packshot";
 import { renderBlenderScene, sceneAvailable } from "./blender-scene";
 import { motionGraphicsEnabled, renderEndCard } from "../motion-graphics";
+import { kitJob, renderKit } from "./blender-kit";
 import { RendererUnavailable, type Renderer, type RenderContext, type ShotRow } from "./types";
 
 /** Which providers bill per second; the registry (builder B) can replace this. */
@@ -73,6 +74,12 @@ export function blenderRenderer(deps: BlenderDeps = {}): Renderer {
     available: deps.available ?? (async () => (await sceneAvailable()) || (await packshotAvailable())),
     estimateUsd: () => 0,
     async render(row, ctx) {
+      if (row.kit && !deps.clip) {
+        const job = kitJob(row.kit.shot, { palette: row.kit.palette }, { width: ctx.width, height: ctx.height, mode: ctx.mode, blender: row.kit.blender });
+        const image = row.kit.blender?.template === "product_hero" ? ctx.refs[0] : undefined;
+        if (row.kit.blender?.template === "product_hero" && !image) throw new RendererUnavailable("blender", "product_hero needs a product photo");
+        return { url: await blenderSlot(() => renderKit(job, { mode: ctx.mode, image })), costUsd: 0, note: `blender:${job.script === "scene_kit.py" ? "lab" : String(job.spec.template)}` };
+      }
       if (!ctx.refs[0]) throw new RendererUnavailable("blender", "no product photo to unwrap the label from");
       return { url: await blenderSlot(() => (deps.clip ?? defaultBlenderClip)(row, ctx)), costUsd: 0 };
     },

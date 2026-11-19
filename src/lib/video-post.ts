@@ -200,7 +200,7 @@ const toFile = async (dir: string, name: string, media: string) => {
  * Joins shot clips into one 720x1280 30fps video. With a voiceover and/or music bed the model audio is replaced
  * by a mix (voice on top, music ducked under it); otherwise each clip's own audio is kept.
  */
-export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; beatSync?: boolean; sfx?: SfxCue[]; /** Sidechain-duck the music bed under voice and sound effects. */ duck?: boolean; /** Bed level before ducking (default 0.18 under other audio, 0.6 alone). */ bedGain?: number } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number; voiceStarts?: number[] }> {
+export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; /** Output height; default is 9:16 for the width. */ height?: number; beatSync?: boolean; sfx?: SfxCue[]; /** Sidechain-duck the music bed under voice and sound effects. */ duck?: boolean; /** Bed level before ducking (default 0.18 under other audio, 0.6 alone). */ bedGain?: number } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number; voiceStarts?: number[] }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-stitch-"));
   try {
     const norm: string[] = [];
@@ -233,7 +233,7 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
       const duration = planned?.[i] ?? info.duration;
       if (!(duration > 0) || info.duration + 0.12 < duration) throw new Error(`Shot ${i + 1} is shorter than its planned ${duration}s.`);
       const w = audio.width ?? 720;
-      const h = Math.round(w * 16 / 9 / 2) * 2;
+      const h = audio.height ?? Math.round(w * 16 / 9 / 2) * 2;
       const out = path.join(dir, `n${i}.mp4`);
       await run(
         FFMPEG,

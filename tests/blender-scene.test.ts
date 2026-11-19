@@ -95,12 +95,13 @@ describe("shot sheet rows", () => {
   };
   it("adapts timings, camera, lens, text and sound", () => {
     const r = rowFromSheetShot(sheet("blender", false));
-    expect(r).toMatchObject({ id: "a", seconds: 2.5, lensMm: 100, camera: "eye level, slow push-in", onScreen: "Gemini 4", sound: "valve clank", renderer: "auto" });
+    expect(r).toMatchObject({ id: "a", seconds: 2.5, lensMm: 100, camera: "eye level, slow push-in", onScreen: "Gemini 4", sound: "valve clank", renderer: "blender" });
   });
-  it("only a locked engine forces the renderer", () => {
+  it("the sheet's engine decides the renderer, locked or not (the sheet is the source of truth)", () => {
     expect(rowFromSheetShot(sheet("blender", true)).renderer).toBe("blender");
+    expect(rowFromSheetShot(sheet("blender", false)).renderer).toBe("blender");
     expect(rowFromSheetShot(sheet("ai_video", true)).renderer).toBe("ai-video");
-    expect(rowFromSheetShot(sheet("remotion", false))).toMatchObject({ renderer: "auto", graphic: true });
+    expect(rowFromSheetShot(sheet("remotion", false))).toMatchObject({ renderer: "remotion", graphic: true });
   });
 });
 

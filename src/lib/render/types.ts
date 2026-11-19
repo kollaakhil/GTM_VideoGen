@@ -33,6 +33,8 @@ export interface ShotRow {
   template?: BlenderTemplateId;
   /** Treat as a text/graphic card (no filmed subject). */
   graphic?: boolean;
+  /** The sheet's own Blender template (shot_kit / scene_kit). When set, Blender needs no product photo. */
+  kit?: { shot: SheetShot; palette: string; blender?: SheetShot["blender"] };
 }
 
 export interface RenderContext {
@@ -90,15 +92,17 @@ export function rowFromShot(s: Shot, extra: Partial<ShotRow> = {}): ShotRow {
 const SHEET_ENGINE: Record<SheetShot["engine"], RendererId> = { blender: "blender", ai_video: "ai-video", remotion: "remotion", "3d": "ai-video", world: "ai-video" };
 
 /**
- * Adapts a shot-sheet row (builder A's `SheetShot`). The sheet's engine only forces the renderer when the operator
- * locked it; otherwise the router decides. Camera and lens come straight from the row.
+ * Adapts a shot-sheet row. The shot sheet is the single source of truth: its engine column decides the renderer
+ * (the enhancer and the operator set it; `engineLocked` only stops a re-write from changing it). Blender rows carry
+ * the sheet's template so they render without a product photo. Camera and lens come straight from the row.
  */
-export function rowFromSheetShot(s: SheetShot, extra: Partial<ShotRow> = {}): ShotRow {
+export function rowFromSheetShot(s: SheetShot, extra: Partial<ShotRow> = {}, palette = ""): ShotRow {
   return {
     id: s.id, beat: s.shotType, seconds: dur(s), action: [s.subject, s.action].filter(Boolean).join(": "),
     camera: `${s.camera.angle}, ${s.camera.move}`, lensMm: s.camera.lensMm, lighting: s.lighting || undefined,
     onScreen: s.text?.copy, sound: [s.audio.sfx, s.audio.vo].filter(Boolean).join(" | ") || undefined,
-    renderer: s.engineLocked ? SHEET_ENGINE[s.engine] : "auto", graphic: s.engine === "remotion" && !s.engineLocked ? true : undefined,
+    renderer: SHEET_ENGINE[s.engine], graphic: s.engine === "remotion" ? true : undefined,
+    ...(s.engine === "blender" ? { kit: { shot: s, palette, blender: s.blender } } : {}),
     ...extra,
   };
 }
