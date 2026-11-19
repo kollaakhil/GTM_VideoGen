@@ -42,6 +42,61 @@ describe("shot sheet schema", () => {
     bad.shots[0].engine = "sora";
     expect(parseSheet(bad).ok).toBe(false);
   });
+  it("clamps over-long framing to 240 characters ending with …", () => {
+    const raw = JSON.parse(JSON.stringify(good()));
+    raw.shots[0].framing = "A".repeat(400);
+    const r = parseSheet(raw);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.sheet.shots[0].framing.length).toBeLessThanOrEqual(240);
+      expect(r.sheet.shots[0].framing).toMatch(/…$/);
+    }
+  });
+  it("clamps over-long framing at word boundary when possible", () => {
+    const raw = JSON.parse(JSON.stringify(good()));
+    raw.shots[0].framing = "The product sits on a table in the foreground with dramatic lighting coming from the left side and casting long shadows across " + "X".repeat(200);
+    const r = parseSheet(raw);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.sheet.shots[0].framing.length).toBeLessThanOrEqual(240);
+      expect(r.sheet.shots[0].framing).toMatch(/…$/);
+      expect(r.sheet.shots[0].framing).not.toMatch(/X/);
+    }
+  });
+  it("clamps over-long editorNote to 400 characters ending with …", () => {
+    const raw = JSON.parse(JSON.stringify(good()));
+    raw.shots[0].editorNote = "B".repeat(500);
+    const r = parseSheet(raw);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.sheet.shots[0].editorNote.length).toBeLessThanOrEqual(400);
+      expect(r.sheet.shots[0].editorNote).toMatch(/…$/);
+    }
+  });
+  it("still rejects empty strings when min is 1", () => {
+    const raw = JSON.parse(JSON.stringify(good()));
+    raw.shots[0].id = "";
+    const r1 = parseSheet(raw);
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) expect(r1.error).toMatch(/shots\.0\.id/);
+    
+    const raw2 = JSON.parse(JSON.stringify(good()));
+    raw2.shots[0].shotType = "   ";
+    const r2 = parseSheet(raw2);
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) expect(r2.error).toMatch(/shots\.0\.shotType/);
+  });
+  it("preserves default, optional, and nullable behavior", () => {
+    const raw = JSON.parse(JSON.stringify(good()));
+    delete raw.shots[0].framing;
+    delete raw.shots[0].editorNote;
+    const r = parseSheet(raw);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.sheet.shots[0].framing).toBe("");
+      expect(r.sheet.shots[0].editorNote).toBe("");
+    }
+  });
 });
 
 describe("timing math", () => {

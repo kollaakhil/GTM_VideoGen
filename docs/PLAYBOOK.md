@@ -874,7 +874,20 @@ models: { video: "alibaba/wan-3.0/image-to-video", voice: "fal-ai/chatterbox/tex
 - pnpm build succeeds
 - TypeScript type-safe
 
-## 21. Blender Queue Visibility and Cancellation (Studio Quality Gates branch)
+## 21. LLM-written sheet fields: clamp, never reject
+
+**Problem:** The LLM enhancer (`src/lib/sheet/writer.ts`) often writes text longer than schema limits. When `framing` (was 160 chars) or `editorNote` (was 300 chars) exceeded their max, the whole sheet failed with a raw Zod `too_big` error in the Studio UI.
+
+**Solution:** `Str(n, min)` in `src/lib/shot-sheet.ts` now clamps instead of rejecting. Using `z.preprocess`, it trims the string and slices it to n characters. If the slice cuts a word, it ends at the last word boundary plus "…" (still at most n chars). The schema still types as `string`, and `.default`, `.optional`, and `.nullable` still work.
+
+**Changes:**
+- `Str` signature: `Str(n: number, min = 0)`. Fields that require non-empty strings now use `Str(X, 1)` instead of `Str(X).min(1)`.
+- Limits raised: `framing` to 240, `editorNote` to 400. Other limits unchanged.
+- Tests verify: 400-char input clamps to ≤240 with "…"; word-boundary clamping works; `.min(1)` fields still reject empty strings; `.default`, `.optional`, `.nullable` behavior preserved.
+
+**Lesson:** Never use hard `.max()` on free-text LLM output that you only display. Clamp it, show what fits, and let the user see the sheet instead of a schema error.
+
+## 22. Blender Queue Visibility and Cancellation (Studio Quality Gates branch)
 
 **Symptom (2026-11-19):** A user's Studio UI render sat invisibly behind a test run's Final that had queued 6-7 Blender shots (about 45 s each with EEVEE). The single process-wide `blenderSlot` was a FIFO queue with no visibility and no way to cancel. Previews took 4m27s for 6 Blender shots, blocking the user's interactive render.
 

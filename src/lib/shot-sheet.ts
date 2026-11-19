@@ -13,20 +13,31 @@ export const TRANSITIONS = ["cut", "fade_black", "crossfade", "whip"] as const;
 export const BLENDER_TEMPLATES = ["glow_word", "macro_label", "product_hero", "lab", "glb_turntable"] as const;
 export type BlenderTemplate = (typeof BLENDER_TEMPLATES)[number];
 
-const Str = (n: number) => z.string().trim().max(n);
+const Str = (n: number, min = 0) =>
+  z.preprocess(
+    (val) => {
+      if (typeof val !== "string") return val;
+      const s = val.trim();
+      if (s.length <= n) return s;
+      const cut = s.slice(0, n);
+      const lastSpace = cut.lastIndexOf(" ");
+      return lastSpace > 0 ? cut.slice(0, lastSpace) + "…" : cut.slice(0, n - 1) + "…";
+    },
+    min > 0 ? z.string().min(min) : z.string()
+  );
 
 export const ShotSchema = z.object({
-  id: Str(24).min(1),
+  id: Str(24, 1),
   n: z.number().int().min(1).max(60),
   start: z.number().min(0).max(120),
   end: z.number().min(0).max(120),
-  shotType: Str(60).min(1),
-  framing: Str(160).default(""),
-  camera: z.object({ angle: Str(80).min(1), move: Str(120).min(1), lensMm: z.number().min(8).max(300) }),
-  subject: Str(200).min(1),
+  shotType: Str(60, 1),
+  framing: Str(240).default(""),
+  camera: z.object({ angle: Str(80, 1), move: Str(120, 1), lensMm: z.number().min(8).max(300) }),
+  subject: Str(200, 1),
   action: Str(300).default(""),
   lighting: Str(200).default(""),
-  text: z.object({ copy: Str(140).min(1), placement: Str(80).default("lower third") }).nullable().default(null),
+  text: z.object({ copy: Str(140, 1), placement: Str(80).default("lower third") }).nullable().default(null),
   audio: z.object({ vo: Str(300).nullable().default(null), sfx: Str(160).nullable().default(null), music: Str(160).nullable().default(null) }),
   transition: z.enum(TRANSITIONS).default("cut"),
   engine: z.enum(ENGINES),
@@ -35,13 +46,13 @@ export const ShotSchema = z.object({
   blender: z.object({ template: z.enum(BLENDER_TEMPLATES), word: Str(40).optional(), label: Str(60).optional(), color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), ignite: z.number().min(-1).max(10).optional() }).optional(),
   /** Prompt for AI video / world shots (written by the enhancer from the row; editable). */
   prompt: Str(1200).optional(),
-  editorNote: Str(300).default(""),
+  editorNote: Str(400).default(""),
 });
 export type SheetShot = z.infer<typeof ShotSchema>;
 
 export const RuleSchema = z.object({
-  id: Str(32).min(1),
-  text: Str(240).min(1),
+  id: Str(32, 1),
+  text: Str(240, 1),
   /** Machine-checkable rules the gate enforces deterministically; others are advisory notes for the final review. */
   check: z.enum(["push_in", "void_background", "foley_first", "fade_before_card", "action_cuts", "reveal_holds", "macro_open", "diegetic_text"]).optional(),
 });
@@ -57,7 +68,7 @@ export const SheetSchema = z.object({
   palette: Str(120).default(""),
   rules: z.array(RuleSchema).max(30),
   shots: z.array(ShotSchema).min(1).max(40),
-  endCard: z.object({ title: Str(60).min(1), line: Str(120).default(""), footer: Str(120).default("") }),
+  endCard: z.object({ title: Str(60, 1), line: Str(120).default(""), footer: Str(120).default("") }),
 });
 export type ShotSheet = z.infer<typeof SheetSchema>;
 
