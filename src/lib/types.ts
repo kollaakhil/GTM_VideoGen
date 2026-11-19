@@ -194,6 +194,8 @@ export interface VideoPlan {
   beatSync?: boolean;
   /** Locally synthesised foley (pop, pour, fizz, clink, whoosh) by shot content (default on). */
   sfx?: boolean;
+  /** Who carries the sound: the voiceover (default), or the voiceover plus a foley effect per action with the bed ducked ("both"). Foley-only runs in the shot-sheet flow. */
+  audioMode?: "vo" | "both";
   /** Build one consistent 3D set (World Labs) and shoot every keyframe in it. */
   realSet?: boolean;
 }

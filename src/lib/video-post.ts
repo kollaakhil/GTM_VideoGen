@@ -200,7 +200,7 @@ const toFile = async (dir: string, name: string, media: string) => {
  * Joins shot clips into one 720x1280 30fps video. With a voiceover and/or music bed the model audio is replaced
  * by a mix (voice on top, music ducked under it); otherwise each clip's own audio is kept.
  */
-export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; beatSync?: boolean; sfx?: SfxCue[] } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number; voiceStarts?: number[] }> {
+export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; beatSync?: boolean; sfx?: SfxCue[]; /** Sidechain-duck the music bed under voice and sound effects. */ duck?: boolean; /** Bed level before ducking (default 0.18 under other audio, 0.6 alone). */ bedGain?: number } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number; voiceStarts?: number[] }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-stitch-"));
   try {
     const norm: string[] = [];
@@ -284,8 +284,15 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
       }
       if (audio.music) {
         extra.push("-stream_loop", "-1", "-i", musicFile!);
-        parts.push(`[${k++}:a]aresample=44100,aformat=channel_layouts=stereo,volume=${labels.length ? 0.18 : 0.6},afade=t=out:st=${Math.max(0, t - 1).toFixed(2)}:d=1[mu]`);
-        labels.push("[mu]");
+        const bed = audio.bedGain ?? (labels.length ? 0.18 : 0.6);
+        parts.push(`[${k++}:a]aresample=44100,aformat=channel_layouts=stereo,volume=${bed},afade=t=out:st=${Math.max(0, t - 1).toFixed(2)}:d=1[mu]`);
+        if (audio.duck && labels.length) {
+          // The bed sits low and drops further whenever a voice or effect is playing: the foreground feeds the compressor's sidechain.
+          parts.push(`${labels.join("")}amix=inputs=${labels.length}:duration=longest:normalize=0,asplit=2[fgm][fgsc]`);
+          parts.push("[mu][fgsc]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350:makeup=1[mud]");
+          labels.length = 0;
+          labels.push("[fgm]", "[mud]");
+        } else labels.push("[mu]");
       }
       const mix = labels.length > 1 ? `${labels.join("")}amix=inputs=${labels.length}:duration=longest:normalize=0` : `${labels[0]}anull`;
       await run(

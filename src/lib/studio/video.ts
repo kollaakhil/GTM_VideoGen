@@ -26,6 +26,7 @@ import { captionSync, captionSyncFindings } from "@/lib/caption-sync";
 import { endCardItems } from "@/lib/brief-policy";
 import { onBeatShare } from "@/lib/beat-sync";
 import { sfxCues } from "@/lib/sfx";
+import { planAudio } from "@/lib/audio/mode";
 import { PACKSHOT_MODEL, packshotAvailable, packshotShot, renderPackshot } from "@/lib/packshot";
 import { renderRouted } from "@/lib/render/router";
 import { type CacheStore, cached, fileCache, inputHash } from "@/lib/render/cache";
@@ -561,9 +562,12 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   const voiceData = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
   const tm = timer((run.timings ??= []));
   const musicData = a.music ? await mediaDataUrl(a.music) : null;
+  // "both" adds a foley effect per action and ducks the bed under voice and effects; the default keeps the long-standing mix.
+  const ap = plan.audioMode === "both" ? planAudio("both", shots.map((s) => ({ seconds: s.seconds, visual: `${s.expectedVisual ?? ""} ${s.visual}`, beats: s.spec?.motionBeats, vo: s.vo }))) : null;
   const st = await tm.time("edit", () => stitchShots(clipData, {
     voices: voiceData, music: musicData, shotSeconds: shots.map((s) => s.seconds), width: tier === "final" ? 1080 : 486,
-    beatSync: plan.beatSync !== false, sfx: plan.sfx === false ? [] : sfxCues(shots),
+    beatSync: plan.beatSync !== false, sfx: plan.sfx === false ? [] : ap ? ap.sfx : sfxCues(shots),
+    ...(ap ? { duck: ap.duck, bedGain: ap.bedGain } : {}),
   }));
   const lenOf = (i: number) => (st.starts[i + 1] ?? st.duration) - st.starts[i];
   // Where each line is actually spoken (voice start + its measured length at the applied tempo); captions follow it.
