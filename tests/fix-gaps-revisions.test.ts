@@ -84,7 +84,7 @@ describe("fix_gaps revisions and undo", () => {
     
     const oldShot = structuredClone(run.sheet!.shots[0]);
     
-    // Mock to always return a sheet that passes (two shots: 5s + 5s = 10s total)
+    // Mock to always return a sheet that passes (two shots: 5s + 5s = 10s total, both with sound for foley mode)
     mockChatJSON.mockResolvedValue({
       data: {
         script: "x",
@@ -92,7 +92,7 @@ describe("fix_gaps revisions and undo", () => {
           bed: "", endCard: { title: "Test", line: "Line", footer: "" }, palette: "", patternId: undefined,
           shots: [
             { start: 0, end: 5, shotType: "WS", framing: "wide reveal", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "x", action: "x", lighting: "x", text: null, audio: { vo: null, sfx: "ambience", music: null }, transition: "cut", engine: "blender" },
-            { start: 5, end: 10, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "y", action: "y", lighting: "y", text: null, audio: { vo: null, sfx: null, music: null }, transition: "cut", engine: "blender" },
+            { start: 5, end: 10, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "y", action: "y", lighting: "y", text: null, audio: { vo: null, sfx: "whoosh", music: null }, transition: "cut", engine: "blender" },
           ],
         },
       },
@@ -121,7 +121,7 @@ describe("fix_gaps revisions and undo", () => {
     
     const oldSheet = structuredClone(run.sheet!);
     
-    // Mock to always return a sheet that passes (two shots: 5s + 5s = 10s total)
+    // Mock to always return a sheet that passes (two shots: 5s + 5s = 10s total, both with sound for foley mode)
     mockChatJSON.mockResolvedValue({
       data: {
         script: "x",
@@ -129,7 +129,7 @@ describe("fix_gaps revisions and undo", () => {
           bed: "", endCard: { title: "Test", line: "Line", footer: "" }, palette: "", patternId: undefined,
           shots: [
             { start: 0, end: 5, shotType: "WS", framing: "wide reveal", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "x", action: "x", lighting: "x", text: null, audio: { vo: null, sfx: "ambience", music: null }, transition: "cut", engine: "blender" },
-            { start: 5, end: 10, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "y", action: "y", lighting: "y", text: null, audio: { vo: null, sfx: null, music: null }, transition: "cut", engine: "blender" },
+            { start: 5, end: 10, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "y", action: "y", lighting: "y", text: null, audio: { vo: null, sfx: "whoosh", music: null }, transition: "cut", engine: "blender" },
           ],
         },
       },

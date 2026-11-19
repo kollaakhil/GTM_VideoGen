@@ -62,14 +62,16 @@ describe("fix_gaps API action", () => {
     expect(json.error).toBe("Run not found");
   });
 
-  it("returns 400 when sheet already passes the gate", async () => {
-    run.gate!.pass = true;
+  it("allows fix_gaps even when gate passes (to improve warnings)", async () => {
+    // Gate passes but has warnings
+    run.gate = { pass: true, issues: [{ level: "warn", text: "Style warning" }], checkedAt: new Date().toISOString() };
     await put("sheet_runs", run);
     
     const response = await sheetActions({ action: "fix_gaps", runId: run.id }, "test@example.com");
     expect(response).toBeTruthy();
     const json = await response!.json();
-    expect(json.error).toBe("Sheet already passes the gate");
+    // Should succeed (not return an error) since fix_gaps can target warnings
+    expect(json.error).toBeUndefined();
   });
 
   it("returns 409 when a render is running", async () => {

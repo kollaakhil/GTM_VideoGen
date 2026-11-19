@@ -62,6 +62,7 @@ describe("Fix gaps behavior", () => {
   it("targets both errors and warnings for improvement", () => {
     const sheet = baseSheet();
     sheet.shots[0].audio = { vo: null, sfx: null, music: null }; // error: no sound
+    sheet.shots[0].camera.move = "static"; // violates push_in rule (not a push-in)
     const gate = sheetGate(sheet, { facts: "", rules: [{ id: "r1", text: "Push-in", check: "push_in" }] });
     const allIssues = gate.issues;
     const errors = allIssues.filter(i => i.level === "error");
