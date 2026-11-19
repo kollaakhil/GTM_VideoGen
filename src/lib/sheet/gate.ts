@@ -281,7 +281,7 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
   return issues;
 }
 
-export function sheetGate(sheet: ShotSheet, o: { facts: string; rules?: StyleRule[] }): GateResult {
+export function sheetGate(sheet: ShotSheet, o: { facts: string; rules?: StyleRule[]; afterRepair?: boolean }): GateResult {
   const issues: GateIssue[] = timingIssues(sheet).map((text) => ({ level: "error" as const, text }));
   for (const s of sheet.shots) {
     if (!s.camera.move.trim() || !s.camera.angle.trim() || !(s.camera.lensMm > 0)) issues.push({ level: "error", shot: s.n, text: `Shot ${s.n} has no complete camera (angle, move and lens).` });
@@ -293,8 +293,15 @@ export function sheetGate(sheet: ShotSheet, o: { facts: string; rules?: StyleRul
   issues.push(...ruleIssues(sheet, o.rules ?? sheet.rules), ...claimIssues(sheet, o.facts));
   
   // Pattern-specific checks for confession_loop
+  // After repair, pattern checks become warnings (not blockers) while facts/safety stay as errors
   if (sheet.patternId === "confession_loop") {
-    issues.push(...confessionLoopChecks(sheet));
+    const patternIssues = confessionLoopChecks(sheet);
+    if (o.afterRepair) {
+      // Downgrade pattern check errors to warnings after repair
+      issues.push(...patternIssues.map((i) => ({ ...i, level: "warn" as const })));
+    } else {
+      issues.push(...patternIssues);
+    }
   }
   
   return { pass: !issues.some((i) => i.level === "error"), issues, checkedAt: new Date().toISOString() };

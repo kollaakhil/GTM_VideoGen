@@ -110,7 +110,7 @@ export async function runSheet(run: SheetRun, chat: Chat = chatFor(run, "sheet")
   let gate = sheetGate(out.sheet, { facts: factBase(run), rules: run.rules });
   if (!gate.pass) {
     out = await timed(run, "shot sheet repair", () => writeSheet(input, chat, gate.issues.filter((i) => i.level === "error"), version));
-    gate = sheetGate(out.sheet, { facts: factBase(run), rules: run.rules });
+    gate = sheetGate(out.sheet, { facts: factBase(run), rules: run.rules, afterRepair: true });
   }
   run.script = out.script;
   run.sheet = out.sheet;

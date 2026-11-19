@@ -162,6 +162,10 @@ function BrandStep({ run, busy, onCreate }: { run: SheetRun | null; busy: boolea
         <div className="grid grid-cols-3 gap-3">
           <L t="Length (s)"><Input type="number" min={6} max={60} value={f.targetSec} onChange={(e) => set({ targetSec: Number(e.target.value) })} /></L>
           <L t="Aspect"><select className="h-8 w-full rounded-lg border bg-transparent px-2 text-sm" value={f.aspect} onChange={(e) => set({ aspect: e.target.value as BrandForm["aspect"] })}>{["16:9", "9:16", "1:1"].map((a) => <option key={a}>{a}</option>)}</select></L>
+          <L t="Story Pattern"><select className="h-8 w-full rounded-lg border bg-transparent px-2 text-sm" value={f.patternId} onChange={(e) => set({ patternId: e.target.value })}>
+            <option value="confession_loop">Confession loop (default)</option>
+            <option value="classic">Classic</option>
+          </select></L>
           <L t="Run cap ($)"><Input type="number" min={0} max={25} step={0.5} value={f.capUsd} onChange={(e) => set({ capUsd: Number(e.target.value) })} /></L>
         </div>
         <L t="Audio">
