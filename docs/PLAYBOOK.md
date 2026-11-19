@@ -1154,3 +1154,37 @@ All tests in `tests/blender-queue.test.ts`:
    - Models verified live: `fal-ai/mmaudio-v2`, `sonilo/v1.1/text-to-sound-effects`, `elevenlabs/sound-effects/v3`, `elevenlabs/music/v2.5`, `fal-ai/stable-audio-25/text-to-audio`, `elevenlabs/tts/eleven-v4`.
 
 6. **Quality over budget**: Removed artificial per-call limits for audio. The run cap is user-settable in the UI with no hard-coded low ceiling. Audio goes through the meter and ledger for tracking, but quality comes first.
+
+## 23. Fix the Gaps Button (Auto-Repair Gate Failures)
+
+**Symptom (2026-11-19):** A shot sheet fails the gate with rule violations like `Rule "Hold for 4 seconds": no wide reveal holds for 3 s or more`. The operator has no one-click way to fix it—they must manually edit each shot or rewrite the whole sheet.
+
+**Solution:** A **"Fix the gaps"** button in the Studio's Shot sheet step that:
+1. Sends the failing sheet, exact gate error messages, and brief to the text LLM via the existing writer path.
+2. Prompts for MINIMAL edits that satisfy each failing rule (e.g., lengthen or add a wide shot ≥ required seconds, rebalance durations to keep total runtime).
+3. Re-runs the gate on the result server-side.
+4. Loops up to 2 repair attempts if the gate still fails, keeping the best result.
+5. Saves the repaired sheet as a new revision (old sheet is not lost; operator can undo/revert by manually editing back).
+6. Shows loading state, a diff summary of changed shots ("Shot 2: 2.0s → 4.5s, framing now wide"), and any remaining failures.
+7. Button is disabled while a render is running for this run.
+
+**Gate Logic Fix:** The `reveal_holds` rule text says "four full seconds" but the check used a hard-coded 3s threshold. Now:
+- Parses the threshold from the rule text when a number is present (e.g., "four"/"4 seconds" → 4).
+- Accepts various shot type/framing words: `wide`, `reveal`, `establishing`, `full`, `long shot`, `extreme wide`, `WS`, `EWS`.
+
+**Implementation:**
+- **API Route:** `POST /api/sheet` with `action: "fix_gaps"` (authenticated, checks if a render is running).
+- **Backend:** `src/lib/sheet/actions.ts` → `fix_gaps` action uses `writeSheet` with gate errors as fixes, re-gates, loops up to 2 times, tracks changes.
+- **UI:** `src/components/sheet-studio/studio.tsx` → `SheetStep` component shows button next to gate failures, calls API, displays result.
+- **Cost:** Each fix attempt costs one text-model call (~$0.01–0.02 with gemini-3.8-flash), metered against the run cap.
+
+**Tests (all passing):**
+- `tests/gate-threshold.test.ts`: Gate parses thresholds from rule text ("four seconds" → 4s), recognizes wide-shot framing words, defaults to 3s.
+- `tests/fix-gaps-api.test.ts`: API action with mocked LLM, verifies auth, render-blocking, looping, cost metering, diff reporting.
+- `tests/fix-gaps-revisions.test.ts`: Revision behavior, version increments, operator can manually revert by editing back.
+
+**Usage:** When the sheet gate shows errors, click **Fix the gaps**. The LLM rewrites failing shots (e.g., lengthens a 2s wide shot to 4.5s). The diff summary shows which shots changed. If some failures remain, the operator can manually fix them or click again.
+
+**Cost Control:** The fix attempts are metered through the existing `meterFor(run)`, so a low run cap blocks expensive loops. Each attempt is logged in the run's cost entries.
+
+**Related:** See §14.3 (shot sheet gate), §14.2 (writer), §6 (stage gates).
