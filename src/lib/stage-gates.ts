@@ -333,7 +333,7 @@ export function voiceChecks(lines: VoiceLine[], music: { planned: boolean; ok: b
 // ---------- Final QA ----------
 
 /** Rubric for the finished export: craft review plus every hard finding, so one broken area can't hide. */
-export function finalChecks(o: { craft: number; findings: QualityFinding[]; shotScores: number[] }): Check[] {
+export function finalChecks(o: { craft: number; findings: QualityFinding[]; shotScores: number[]; captionSync?: number | null; frameScores?: number[] }): Check[] {
   const count = (k: QualityFinding["kind"]) => o.findings.filter((f) => f.kind === k && f.status === "fail").length;
   const copy = count("copy"), speech = count("speech"), visual = o.findings.filter((f) => f.kind === "visual" && f.status === "fail" && f.shotId).length, tech = count("technical");
   const shots = o.shotScores.length ? Math.min(...o.shotScores) : 0;
@@ -344,5 +344,7 @@ export function finalChecks(o: { craft: number; findings: QualityFinding[]; shot
     { name: "voice vs script (ASR)", score: clamp(10 - speech * 2.5), note: speech ? `${speech} speech mismatch(es)` : "Every line heard as written", by: "rules" },
     { name: "visual findings", score: clamp(10 - visual * 2), note: visual ? `${visual} shot(s) with failing frames` : "No failing frames", by: "rules" },
     { name: "technical", score: clamp(10 - tech * 3), note: tech ? `${tech} technical problem(s)` : "Decodes cleanly, no black or frozen frames", by: "rules", weight: 0.5 },
+    ...(o.captionSync != null ? [{ name: "captions vs voice (word sync)", score: o.captionSync, note: "Each caption against the words heard while it is on screen (whisper word timings)", by: "rules" as const }] : []),
+    ...(o.frameScores?.length ? [{ name: "sampled frames", score: Math.round((o.frameScores.reduce((a, b) => a + b, 0) / o.frameScores.length) * 10) / 10, note: `${o.frameScores.length} frames checked on the export (pass 10, review 7, fail 3)`, by: "judge" as const }] : []),
   ];
 }

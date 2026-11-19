@@ -264,3 +264,35 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
   stay locked; `hook.visual` follows), its output is clipped rather than rejected, and every round records
   `script.repair` (`fixes`, kept or discarded, before and after score, reason). The reason is shown in the Script
   chip and logged as `[script] …`.
+
+### 13.6 Structured shot specs (step 4)
+
+- **Failure:** free-text `visual` lines left the video model to guess the lens, the product's size in frame and the timing of the action. That is where hands warped mid-gesture, labels melted during fast moves, and invented signage appeared.
+- **Fix:** every shot now carries a `spec` with subject, productFraming, lensMm, cameraMove, lighting, setting, 1–3 timed motionBeats and a shot-specific negative list (`src/lib/shot-spec.ts`).
+  - Keyframe and video prompts are built from it in a fixed order (`specBlock`).
+  - Every prompt ends with "Avoid: …" (`negativePrompt` = shot negatives + `DEFAULT_NEGATIVE`: warped fingers, melting or re-drawn label, garbled text, screens, duplicate products, flicker, CGI look). Seedance has no `negative_prompt` field, so the list goes in the prompt text.
+  - The shot-plan gate has a "structured spec" rule (−1.5 per gap, weight 1.5), so a vague plan is rewritten before any keyframe spend.
+  - The PR #5 inspiration breakdown still feeds the planner through `inspirationGuidance`.
+- The video cache key includes the spec only when one is present, so legacy clips stay reusable.
+
+### 13.7 Best-of-N 480p candidates (step 5)
+
+- **Failure:** one take per shot meant a single warped hand failed the whole draft, and the repair loop paid for full re-renders one at a time.
+- **Fix:** `plan.candidates` sets how many 480p candidates each shot gets (1–4; new plans default to 3).
+  - Plans saved before this change have no field and keep 1, so spend never triples silently.
+  - Candidates render in parallel. Each one gets the same technical checks and frame-by-frame vision QA.
+  - `pickCandidate` ranks pass > review > fail, then score, then fewer major frame findings, then fewer failing frames.
+- **Cost estimate first:** preflight says the estimate in chat before any motion spend ("N shots × K candidates ≈ $motion + $QA + $reserve"). It fails closed if the estimate is over the cap. The plan node shows the per-take estimate × candidates.
+- If the remaining cap can't cover K, the number of candidates is reduced, not the cap ignored.
+- Only the winning clip is stored on the shot, so `upscaleTake` upscales winners only. Approve-then-upscale is unchanged.
+
+### 13.8 Final QA v2 (step 6)
+
+- **Failure:** the script-level WER (≤10%) passed a narration whose captions were off by a cue, or that said "five grams" while the caption read "5g" a beat later.
+- **Fix:** `src/lib/caption-sync.ts` takes the whisper word timings and compares each caption cue with the words heard while it is on screen (±0.35 s).
+  - Matching uses an LCS alignment. Numbers and units are normalised both ways (5g = five grams, 50% = fifty percent).
+  - Coverage under 80% is a review; under 60% is a fail. The report lists the missing and extra words.
+- The final rubric gains two rows:
+  - "captions vs voice (word sync)": mean coverage × 10, minus fails.
+  - "sampled frames": every export frame the vision judge checked, scored pass 10, review 7, fail 3.
+- The full rubric (`quality.rubric`, `quality.rubricScore`) is saved on the quality report, so every run's breakdown is auditable.
