@@ -171,6 +171,8 @@ export interface VideoPlan {
   voice: string;
   music: boolean;
   budgetUsd: number;
+  /** Run the full QA stack on drafts too (default: preview drafts get one cheap check per shot, 13.37). */
+  fullDraftQa?: boolean;
   /** Default lens for every shot (see video-looks.ts); a shot can override it. */
   lens?: string;
   /** Grade and lighting recipe for keyframes and clips. */
