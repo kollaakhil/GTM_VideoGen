@@ -34,19 +34,30 @@ function levenshtein(a: string, b: string) {
   return d[b.length];
 }
 
-/** Merge heard token windows that are a near spelling of a brand term. Returns [canonical token, source index]. */
+/** Best brand match for a window starting at `i`: smallest edit distance, then fewest tokens. */
+function bestAt(heard: string[], i: number, terms: string[]): { word: string; k: number; dist: number } | null {
+  let best: { word: string; k: number; dist: number } | null = null;
+  for (let k = 1; k <= 3 && i + k <= heard.length; k++) {
+    const joined = heard.slice(i, i + k).join("");
+    for (const t of terms) {
+      const dist = joined === t ? 0 : joined.length >= 4 ? levenshtein(joined, t) : Infinity;
+      if (dist <= (t.length >= 10 ? 3 : 2) && (!best || dist < best.dist)) best = { word: t, k, dist };
+    }
+  }
+  return best;
+}
+
+/**
+ * Merge heard token windows that are a near spelling of a brand term. Returns [canonical token, source index].
+ * A window does not swallow its first word when the match starting one word later is closer: "shop at drinkolipop"
+ * kept merging "at"+"drinkolipop" (2 edits) and lost "at", failing caption sync and ASR on every take (13.32).
+ */
 export function canonTokens(heard: string[], terms: string[]): { word: string; from: number }[] {
   const out: { word: string; from: number }[] = [];
   for (let i = 0; i < heard.length;) {
-    let hit: { word: string; k: number } | null = null;
-    for (let k = 3; k >= 1 && !hit; k--) {
-      if (i + k > heard.length) continue;
-      const joined = heard.slice(i, i + k).join("");
-      for (const t of terms) {
-        if (joined === t || (joined.length >= 4 && levenshtein(joined, t) <= (t.length >= 10 ? 3 : 2))) { hit = { word: t, k }; break; }
-      }
-    }
-    if (hit) { out.push({ word: hit.word, from: i }); i += hit.k; } else { out.push({ word: heard[i], from: i }); i++; }
+    const hit = bestAt(heard, i, terms);
+    const next = hit && hit.k > 1 ? bestAt(heard, i + 1, terms) : null;
+    if (hit && !(next && next.dist < hit.dist)) { out.push({ word: hit.word, from: i }); i += hit.k; } else { out.push({ word: heard[i], from: i }); i++; }
   }
   return out;
 }

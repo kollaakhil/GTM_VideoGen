@@ -552,3 +552,20 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
   overlay and marked it "absent" (s2, s3). With captions off there is no in-shot text by design, so the export review
   no longer receives `approvedOverlay` in that mode. The filmstrip director still asks for hook and stat text on
   sound-off grounds, which is a fair craft note and the reason keywords stay the default.
+
+### 13.32 Captions A/B round 2; canon swallowed "at"; overlay fade on the sampled frame
+- With identical clips (s0 re-rendered once): keywords take_a8c72359e92a 6/10, final 7.1 (scenes 8,10,4,10); off
+  take_47a8f2748dff 6/10, final 6.0, video 3.2. Keywords win both rounds.
+- **Real, canon:** `canonTokens` tried 3-token windows first, so "shop at drinkolipop" merged "atdrinkolipop" (2 edits
+  from the brand term) and lost "at". That caused the "missing: at" caption-sync review and the full-script ASR fail on
+  every take since #37. Each window now takes its closest match, and it does not swallow its first word when the match
+  one word later is closer.
+- **Real, overlay "backing drops out / loses opacity" (s2, several takes):** the Remotion callout faded out over the
+  last 0.2 s, and the export review samples at 0.96 of the shot (0.16 s before a 4 s shot's cut). Out-fade is now
+  0.08 s and the backing is 0.8 opaque.
+- Harness (not the app): run.mjs's spend guard counted the run's lifetime cost on top of the ledger and cancelled
+  two drafts at ledger $5.34. It is fixed to count only the spend since tracking started.
+- Plan edits for this run (free planning choices, documented): s1 4 s -> 3 s (the director's "pacing drags across nearly identical
+  dinner-table shots" note and the 15 s target; v3 says the line in 2.59 s, inside the 2.84 s limit), and s0's overlay
+  becomes the hook question (the director asked for it on every take). An overlay that repeats the line is drawn once, as the
+  shot's caption (<= 6 words).

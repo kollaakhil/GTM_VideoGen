@@ -27,3 +27,12 @@ describe("speech canon (final QA)", () => {
     expect(c.coverage).toBe(1);
   });
 });
+
+describe("canon keeps the word before a brand term (13.32)", () => {
+  it("does not merge 'at' into drinkolipop", () => {
+    const exp = "Half off two-plus cases. Shop at drinkolipop.com.";
+    expect(canonHeard("Half off 2+ cases. Shop at drinkolipop.com", exp, "OLIPOP")).toBe(canonExpected(exp));
+    expect(sameCanon("Keep the cola. Swap in Olypop.", "Keep the cola, swap in OLIPOP.", "OLIPOP")).toBe(true);
+    expect(sameCanon("Shop at drink olipop dot com", "Shop at drinkolipop.com", "OLIPOP")).toBe(true);
+  });
+});

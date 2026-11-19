@@ -37,7 +37,9 @@ const Overlay: React.FC<{ o: OverlayLine; size: number; accent: string }> = ({ o
   if (t < o.start || t >= o.end) return null;
   const local = frame - Math.round(o.start * fps);
   const s = spring({ frame: local, fps, config: { damping: 12, stiffness: 180 }, durationInFrames: 10 });
-  const out = interpolate(t, [o.end - 0.2, o.end], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // Out-fade of 0.08 s (was 0.2): overlays end on a cut, and a 0.2 s fade put a half-transparent backing on the export
+  // review's last sampled frame (0.96 of the shot): "overlay banner backing drops out" / "loses opacity" (13.32).
+  const out = interpolate(t, [o.end - 0.08, o.end], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   const fs = size * 0.8;
   const tagBg = lum(accent) < 0.5 ? accent : "#141414";
   const common: React.CSSProperties = { fontFamily, fontWeight: 700, fontSize: fs, lineHeight: 1.15, color: "#fff", textAlign: "center", maxWidth: width * 0.8 };
@@ -46,7 +48,7 @@ const Overlay: React.FC<{ o: OverlayLine; size: number; accent: string }> = ({ o
       {o.kind === "tag" ? (
         <div style={{ ...common, background: tagBg, borderRadius: fs * 0.35, padding: `${fs * 0.28}px ${fs * 0.55}px`, transform: `rotate(${-3 * s}deg) scale(${0.6 + 0.4 * s})`, boxShadow: "0 6px 18px rgba(0,0,0,0.35)", border: "3px solid #fff" }}>{o.text}</div>
       ) : (
-        <div style={{ ...common, background: "rgba(0,0,0,0.74)", borderRadius: fs * 0.25, padding: `${fs * 0.24}px ${fs * 0.5}px`, borderLeft: `${Math.max(6, fs * 0.22)}px solid ${accent}`, transform: `translateX(${(1 - s) * -24}px)`, opacity: s }}>{o.text}</div>
+        <div style={{ ...common, background: "rgba(0,0,0,0.8)", borderRadius: fs * 0.25, padding: `${fs * 0.24}px ${fs * 0.5}px`, borderLeft: `${Math.max(6, fs * 0.22)}px solid ${accent}`, transform: `translateX(${(1 - s) * -24}px)`, opacity: s }}>{o.text}</div>
       )}
     </div>
   );
