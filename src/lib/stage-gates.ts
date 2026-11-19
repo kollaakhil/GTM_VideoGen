@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { chatJSON, type Part } from "./ai";
 import { clamp, stageScore, threshold, type Check } from "./stage-policy";
+import { operationalMandatory } from "./brief-policy";
 import type { Brief, JudgeCalibration, QualityFinding, Research, Shot, ShotQA, StageScore, StudioRun, VoiceOfCustomer } from "./types";
 
 /** Judges and rule checks for each stage gate (thresholds and blocking live in stage-policy.ts). */
@@ -256,6 +257,10 @@ export function briefRules(b: Brief, r: Research): Check[] {
     { name: "concrete audience & insight", score: GENERIC.test(`${b.audience} ${b.insight}`) ? 5 : 10, note: GENERIC.test(`${b.audience} ${b.insight}`) ? "Generic wording in the audience or insight" : "", by: "rules" },
     { name: "offer grounded", score: clamp(4 + grounded * 6), note: `${Math.round(grounded * 100)}% of offer words appear in the research`, by: "rules", weight: 1.5 },
     { name: "mandatories", score: b.mandatories.length >= 3 && b.mandatories.length <= 5 ? 10 : 6, note: `${b.mandatories.length} mandatories (3–5)`, by: "rules", weight: 0.5 },
+    ...(() => {
+      const ops = b.mandatories.filter(operationalMandatory);
+      return [{ name: "creative mandatories", score: ops.length ? 3 : 10, note: ops.length ? `Internal task or fine print listed as a mandatory (the script would say it): ${ops.join("; ")}` : "Every mandatory is something the ad shows or says", by: "rules" as const }];
+    })(),
     { name: "measurable KPI", score: /\d|cpa|ctr|roas|cvr|cpc|cpm|%/i.test(b.kpi) ? 10 : 6, note: b.kpi, by: "rules", weight: 0.5 },
   ];
 }
@@ -267,7 +272,7 @@ export async function judgeBrief(model: string, b: Brief, r: Research, goal: str
   const { data, usage } = await chatJSON<unknown>(model, "You are a strict creative-strategy reviewer. Return only JSON.", `Goal: ${goal.slice(0, 1500)}
 Research (the only facts): ${JSON.stringify({ brand: r.brand, summary: r.summary, audience: r.audience, valueProps: r.valueProps })}
 Brief to review: ${JSON.stringify(b)}
-List every problem: an offer or fact not in the research (major), an insight that is a product claim rather than a buyer truth (major), an audience too broad to cast (minor), objective not tied to the goal (major), vague mandatories or KPI (minor). Return JSON {"issues":[{"severity":"minor"|"major","field":string,"note":string (with the concrete fix)}]}; [] if none.`);
+List every problem: an offer or fact not in the research (major), a "mandatory" that is an internal task or fine print rather than something the ad must show or say, e.g. "confirm stock before launch" (major), an insight that is a product claim rather than a buyer truth (major), an audience too broad to cast (minor), objective not tied to the goal (major), vague mandatories or KPI (minor). Return JSON {"issues":[{"severity":"minor"|"major","field":string,"note":string (with the concrete fix)}]}; [] if none.`);
   const v = Issues.safeParse(data);
   if (!v.success) return { checks: [] as Check[], notes: ["Brief judge returned an incomplete verdict."], majors: 0, cost: usage.costUsd };
   return {

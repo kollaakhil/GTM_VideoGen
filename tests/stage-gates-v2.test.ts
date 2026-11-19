@@ -74,3 +74,15 @@ describe("stage gates v2", () => {
     expect(scriptStage({ ...s, score: { ...s.score!, proofProblems: [] } })!.pass).toBe(true);
   });
 });
+
+import { creativeBrief, operationalMandatory } from "@/lib/brief-policy";
+describe("brief mandatories (Vintage Cola E2E)", () => {
+  const vc = ["Confirm Vintage Cola is in stock before launching", "On-screen stat reveal: 9g fiber, 50 calories, 5g sugar", "Disclose: drinkolipop.com only, not combinable with other offers", "Close on 45 Day Money-Back Guarantee"];
+  it("flags internal tasks and fine print, keeps creative requirements", () => {
+    expect(vc.map(operationalMandatory)).toEqual([true, false, true, false]);
+    expect(creativeBrief({ ...good, mandatories: vc }).mandatories).toEqual([vc[1], vc[3]]);
+  });
+  it("an operational mandatory sinks the brief gate (so it gets rewritten)", () => {
+    expect(combine(briefRules({ ...good, mandatories: vc }, research))).toBeLessThanOrEqual(6);
+  });
+});

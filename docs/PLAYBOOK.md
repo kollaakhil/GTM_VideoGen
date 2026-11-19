@@ -228,3 +228,18 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 - **Retries:** research and the shot plan already re-ran once with notes. The brief rewrites once. The script does
   one full-note repair round (§13.2). Each shot render re-shoots once with its QA notes. Copy failures on the export
   are re-typeset for free.
+
+### 13.4 E2E run 1 (OLIPOP Vintage Cola, in stock): brief mandatories leaked into the script
+
+- **Symptom:** the brief gate gave 10/10, but the brief's mandatories included "Confirm Vintage Cola is in stock before
+  launching" and "Disclose: drinkolipop.com only, not combinable with other offers". The script then spoke the fine
+  print as VO ("Drinkolipop.com only, not combinable with other offers.") and put "Prelaunch gate: confirm … in stock"
+  inside a shot description. The script stuck at 7/10 after its repair round, with a crowded beat-4 overlay.
+- **Cause:** the brief writer was asked for "mandatories" with no definition, and every writer downstream treats them
+  as must-show.
+- **Fix:** `src/lib/brief-policy.ts`. The brief prompt defines mandatories as things the ad shows or says. A brief
+  rule (`creative mandatories`) scores 3 when one is an internal task or fine print, so the gate fails and the brief
+  is rewritten with that note. The brief judge marks it as a major issue. Directions, script and shot prompts get
+  `creativeBrief(b)`, which drops operational mandatories, as a second net.
+- **Cost/latency note:** the script step (draft + judge + one full repair + re-judge) took 8.6 minutes and $0.35 with
+  `openai/gpt-6.1-sol` as the judge. It is the slowest and most expensive non-video stage.
