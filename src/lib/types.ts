@@ -136,6 +136,8 @@ export interface OrganicPack {
   carousel: { title: string; body: string }[];
 }
 
+import type { StageTiming } from "./render/timing";
+
 export interface Brief {
   objective: string;
   audience: string;
@@ -506,6 +508,8 @@ export interface StudioRun {
   /** Per-stage quality gate scores keyed by stage or stage:directionId (see stage-gates.ts). */
   stageScores?: Record<string, StageScore>;
   costUsd: number;
+  /** Per-stage timings of the latest render (src/lib/render/timing.ts), shown in the Studio UI. */
+  timings?: StageTiming[];
   createdAt: string;
 }
 

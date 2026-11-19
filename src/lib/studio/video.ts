@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { jobSteps } from "@/lib/job-progress";
 import { providerOf } from "@/lib/models";
 import { qa } from "@/lib/pipeline";
@@ -27,6 +28,9 @@ import { onBeatShare } from "@/lib/beat-sync";
 import { sfxCues } from "@/lib/sfx";
 import { PACKSHOT_MODEL, packshotAvailable, packshotShot, renderPackshot } from "@/lib/packshot";
 import { renderRouted } from "@/lib/render/router";
+import { type CacheStore, cached, fileCache, inputHash } from "@/lib/render/cache";
+import { runParallel } from "@/lib/render/scheduler";
+import { timer } from "@/lib/render/timing";
 import { aiVideoRenderer, blenderRenderer, remotionRenderer } from "@/lib/render/renderers";
 import { rowFromShot } from "@/lib/render/types";
 import { saveCreative } from "./creatives";
@@ -49,6 +53,23 @@ async function winningShots(run: StudioRun) {
 }
 
 const KEYFRAME_TRIES = 2;
+
+/** Parallel shot renders; RENDER_CONCURRENCY overrides (1 to 8). */
+const renderConcurrency = () => Math.max(1, Math.min(8, Number(process.env.RENDER_CONCURRENCY) || 4));
+/**
+ * Caches by input hash: unchanged inputs are never rendered (or judged) twice, across runs and restarts. Off under
+ * vitest unless RENDER_CACHE=1, so unrelated tests never see each other's results.
+ */
+const stores = new Map<string, ReturnType<typeof fileCache<never>>>();
+function cacheStore<T>(name: string): CacheStore<T> {
+  if (process.env.VITEST && process.env.RENDER_CACHE !== "1") return { get: async () => undefined, set: async () => {} };
+  const dir = path.join(process.env.DATA_DIR || path.join(process.cwd(), ".data"), "render-cache", name);
+  if (!stores.has(dir)) stores.set(dir, fileCache<never>(dir));
+  return stores.get(dir) as unknown as CacheStore<T>;
+}
+const renderCache = () => cacheStore<{ stored: string }>("clips");
+const judgeCache = () => cacheStore<ShotQA>("judge");
+const mediaExists = async (url: string) => !url.startsWith("/api/media/") || !!(await mediaFile(url));
 /** Independent export reviews per shot; the median decides (odd, see medianReview). */
 export const EXPORT_REVIEWS = 5;
 
@@ -320,8 +341,10 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   const voiceBlock = stageBlock(run, "voice", d.id);
   if (voiceBlock) throw new Error(`${voiceBlock} ${voiceGate.notes.join(" ")} No video was requested.`);
 
+  run.timings = [];
+  const tm = timer(run.timings);
   const firsts = await Promise.all(shots.map((s) => mediaDataUrl(s.keyframe!)));
-  const assess = async (video: string, s: Shot, i: number): Promise<ShotQA> => {
+  const assessUncached = async (video: string, s: Shot, i: number): Promise<ShotQA> => {
     try {
       const technical = await videoTechnicalFindings(video, s.seconds, undefined, plan.category !== "motion_graphics");
       const cuts = await sceneCuts(video).catch(() => null);
@@ -340,6 +363,11 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
       return { score: 0, match: "review", notes: ["The saved take could not be visually verified."] };
     }
   };
+  // No re-judging unchanged inputs: the same clip, shot spec and keyframe get the cached verdict (13.38).
+  const assess = async (video: string, s: Shot, i: number): Promise<ShotQA> => {
+    const key = inputHash("assess-v1", qaMode("draft", plan), video, s.expectedVisual, s.visual, s.camera, s.seconds, s.spec, firsts[i], run.models.vision);
+    return (await cached(judgeCache(), key, () => tm.time("shot-check", () => assessUncached(video, s, i), { shotId: s.id }), { persist: (v) => !v.notes.some((n) => /could not be visually verified/.test(n)) })).value;
+  };
   const recordTake = async (s: Shot, url: string, verdict: ShotQA, model: string) => {
     Object.assign(s, { clip: url, clipQa: verdict, clipModel: model, status: shotReady(verdict) ? "done" : "failed" });
     await saveRun(run);
@@ -347,23 +375,34 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   };
   const qCostReserve = 0.08 + shots.length * 0.025;
   const attempts = testDraft || (plan.takes ?? 1) > 1 ? 1 : 2;
-  for (const [i, s] of shots.entries()) {
+  // Shots render in parallel (RENDER_CONCURRENCY, default 4). Budget safety under parallelism: a shot holds its
+  // worst-case render cost while it is in flight, and shots that have not started yet stay reserved (13.38).
+  const started = new Set<number>();
+  const held = new Map<number, number>();
+  const worstCase = (j: number) => actual[j]! * perSec(j) * nFor(j);
+  const othersHeld = (i: number) => [...held].reduce((sum, [j, usd]) => sum + (j === i ? 0 : usd), 0);
+  const pendingFor = (i: number) => missing.reduce((sum, j) => sum + (j !== i && !started.has(j) ? worstCase(j) : 0), 0);
+
+  const doShot = async (i: number) => {
+    const s = shots[i];
+    started.add(i);
     if (reusableShot(s, cacheKeys[i])) {
       shotDone(run, i, true);
-      continue;
+      return;
     }
     if (toReview(s, i)) {
       await step(run, d, `Shot ${i + 1}/${shots.length}: verifying the saved take without regenerating`, 2 + i, total, "qa", { i, stage: "qa" });
       await recordTake(s, s.clip!, await assess(await mediaDataUrl(s.clip!), s, i), s.clipModel ?? models[i]);
       shotDone(run, i, true);
-      continue;
+      return;
     }
-    const pendingUsd = shots.reduce((sum, _, j) => sum + (j > i && missing.includes(j) ? actual[j]! * perSec(j) * nFor(j) : 0), 0);
     let notes = s.clipKey === cacheKeys[i] ? s.clipQa?.notes ?? [] : [];
     let best: { url: string; qa: ShotQA } | undefined;
     const hf = providerOf(models[i]) === "hfmcp";
     for (let attempt = 0; attempt < (hf ? 1 : attempts); attempt++) {
-      if (spent + pendingUsd + actual[i]! * perSec(i) + qCostReserve > cap) {
+      const room = cap - spent - othersHeld(i) - pendingFor(i) - qCostReserve;
+      if (actual[i]! * perSec(i) > room + 1e-9) {
+        held.delete(i);
         if (best) break;
         throw new Error(`Budget cap reached before shot ${i + 1}. Existing verified assets were kept.`);
       }
@@ -378,19 +417,24 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
 ${specBlock(s)}
 Start from the attached frame. Preserve the exact product and its real label; no invented text. Natural physical motion, one continuous shot. Avoid: ${negativePrompt(s)}. ${notes.length ? `Fix these defects: ${notes.join(" ")}` : ""}`;
       // First pass renders N candidates in parallel when they fit the cap; repairs render one.
-      const n = attempt === 0 ? Math.max(1, Math.min(nFor(i), Math.floor((cap - spent - pendingUsd - qCostReserve) / (actual[i]! * perSec(i) + 0.02)))) : 1;
-      const cands = await Promise.all(Array.from({ length: n }, async () => {
+      const n = attempt === 0 ? Math.max(1, Math.min(nFor(i), Math.floor(room / (actual[i]! * perSec(i) + 0.02)))) : 1;
+      held.set(i, actual[i]! * perSec(i) * n);
+      const cands = await Promise.all(Array.from({ length: n }, async (_, c) => {
         try {
           // One interface for every renderer: the router picks Blender, AI video or Remotion per shot (src/lib/render).
           const row = rowFromShot({ ...s, model: models[i], seconds: actual[i]! });
-          const out = await renderRouted(row, { mode: "preview", width: 486, height: 864, refs, firstFrame: firsts[i], prompt, resolution }, {
-            "ai-video": aiVideoRenderer({ defaultModel: models[i] }), blender: blenderRenderer(), remotion: remotionRenderer(),
-          }, { autoBlender: process.env.RENDER_AUTO_BLENDER === "1" });
-          if (out.fellBackFrom) say(run, "agent", `Shot ${i + 1}: ${out.fellBackFrom} was unavailable, rendered with ${out.renderer}.`);
-          const take = { url: out.url, usage: { costUsd: out.costUsd } };
-          charge(take.usage.costUsd);
-          const stored = await storeMedia(take.url, `${run.id}/${d.id}-${s.id}-clip-${randomUUID()}`);
-          return { take, stored };
+          const key = inputHash("clip-v1", models[i], prompt, resolution, actual[i], firsts[i], c, attempt);
+          const got = await cached(renderCache(), key, async () => {
+            const out = await tm.time("render", () => renderRouted(row, { mode: "preview", width: 486, height: 864, refs, firstFrame: firsts[i], prompt, resolution }, {
+              "ai-video": aiVideoRenderer({ defaultModel: models[i] }), blender: blenderRenderer(), remotion: remotionRenderer(),
+            }, { autoBlender: process.env.RENDER_AUTO_BLENDER === "1" }), { shotId: s.id });
+            if (out.fellBackFrom) say(run, "agent", `Shot ${i + 1}: ${out.fellBackFrom} was unavailable, rendered with ${out.renderer}.`);
+            charge(out.costUsd);
+            held.set(i, Math.max(0, (held.get(i) ?? 0) - out.costUsd));
+            return { stored: await storeMedia(out.url, `${run.id}/${d.id}-${s.id}-clip-${randomUUID()}`) };
+          }, { skip: async (v) => !(await mediaExists(v.stored)), persist: (v) => !v.stored.startsWith("data:") });
+          if (got.hit) say(run, "agent", `Shot ${i + 1}: unchanged inputs, reused the earlier render (no cost).`);
+          return { take: { url: got.value.stored }, stored: got.value.stored };
         } catch (e) {
           if (n === 1) throw e;
           return null;
@@ -402,17 +446,27 @@ Start from the attached frame. Preserve the exact product and its real label; no
       await saveRun(run);
       await step(run, d, `Shot ${i + 1}/${shots.length}: frame-by-frame QA on ${ok.length} candidate${ok.length === 1 ? "" : "s"}`, 2 + i, total, "rendering", { i, stage: "qa" });
       const qas = await Promise.all(ok.map(async (c) => assess(c.take.url.startsWith("data:") ? c.take.url : await mediaDataUrl(c.stored), s, i)));
+      held.delete(i);
       const w = pickCandidate(qas);
       const verdict: ShotQA = ok.length > 1 ? { ...qas[w], notes: [...qas[w].notes, `Best of ${ok.length} candidates (scores ${qas.map((q) => q.score).join(", ")}).`] } : qas[w];
-      const take = ok[w].take, stored = ok[w].stored;
-      void take;
+      const stored = ok[w].stored;
       if (!best || shotReady(verdict) || verdict.score > best.qa.score) best = { url: stored, qa: verdict };
       await recordTake(s, best.url, best.qa, models[i]);
       if (shotReady(verdict) || verdict.match === "review") break;
       notes = [...verdict.notes, ...(verdict.frames ?? []).filter((x) => x.match === "fail").map((x) => `${x.at}s: ${x.note}`)].slice(0, 8);
     }
+    held.delete(i);
     if (!best) throw new Error(`No take returned for shot ${i + 1}.`);
     shotDone(run, i, true);
+  };
+
+  // Failure isolation: one shot failing (after its retry) never stops the others; the take fails with every reason.
+  const results = await runParallel(shots.map((s, i) => ({ id: s.id, key: `${s.id}:${cacheKeys[i]}`, stage: "shot", run: () => doShot(i) })), { limit: renderConcurrency(), retries: 1, timings: run.timings });
+  results.forEach((r, i) => { if (r.status === "failed") shotDone(run, i, false); });
+  const failedShots = results.flatMap((r, i) => (r.status === "failed" ? [`shot ${i + 1}: ${r.error!.message}`] : []));
+  if (failedShots.length) {
+    await saveRun(run);
+    throw new Error(failedShots.length === 1 ? results.find((r) => r.status === "failed")!.error!.message : `${failedShots.length} shots failed. ${failedShots.join(" ")} Verified shots were kept.`);
   }
 
   const clips = shots.map((s, i) => ({ shotId: s.id, url: s.clip!, model: s.clipModel ?? models[i], qa: s.clipQa ?? null }));
@@ -498,10 +552,12 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   await step(run, d, tier === "final" ? "Stitching the HD cut with the approved voice and music" : "Stitching shots, voice and music", steps.stitch, total, "stitching");
   const clipData = await Promise.all(a.clips.map((c) => mediaDataUrl(c.url)));
   const voiceData = await Promise.all(a.voices.map(async (v) => ({ ...v, url: await mediaDataUrl(v.url) })));
-  const st = await stitchShots(clipData, {
-    voices: voiceData, music: a.music ? await mediaDataUrl(a.music) : null, shotSeconds: shots.map((s) => s.seconds), width: tier === "final" ? 1080 : 486,
+  const tm = timer((run.timings ??= []));
+  const musicData = a.music ? await mediaDataUrl(a.music) : null;
+  const st = await tm.time("edit", () => stitchShots(clipData, {
+    voices: voiceData, music: musicData, shotSeconds: shots.map((s) => s.seconds), width: tier === "final" ? 1080 : 486,
     beatSync: plan.beatSync !== false, sfx: plan.sfx === false ? [] : sfxCues(shots),
-  });
+  }));
   const lenOf = (i: number) => (st.starts[i + 1] ?? st.duration) - st.starts[i];
   // Where each line is actually spoken (voice start + its measured length at the applied tempo); captions follow it.
   const spans: ({ start: number; end: number } | undefined)[] = [];
@@ -545,7 +601,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
       subjects.push(...r.boxes);
     }
   }
-  let variants = await captionVariants(st.url, "", end, segments, aspects, d.compactCopy, capMode, subjects);
+  let variants = await tm.time("captions", () => captionVariants(st.url, "", end, segments, aspects, d.compactCopy, capMode, subjects));
   let findings = await inspect(variants);
   if (!d.compactCopy && findings.some((f) => f.kind === "copy" || (f.kind === "coverage" && f.aspect))) {
     variants = await captionVariants(st.url, "", end, segments, aspects, true, capMode, subjects);
@@ -568,7 +624,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   if (moved.length) say(run, "agent", `Caption agent: ${moved.map((x) => `"${x.text}" ${x.action}${x.to_text ? ` to "${x.to_text}"` : ""}${x.reason ? ` (${x.reason})` : ""}`).join("; ")}.`);
   // Word sync checks the captions actually drawn on the main export (the agent may have shortened or dropped some).
   const drawn = mainVariant.copy?.filter((c) => c.layer === "caption") ?? cues.filter((c) => c.layer === "caption");
-  const words = await wordLevelFindings(main, segments, script, plan.category, drawn, end.brand);
+  const words = await tm.time("audio-qa", () => wordLevelFindings(main, segments, script, plan.category, drawn, end.brand));
   findings.push(...words.findings);
 
   const evidence: VideoQuality["shots"] = [];
@@ -609,7 +665,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
 
   let craft: QAResult = { score: 0, pass: false, notes: [] };
   try {
-    const review = await qa(run.models.vision, main, "video", run.brief!, d.hook, shots.map((s) => s.onScreen).join(" "));
+    const review = await tm.time("final-review", () => qa(run.models.vision, main, "video", run.brief!, d.hook, shots.map((s) => s.onScreen).join(" ")));
     craft = review.data;
     charge(review.cost);
   } catch {
