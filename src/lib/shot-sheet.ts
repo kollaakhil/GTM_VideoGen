@@ -76,7 +76,25 @@ export function parseSheet(input: unknown): { ok: true; sheet: ShotSheet } | { o
   const r = SheetSchema.safeParse(input);
   if (!r.success) {
     const i = r.error.issues[0];
-    return { ok: false, error: `${i?.path.join(".") || "sheet"}: ${i?.message ?? "invalid"}` };
+    const path = i?.path.join(".") || "sheet";
+    let message = i?.message ?? "invalid";
+    
+    // Make common Zod errors more readable
+    if (i?.code === "too_big" && "maximum" in i && typeof i.maximum === "number") {
+      const field = path.split(".").pop() || "field";
+      message = `${field} is too long (max ${i.maximum})`;
+    } else if (i?.code === "too_small" && "minimum" in i && typeof i.minimum === "number" && i.minimum > 0) {
+      const field = path.split(".").pop() || "field";
+      message = `${field} is required`;
+    } else if (i?.code === "invalid_type" && "expected" in i && "received" in i && i.expected === "string" && i.received === "undefined") {
+      const field = path.split(".").pop() || "field";
+      message = `${field} is required`;
+    } else if (i?.code === "invalid_union" && message.includes("Invalid enum value")) {
+      const field = path.split(".").pop() || "field";
+      message = `${field} has an invalid value`;
+    }
+    
+    return { ok: false, error: `${path}: ${message}` };
   }
   return { ok: true, sheet: r.data };
 }

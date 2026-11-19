@@ -97,6 +97,37 @@ describe("shot sheet schema", () => {
       expect(r.sheet.shots[0].editorNote).toBe("");
     }
   });
+  it("returns readable error messages for common validation failures", () => {
+    // Required field missing
+    const raw1 = JSON.parse(JSON.stringify(good()));
+    raw1.shots[0].id = "";
+    const r1 = parseSheet(raw1);
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) {
+      expect(r1.error).toMatch(/shots\.0\.id.*required/i);
+      expect(r1.error).not.toMatch(/String must contain at least/);
+    }
+
+    // Invalid enum value
+    const raw2 = JSON.parse(JSON.stringify(good()));
+    raw2.shots[0].engine = "invalid_engine";
+    const r2 = parseSheet(raw2);
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) {
+      expect(r2.error).toMatch(/engine.*invalid/i);
+      expect(r2.error).not.toMatch(/Invalid enum value/);
+    }
+
+    // Note: too_big errors no longer occur since Str() clamps instead of rejecting,
+    // but we verify the error formatting code is still present for other max violations
+    const raw3 = JSON.parse(JSON.stringify(good()));
+    raw3.shots = Array(50).fill(shot(1, 0, 1));
+    const r3 = parseSheet(raw3);
+    expect(r3.ok).toBe(false);
+    if (!r3.ok) {
+      expect(r3.error).toMatch(/shots.*too long.*max 40/i);
+    }
+  });
 });
 
 describe("timing math", () => {
