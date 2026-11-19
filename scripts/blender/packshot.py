@@ -258,15 +258,15 @@ scene.collection.objects.link(cam)
 scene.camera = cam
 target = bpy.data.objects.new("target", None)
 scene.collection.objects.link(target)
-target.location = (0, 0, 0.12 + h * 0.52)
+target.location = (0, 0, 0.12 + h * 0.3)  # can sits in the upper ~60% so the caption band (0.66–0.80) stays on the floor (13.26)
 tc = cam.constraints.new("TRACK_TO")
 tc.target, tc.track_axis, tc.up_axis = target, "TRACK_NEGATIVE_Z", "UP_Y"
 
-# Frame the can at ~72% of the frame height.
+# Frame the can at ~60% of the frame height, high in frame: captions run over the floor, not the label.
 # Sensor fit AUTO: the sensor width spans the larger image side (the height, for 9:16).
 half = (cam_d.sensor_width / 2) / cam_d.lens
 fov_v = 2 * math.atan(half if H >= W else half * H / W)
-dist0 = (h + 0.45) / 0.72 / (2 * math.tan(fov_v / 2))
+dist0 = (h + 0.45) / 0.6 / (2 * math.tan(fov_v / 2))
 for f in range(1, FRAMES + 1):
     t = 0 if FRAMES == 1 else (f - 1) / (FRAMES - 1)
     ease = 0.5 - 0.5 * math.cos(math.pi * t)

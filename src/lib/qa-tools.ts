@@ -52,7 +52,7 @@ export async function werCheck(reference: string, hypothesis: string): Promise<{
  * Word timestamps for the whole mix. WhisperX (WHISPERX=1; forced alignment, downloads its model once) is the most
  * precise; whisper.cpp with one word per segment is the fast local default.
  */
-export async function wordTimings(media: string): Promise<{ words: Word[]; via: "whisperx" | "whisper.cpp" } | null> {
+export async function wordTimings(media: string, hint = ""): Promise<{ words: Word[]; via: "whisperx" | "whisper.cpp" } | null> {
   return withTemp("gtm-words-", async (dir) => {
     const src = await writeDataUrl(path.join(dir, "in.mp4"), media);
     const wav = path.join(dir, "a.wav");
@@ -69,7 +69,7 @@ export async function wordTimings(media: string): Promise<{ words: Word[]; via: 
     if (!model || !await hasFile(model)) return null;
     try {
       await new Promise<void>((resolve, reject) => {
-        const p = execFile(process.env.WHISPER_BIN || "whisper-cli", ["-m", model, "-f", wav, "-l", process.env.WHISPER_LANG || "en", "-ml", "1", "-sow", "-oj", "-np", "-of", path.join(dir, "w")], { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }, (err) => err ? reject(err) : resolve());
+        const p = execFile(process.env.WHISPER_BIN || "whisper-cli", ["-m", model, "-f", wav, "-l", process.env.WHISPER_LANG || "en", "-ml", "1", "-sow", "-oj", "-np", ...(hint ? ["--prompt", hint] : []), "-of", path.join(dir, "w")], { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }, (err) => err ? reject(err) : resolve());
         p.stdin?.end();
       });
       const json = JSON.parse(await fs.readFile(path.join(dir, "w.json"), "utf8")) as { transcription: { offsets: { from: number; to: number }; text: string }[] };

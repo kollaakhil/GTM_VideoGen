@@ -165,10 +165,17 @@ function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) 
 
 /** Burns captions, crops to each aspect and appends a typeset end card (brand, offer line, CTA) so the wordmark is always spelled right. */
 /** Caption cues timed to each shot's window instead of spread evenly over the whole video. */
-export function timedCues(segments: { start: number; end: number; text: string; speech?: { start: number; end: number } }[], wordsPerCue = 4) {
+/**
+ * One text layer at a time: while a shot shows its on-screen overlay, the overlay is the text (it carries the message on
+ * mute); spoken-word captions run only in shots without one. Both layers together were flagged on every take
+ * ("consolidate stacked caption boxes", "subtitle intrudes onto the can"; run_8a9c7c9db627 takes 1–3; 13.26).
+ */
+export const ONE_TEXT_LAYER = true;
+
+export function timedCues(segments: { start: number; end: number; text: string; onScreen?: string; speech?: { start: number; end: number } }[], wordsPerCue = 4) {
   // Captions follow the voice, not the shot: spreading a 3.4 s line over a 4 s shot ran the last cue ~0.6 s late and
   // into the next line (caption word-sync 4.9, run_8a9c7c9db627 take 2; 13.25).
-  return segments.flatMap((s) => {
+  return segments.filter((s) => !(ONE_TEXT_LAYER && s.onScreen?.trim())).flatMap((s) => {
     const a = s.speech ? Math.max(s.start, s.speech.start) : s.start, b = s.speech ? Math.min(s.end, Math.max(a + 0.3, s.speech.end)) : s.end;
     return captionCues(s.text, b - a, wordsPerCue, true).map((c) => ({ ...c, start: c.start + a, end: c.end + a }));
   });
@@ -184,7 +191,7 @@ const toFile = async (dir: string, name: string, media: string) => {
  * Joins shot clips into one 720x1280 30fps video. With a voiceover and/or music bed the model audio is replaced
  * by a mix (voice on top, music ducked under it); otherwise each clip's own audio is kept.
  */
-export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; beatSync?: boolean; sfx?: SfxCue[] } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number }> {
+export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; beatSync?: boolean; sfx?: SfxCue[] } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number; voiceStarts?: number[] }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-stitch-"));
   try {
     const norm: string[] = [];
@@ -274,11 +281,11 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
       const mix = labels.length > 1 ? `${labels.join("")}amix=inputs=${labels.length}:duration=longest:normalize=0` : `${labels[0]}anull`;
       await run(
         FFMPEG,
-        ["-hide_banner", "-loglevel", "error", "-i", joined, ...extra, "-filter_complex", `${parts.join(";")};${mix},apad=whole_dur=${t},loudnorm=I=-14:LRA=7:TP=-1.5[a]`, "-map", "0:v", "-map", "[a]", "-t", t.toFixed(2), "-c:v", "copy", "-c:a", "aac", "-ar", "44100", "-b:a", "160k", "-y", final],
+        ["-hide_banner", "-loglevel", "error", "-i", joined, ...extra, "-filter_complex", `${parts.join(";")};${mix},apad=whole_dur=${t},loudnorm=I=-14:LRA=7:TP=-1.5,aresample=44100,aformat=sample_fmts=dbl:channel_layouts=stereo,alimiter=limit=0.79:level=disabled[a]`, "-map", "0:v", "-map", "[a]", "-t", t.toFixed(2), "-c:v", "copy", "-c:a", "aac", "-ar", "44100", "-b:a", "160k", "-y", final],
         { timeout: 180_000 },
       );
     }
-    return { url: `data:video/mp4;base64,${(await fs.readFile(final)).toString("base64")}`, starts, duration: t, beats, snapped };
+    return { url: `data:video/mp4;base64,${(await fs.readFile(final)).toString("base64")}`, starts, duration: t, beats, snapped, voiceStarts: (audio.voices ?? []).map((v) => v.start) };
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

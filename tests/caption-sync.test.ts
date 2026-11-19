@@ -38,9 +38,14 @@ it("captions follow the spoken span, not the whole shot", () => {
   expect(cues.at(-1)!.end).toBeLessThanOrEqual(10.6 + 1e-6);
   expect(timedCues([{ start: 0, end: 3, text: "Love cola, dread the sugar guilt?" }]).at(-1)!.end).toBeCloseTo(3, 2);
 });
-it("captions sit under a top overlay instead of the lower third", () => {
-  const seg = [{ start: 0, end: 3, text: "Love cola, dread the sugar guilt?", onScreen: "Classic cola ritual. 5g sugar." }];
-  const { captions, overlays } = layoutCopy(null, 486, 864, seg, timedCues(seg), { caption: 30, overlay: 24 });
-  expect(overlays[0].y).toBeLessThanOrEqual(0.3);
-  expect(captions[0].y).toBeLessThan(0.5);
+it("one text layer: no spoken captions while a shot shows its overlay", () => {
+  const seg = [
+    { start: 0, end: 3, text: "Love cola, dread the sugar guilt?", onScreen: "Classic cola ritual. 5g sugar." },
+    { start: 3, end: 7, text: "Half off two-plus cases. Shop at drinkolipop.com." },
+  ];
+  const cues = timedCues(seg);
+  expect(cues.every((c) => c.start >= 3)).toBe(true);
+  const { captions, overlays } = layoutCopy(null, 486, 864, seg, cues, { caption: 30, overlay: 24 });
+  expect(overlays).toHaveLength(1);
+  expect(captions.length).toBeGreaterThan(0);
 });

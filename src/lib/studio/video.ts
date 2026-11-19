@@ -482,9 +482,11 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   {
     let v = 0;
     for (const s of shots) {
-      const voice = s.vo.trim() ? voiceData[v++] : undefined;
+      const k = s.vo.trim() ? v++ : -1;
+      const voice = k >= 0 ? voiceData[k] : undefined;
+      const at = k >= 0 ? st.voiceStarts?.[k] ?? voice!.start : 0; // after beat sync moved the line with its shot
       const len = voice ? await mediaDuration(voice.url).catch(() => 0) : 0;
-      spans.push(voice && len > 0 ? { start: voice.start, end: voice.start + len / (voice.tempo || 1) } : undefined);
+      spans.push(voice && len > 0 ? { start: at, end: at + len / (voice.tempo || 1) } : undefined);
     }
   }
   const segments = shots.map((s, i) => ({ shotId: s.id, start: st.starts[i], end: st.starts[i] + lenOf(i), text: s.vo, onScreen: s.onScreen, speech: spans[i] }));
@@ -626,7 +628,7 @@ type WordLevel = { findings: QualityFinding[]; wer: number | null; via?: string;
 
 async function wordLevelFindings(main: string, segments: { shotId: string; start: number; end: number; text: string }[], script: string, category: string, captions: { start: number; end: number; text: string }[] = [], brand = ""): Promise<WordLevel> {
   const findings: QualityFinding[] = [];
-  const timed = await wordTimings(main).catch(() => null);
+  const timed = await wordTimings(main, asrVocabulary(script, brand)).catch(() => null); // same coined-term hint as the line checks (13.26)
   if (!timed) return { findings, wer: null, linesOutside: 0, level: await loudness(main).catch(() => null) };
   // Word-by-word: each caption cue against the words heard while it is on screen.
   const sync = captionSyncFindings(captionSync(captions, timed.words, 0.35, brand));
