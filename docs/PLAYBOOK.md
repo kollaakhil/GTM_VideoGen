@@ -575,3 +575,8 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
   never dropped. It goes unshortened to the slot covering the least of the subject in its worst frame
   ("least-overlap"). Keyword picks can still be dropped. The new s0 render smeared the label (scene 0), so the run
   goes back to take_a8c72359e92a's s0 clip (clip QA 10, export review 8): same cache key, and that clip passed.
+
+### 13.33 s0 framing lock experiment (db-only, 2026-11-19)
+- Spec edit: whole can in frame with ≥15% side margin, locked-off camera, tumbler right of centre. Keyframe redraw scored 10/10 and the can is centred.
+- Re-render (draft23, take_23a70da5396d): s0 clip QA 0 (label typography corrupted, tab warped during the tilt-pour). Video 3.4, final 6, overall 7. Worse than take_d90c705571d3 (video 6.4, final 8.1).
+- Conclusion: framing was not the binding failure. Seedance 480p can't hold label text through a tilt-pour (1 clean clip out of ~6 s0 renders). The s0 shot was restored from db.bak-s0-frame.json. Next lever: restage s0 so the label never rotates (pour from an off-frame can, or a static can beside the pour), or use i2v with a stronger model for labelled motion shots.
