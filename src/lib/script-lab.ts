@@ -1,4 +1,5 @@
 import { chatJSON } from "./ai";
+import { text, texts } from "./judge-schema";
 import { creativeBrief } from "./brief-policy";
 import { GATE_THRESHOLDS } from "./gate-config";
 import type { AdScript, Brief, Direction, Research, ScriptHook, ScriptProofBrief, ScriptScore, StyleDNA, Swipe, VoiceOfCustomer } from "./types";
@@ -356,7 +357,7 @@ Openings: ${JSON.stringify(hooks)}
 Score on 0–10: distinct first shot, a goal and plausible stakes on mute, spoken specificity, and faithfulness to real product evidence. List blockers for unsupported claims, unfilmable proof, missing goal or stakes, spoiling the payoff, or an opening that only makes sense with sound. Return one review for each ID:
 {"reviews":[{"id":"...","score":0,"note":"one concrete strength or fix","blockers":["..."]}]}.`);
   const schema = z.object({ reviews: z.array(z.object({
-    id: z.string(), score: z.number().min(0).max(10), note: z.string().max(600), blockers: z.array(z.string().max(600)).max(6),
+    id: z.string(), score: z.number().min(0).max(10), note: text(600), blockers: texts(6, 600),
   })).length(hooks.length) });
   const reviews = schema.parse(result.data).reviews;
   const ranked = hooks.map((h) => {
