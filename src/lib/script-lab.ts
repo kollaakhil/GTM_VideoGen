@@ -1,6 +1,6 @@
 import { chatJSON } from "./ai";
 import { text, texts } from "./judge-schema";
-import { creativeBrief } from "./brief-policy";
+import { creativeBrief, endCardItems } from "./brief-policy";
 import { GATE_THRESHOLDS } from "./gate-config";
 import type { AdScript, Brief, Direction, Research, ScriptHook, ScriptProofBrief, ScriptScore, StyleDNA, Swipe, VoiceOfCustomer } from "./types";
 import { SCRIPT_RUBRIC } from "./quality-policy";
@@ -256,7 +256,7 @@ export const proofAssetUrl = (input: string) => {
 
 const ctxBlock = (c: ScriptCtx) => `Concept (creative input, not evidence): ${JSON.stringify({ title: c.direction.title, angle: c.direction.angle })}
 Brief: ${JSON.stringify(creativeBrief(c.brief))}
-Product facts (the only facts you may state): ${JSON.stringify({ brand: c.research.brand, summary: c.research.summary, valueProps: c.research.valueProps, audience: c.research.audience })}
+${endCardItems(c.brief).length ? `Post-production end card (typeset by the editor after the last beat; already delivered, not part of your overlays or VO): ${endCardItems(c.brief).join(" · ")}. Do not repeat it in overlays and do not count it as missing.\n` : ""}Product facts (the only facts you may state): ${JSON.stringify({ brand: c.research.brand, summary: c.research.summary, valueProps: c.research.valueProps, audience: c.research.audience })}
 Brand tone: ${c.research.tone}
 Buyer objections (hypotheses, not quotes): ${JSON.stringify(c.voc?.objections ?? [])}
 ${c.proof ? `Proof brief (approved by the operator): ${JSON.stringify({ tension: c.proof.tension, claim: c.proof.claim, action: c.proof.action, offer: c.proof.offer, cta: c.proof.cta, buyerQuote: c.proof.quote?.text })}. ${c.proof.asset ? "The operator attached a reference; only use their description of it." : "No proof asset is attached. The action is a proposed scene, not existing footage or evidence of any new claim."}` : ""}${c.style ? `\nBorrowed style (structure and pacing only; never ${c.style.brand}'s name, slogans or claims): ${c.style.tone}; pacing ${c.style.pacing}` : ""}${inspirationBlock(c)}${styleTemplate(c.scriptStyle)}${c.rules ?? ""}${c.mustSay?.length ? `\nMust say (in VO or on-screen text): ${c.mustSay.join(" | ")}` : ""}`;
