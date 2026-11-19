@@ -2,26 +2,29 @@
 
 import { Button } from "@/components/ui/button";
 import type { SheetRun } from "@/lib/sheet/run-types";
+import type { VersionStack } from "@/lib/versions";
 import { secs, usd } from "./api";
+import { VersionsPanel } from "./versions-panel";
 
 /** Steps 4 and 5. Previews render every shot cheaply (720p) per version; Final renders the winner at full quality. */
 export function RenderSteps({ run, view, busy, act }: { run: SheetRun; view: "previews" | "final"; busy: boolean; act: (b: Record<string, unknown>) => Promise<unknown> }) {
   if (view === "previews") {
+    const handleStartVersions = async (stacks: VersionStack[]) => {
+      await act({ action: "start_versions", runId: run.id, stacks });
+    };
+
+    const handlePickWinner = async (versionId: string) => {
+      await act({ action: "pick_winner", runId: run.id, versionId });
+    };
+
     return (
-      <div className="space-y-3" data-testid="previews-step">
-        <div className="flex items-center gap-2">
-          <Button disabled={busy || !run.gate?.pass} onClick={() => act({ action: "previews", runId: run.id })}>Render previews</Button>
-          <span className="text-xs text-zinc-500">Cheap 720p previews of every shot, rendered from the shot sheet only.</span>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {run.versions.filter((v) => v.tier === "preview").map((v) => (
-            <div key={v.id} className="rounded-lg border p-3 text-xs">
-              <div className="mb-2 flex justify-between font-semibold"><span>{v.stack.label}</span><span className="text-zinc-400">{v.status}</span></div>
-              {v.videoUrl ? <video src={v.videoUrl} controls className="w-full rounded" /> : <div className="aspect-video rounded bg-zinc-900" />}
-              <div className="mt-2 flex gap-3 text-zinc-400"><span>{usd(v.usd)}</span><span>{secs(v.ms)}</span>{v.score != null && <span>score {v.score.toFixed(1)}</span>}</div>
-            </div>
-          ))}
-        </div>
+      <div className="space-y-6" data-testid="previews-step">
+        <VersionsPanel
+          run={run}
+          busy={busy}
+          onStartVersions={handleStartVersions}
+          onPickWinner={handlePickWinner}
+        />
       </div>
     );
   }
