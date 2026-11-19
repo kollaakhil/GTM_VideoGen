@@ -60,6 +60,7 @@ const Plan = z.object({
   musicStyle: z.enum(MUSIC_STYLE_IDS).optional(),
   takes: z.number().int().min(1).max(3).optional(),
   candidates: z.number().int().min(1).max(4).optional(),
+  packshot: z.boolean().optional(),
   realSet: z.boolean().optional(),
 });
 

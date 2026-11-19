@@ -355,3 +355,21 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 - **Switches:** `MOTION_GRAPHICS=0` turns it off. It is off under vitest unless `MOTION_GRAPHICS=1`, so unit tests never launch Chrome.
 - **Licence:** Remotion is free for individuals and for companies of up to 3 people. Larger companies need a Remotion Company License (remotion.dev/license). Check this before commercial use at scale.
 - **Repo pitfall (my mistake):** I stashed the Remotion work with `git stash` and then ran `git add -A` on another branch. That committed the untracked remotion/ files into PR #25 without the package.json deps, and the port-3000 build failed with "Cannot find module 'remotion'". Use `git stash -u`, or commit work in progress before switching branches.
+
+### 13.14 Blender packshot end shot (step 9)
+
+- **Failure:** the CTA shot was the most expensive place to get the product wrong: re-drawn labels, two 12-packs with garbled art, extra cans. It is also the last thing the viewer sees.
+- **Fix:** `scripts/blender/packshot.py` (Blender 5.2.2, EEVEE, headless) turns the real product photo into a studio packshot.
+  - The label is unwrapped from the photo's cylindrical projection (x = cx + R·sin θ, θ in ±78°) and mapped onto a can body with metal lids.
+  - Lighting: softbox key, cool rim, fill, on a glossy floor.
+  - Camera: 85 mm, ±14° orbit with a 6% push-in. The back of the can is never shown.
+- **Pipeline:**
+  - When `plan.packshot` is on (new plans default on; off when Blender is missing, and under vitest unless `PACKSHOT=1`), the storyboard swaps the last shot's picture for the packshot. Beat, VO and overlay stay the same.
+  - Its keyframe is a Blender still and its clip a Blender render. The model is `blender:packshot` at $0, with one candidate.
+  - Both still go through the normal keyframe and clip vision QA.
+- **Pitfalls hit:**
+  1. Blender's cylinder primitive has its own UV map, and the image node used it, which stretched the label about 2×. Fix: remove the primitive's UV layers and make ours active and active-render.
+  2. With sensor fit AUTO in portrait, the 36 mm sensor spans the *height*, so the camera sat inside the label. Fix: vertical FOV = 2·atan(18/85).
+  3. `read_factory_settings` wipes datablocks, so the label image has to be made after the reset.
+- **Cost:** about 2 s for a still and about 115 s for a 4.2 s clip (126 frames) at 486×864 on the 8 GB Mac.
+- **Licence:** Blender is GPL, and renders made with it belong to us. The label art is the brand's own product photo, already supplied as the product reference.

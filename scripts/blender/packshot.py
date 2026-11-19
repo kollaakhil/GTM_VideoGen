@@ -1,0 +1,204 @@
+"""
+Studio packshot of the real product, rendered headless by Blender (5.x, EEVEE).
+
+  Blender -b --factory-startup -P scripts/blender/packshot.py -- \
+      --image product.png --out /tmp/frames --seconds 3 --width 486 --height 864 [--bg "#1b1b1b"] [--still]
+
+The product photo is a straight-on shot of a can. Its label is unwrapped from the photo's cylindrical projection
+(x = cx + R·sin θ) into a flat texture for θ in ±THETA, mapped onto a can body with metal lids, lit by a softbox key,
+a rim light and a fill, on a glossy floor. The camera (85 mm) orbits ±14° with a slow push-in. Frames are PNGs; the
+caller encodes them. Only the label seen in the photo is real; the back of the can is never shown.
+"""
+import math
+import os
+import sys
+
+import bpy
+import numpy as np
+
+argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+opt = {"--seconds": "3", "--width": "486", "--height": "864", "--bg": "#1b1b1b", "--fps": "30"}
+i = 0
+flags = set()
+while i < len(argv):
+    if argv[i] == "--still":
+        flags.add("still"); i += 1
+    else:
+        opt[argv[i]] = argv[i + 1]; i += 2
+IMAGE, OUT = opt["--image"], opt["--out"]
+W, H, FPS = int(opt["--width"]), int(opt["--height"]), int(opt["--fps"])
+FRAMES = 1 if "still" in flags else max(2, round(float(opt["--seconds"]) * FPS))
+THETA = math.radians(78)
+
+
+def hex_rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[k:k + 2], 16) / 255 for k in (0, 2, 4))
+
+
+# ---------- label: unwrap the photo ----------
+src = bpy.data.images.load(IMAGE)
+sw, sh = src.size
+px = np.array(src.pixels[:], dtype=np.float32).reshape(sh, sw, 4)  # bottom-up rows
+lum = px[..., :3].mean(axis=2) * (px[..., 3] if px.shape[2] == 4 else 1)
+mask = lum > 0.06
+cols = np.where(mask.mean(axis=0) > 0.35)[0]
+rows = np.where(mask.mean(axis=1) > 0.35)[0]
+if len(cols) < 10 or len(rows) < 10:
+    raise SystemExit("could not find the product in the photo")
+x0, x1 = cols.min(), cols.max()
+y0, y1 = rows.min(), rows.max()
+# Trim the lids (top and bottom ~5%): the texture is the body only.
+trim = int((y1 - y0) * 0.05)
+y0b, y1b = y0 + trim, y1 - trim
+cx, R = (x0 + x1) / 2, (x1 - x0) / 2
+TW = 1024
+thetas = np.linspace(-THETA, THETA, TW)
+xs = np.clip(np.round(cx + R * np.sin(thetas)).astype(int), 0, sw - 1)
+label = px[y0b:y1b + 1, xs, :].copy()
+label[..., 3] = 1.0
+lh = label.shape[0]
+aspect = (y1b - y0b) / (2 * R)  # body height / diameter
+
+# ---------- scene ----------
+bpy.ops.wm.read_factory_settings(use_empty=True)
+scene = bpy.context.scene
+for eng in ("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"):
+    try:
+        scene.render.engine = eng
+        break
+    except TypeError:
+        continue
+try:
+    scene.eevee.taa_render_samples = 48
+except AttributeError:
+    pass
+scene.render.resolution_x, scene.render.resolution_y = W, H
+scene.render.fps = FPS
+scene.frame_start, scene.frame_end = 1, FRAMES
+scene.render.image_settings.file_format = "PNG"
+scene.view_settings.view_transform = "AgX" if "AgX" in [v.identifier for v in type(scene.view_settings).bl_rna.properties["view_transform"].enum_items] else "Filmic"
+scene.view_settings.look = "None"
+
+tex = bpy.data.images.new("label", TW, lh, alpha=False)
+tex.pixels.foreach_set(label.ravel())
+tex.pack()
+
+world = bpy.data.worlds.new("w")
+scene.world = world
+world.use_nodes = True
+bgc = hex_rgb(opt["--bg"])
+world.node_tree.nodes["Background"].inputs[0].default_value = (*bgc, 1)
+world.node_tree.nodes["Background"].inputs[1].default_value = 0.35
+
+r = 1.0
+h = 2 * r * aspect
+# Body: open cylinder with UVs u = angle, v = height.
+bpy.ops.mesh.primitive_cylinder_add(vertices=128, radius=r, depth=h, end_fill_type="NOTHING", location=(0, 0, h / 2 + 0.12))
+body = bpy.context.object
+bpy.ops.object.shade_smooth()
+mesh = body.data
+while mesh.uv_layers:  # drop the primitive's own UV map so the label uses ours
+    mesh.uv_layers.remove(mesh.uv_layers[0])
+uv = mesh.uv_layers.new(name="UV")
+uv.active = uv.active_render = True
+for loop in mesh.loops:
+    v = mesh.vertices[loop.vertex_index].co
+    ang = math.atan2(v.x, -v.y)  # 0 faces the camera (-Y)
+    uv.data[loop.index].uv = ((ang / THETA + 1) / 2, (v.z + h / 2) / h)
+
+m = bpy.data.materials.new("label")
+m.use_nodes = True
+nt = m.node_tree
+bsdf = nt.nodes["Principled BSDF"]
+img = nt.nodes.new("ShaderNodeTexImage")
+img.image = tex
+img.extension = "EXTEND"
+nt.links.new(img.outputs["Color"], bsdf.inputs["Base Color"])
+bsdf.inputs["Roughness"].default_value = 0.32
+bsdf.inputs["Metallic"].default_value = 0.15
+for name in ("Coat Weight", "Clearcoat"):
+    if name in bsdf.inputs:
+        bsdf.inputs[name].default_value = 0.5
+body.data.materials.append(m)
+
+metal = bpy.data.materials.new("metal")
+metal.use_nodes = True
+mb = metal.node_tree.nodes["Principled BSDF"]
+mb.inputs["Base Color"].default_value = (0.78, 0.79, 0.8, 1)
+mb.inputs["Metallic"].default_value = 1.0
+mb.inputs["Roughness"].default_value = 0.22
+
+
+def lid(z, radius, depth):
+    bpy.ops.mesh.primitive_cylinder_add(vertices=128, radius=radius, depth=depth, location=(0, 0, z))
+    o = bpy.context.object
+    bpy.ops.object.shade_smooth()
+    bev = o.modifiers.new("b", "BEVEL")
+    bev.width, bev.segments = depth * 0.45, 4
+    o.data.materials.append(metal)
+    return o
+
+
+lid(0.12 + h + 0.09, r * 0.9, 0.18)   # shoulder + lid
+lid(0.12 + h + 0.02, r * 0.99, 0.06)  # neck ring
+lid(0.07, r * 0.88, 0.14)             # base
+
+bpy.ops.mesh.primitive_plane_add(size=40, location=(0, 0, 0))
+floor = bpy.context.object
+fm = bpy.data.materials.new("floor")
+fm.use_nodes = True
+fb = fm.node_tree.nodes["Principled BSDF"]
+fb.inputs["Base Color"].default_value = (*[c * 0.6 for c in bgc], 1)
+fb.inputs["Roughness"].default_value = 0.18
+floor.data.materials.append(fm)
+
+
+def light(name, loc, energy, size, color=(1, 1, 1)):
+    ld = bpy.data.lights.new(name, "AREA")
+    ld.energy, ld.size, ld.color = energy, size, color
+    o = bpy.data.objects.new(name, ld)
+    scene.collection.objects.link(o)
+    o.location = loc
+    d = o.constraints.new("TRACK_TO")
+    d.target, d.track_axis, d.up_axis = body, "TRACK_NEGATIVE_Z", "UP_Y"
+    return o
+
+
+light("key", (-4.5, -5.5, 5.0), 1400, 4.0, (1.0, 0.96, 0.9))
+light("rim", (4.0, 3.5, 4.5), 900, 2.0, (0.9, 0.95, 1.0))
+light("fill", (5.0, -6.0, 2.0), 300, 5.0)
+
+cam_d = bpy.data.cameras.new("cam")
+cam_d.lens = 85
+cam = bpy.data.objects.new("cam", cam_d)
+scene.collection.objects.link(cam)
+scene.camera = cam
+target = bpy.data.objects.new("target", None)
+scene.collection.objects.link(target)
+target.location = (0, 0, 0.12 + h * 0.52)
+tc = cam.constraints.new("TRACK_TO")
+tc.target, tc.track_axis, tc.up_axis = target, "TRACK_NEGATIVE_Z", "UP_Y"
+
+# Frame the can at ~72% of the frame height.
+# Sensor fit AUTO: the sensor width spans the larger image side (the height, for 9:16).
+half = (cam_d.sensor_width / 2) / cam_d.lens
+fov_v = 2 * math.atan(half if H >= W else half * H / W)
+dist0 = (h + 0.45) / 0.72 / (2 * math.tan(fov_v / 2))
+for f in range(1, FRAMES + 1):
+    t = 0 if FRAMES == 1 else (f - 1) / (FRAMES - 1)
+    ease = 0.5 - 0.5 * math.cos(math.pi * t)
+    a = 0.0 if FRAMES == 1 else math.radians(-14 + 28 * ease)
+    d = dist0 * (1.0 - 0.06 * ease)
+    cam.location = (d * math.sin(a), -d * math.cos(a), 0.12 + h * 0.62)
+    cam.keyframe_insert("location", frame=f)
+
+os.makedirs(OUT, exist_ok=True)
+scene.render.filepath = os.path.join(OUT, "f_")
+if FRAMES == 1:
+    scene.frame_set(1)
+    scene.render.filepath = os.path.join(OUT, "still.png")
+    bpy.ops.render.render(write_still=True)
+else:
+    bpy.ops.render.render(animation=True)
+print("PACKSHOT_OK", FRAMES)

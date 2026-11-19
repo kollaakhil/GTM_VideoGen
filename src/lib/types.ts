@@ -179,6 +179,8 @@ export interface VideoPlan {
   takes?: number;
   /** 480p candidates per shot (best-of-N, 1-4, default 3); vision QA keeps the best and only it is upscaled. */
   candidates?: number;
+  /** Replace the last shot with a Blender studio packshot of the real label (new plans: on when Blender is installed). */
+  packshot?: boolean;
   /** Snap cuts to music beats (default on). */
   beatSync?: boolean;
   /** Locally synthesised foley (pop, pour, fizz, clink, whoosh) by shot content (default on). */
@@ -254,6 +256,8 @@ export interface ShotSpec {
 
 export interface Shot {
   spec?: ShotSpec;
+  /** "packshot": rendered locally in Blender from the real label instead of a video model (packshot.ts). */
+  source?: "packshot";
   id: string;
   beat: string;
   seconds: number;

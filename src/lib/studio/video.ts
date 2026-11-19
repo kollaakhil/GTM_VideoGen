@@ -23,6 +23,7 @@ import { captionSync, captionSyncFindings } from "@/lib/caption-sync";
 import { endCardItems } from "@/lib/brief-policy";
 import { onBeatShare } from "@/lib/beat-sync";
 import { sfxCues } from "@/lib/sfx";
+import { PACKSHOT_MODEL, packshotAvailable, packshotShot, renderPackshot } from "@/lib/packshot";
 import { saveCreative } from "./creatives";
 import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
 import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
@@ -50,7 +51,9 @@ export async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: 
   for (let a = 0; a < KEYFRAME_TRIES; a++) {
     if (!live(run)) throw new Error("Stopped before generating a keyframe.");
     const plate = d.realSet?.plates[s.id] ? await mediaDataUrl(d.realSet.plates[s.id]) : null;
-    const img = await keyframe(run.models.image, s, plan.category, refs, run.research?.colors, notes, lookLine(plan, s), plate);
+    const img = s.source === "packshot" && refs[0]
+      ? { url: await renderPackshot(refs[0], { width: 486, height: 864, still: true }), usage: { costUsd: 0 } }
+      : await keyframe(run.models.image, s, plan.category, refs, run.research?.colors, notes, lookLine(plan, s), plate);
     const q = await reviewShotFrames(run.models.vision, [{ at: 0, url: img.url }], s, refs, undefined, "keyframe");
     run.costUsd += img.usage.costUsd + q.cost;
     if (!best || shotReady(q.qa) || (!shotReady(best.qa) && q.qa.score > best.qa.score)) best = { url: img.url, qa: q.qa };
@@ -86,6 +89,11 @@ export async function storyboard(run: StudioRun, d: Direction, refs: string[], s
     run.costUsd += gate.cost;
     saveStage(run, gate.score, d.id);
     if (!gate.score.pass) say(run, "error", `${stageBlock(run, "shots", d.id)} Top fixes: ${gate.fixes.slice(0, 3).join(" ")}`);
+  }
+  // Hero end shot: the last beat becomes a Blender packshot of the real label (free, never a re-drawn can).
+  if (run.videoPlan!.packshot && refs.length && p.shots.length > 1 && await packshotAvailable()) {
+    const product = run.research?.brand || "product";
+    p = { ...p, shots: [...p.shots.slice(0, -1), packshotShot(p.shots.at(-1)!, product)] };
   }
   Object.assign(d, { shots: p.shots, productRefs: savedRefs, storyboardKey: randomUUID(), passingDraft: null, compactCopy: false });
   run.costUsd += p.cost;
@@ -192,6 +200,10 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   const durationsOf = new Map<string, number[] | undefined>();
   const priceOf = new Map<string, number>();
   for (const m of new Set(models)) {
+    if (m === PACKSHOT_MODEL) {
+      priceOf.set(m, 0);
+      continue;
+    }
     durationsOf.set(m, (await videoDurations(m))?.filter((n) => n > 0).sort((a, b) => a - b));
     priceOf.set(m, providerOf(m) === "hfmcp" ? 0 : (await videoPricePerSec(m, resolution, false)) ?? 0.12);
   }
@@ -205,7 +217,7 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   const musicKey = shortHash([plan.category, seconds, run.research?.tone, plan.musicStyle ?? "auto"]);
   const reserve = 0.12 + shots.length * 0.035 + (plan.music && d.musicTrack?.key !== musicKey ? 0.6 : 0);
   // Best-of-N: N 480p candidates per missing shot (one for Higgsfield credits and for test drafts).
-  const nFor = (i: number) => (testDraft || providerOf(models[i]) === "hfmcp" ? 1 : candidateCount(plan.candidates));
+  const nFor = (i: number) => (testDraft || models[i] === PACKSHOT_MODEL || providerOf(models[i]) === "hfmcp" ? 1 : candidateCount(plan.candidates));
   const est = draftEstimate(missing.map((i) => ({ seconds: actual[i]!, perSec: perSec(i) * nFor(i) / Math.max(1, candidateCount(plan.candidates)) })), candidateCount(plan.candidates), reserve);
   const estimated = est.total;
   if (estimated > cap) throw new Error(`Preflight: estimated $${estimated.toFixed(2)} (${missing.length} shots × ${candidateCount(plan.candidates)} candidates) exceeds the $${cap.toFixed(2)} cap. No video was requested. Lower candidates per shot or raise the cap.`);
@@ -338,7 +350,9 @@ Start from the attached frame. Preserve the exact product and its real label; no
       const n = attempt === 0 ? Math.max(1, Math.min(nFor(i), Math.floor((cap - spent - pendingUsd - qCostReserve) / (actual[i]! * perSec(i) + 0.02)))) : 1;
       const cands = await Promise.all(Array.from({ length: n }, async () => {
         try {
-          const take = await generateVideo(models[i], prompt, { firstFrame: firsts[i], seconds: actual[i], audio: false, resolution });
+          const take = models[i] === PACKSHOT_MODEL
+            ? { url: await renderPackshot(refs[0], { seconds: actual[i]! + 0.2, width: 486, height: 864 }), usage: { costUsd: 0 } }
+            : await generateVideo(models[i], prompt, { firstFrame: firsts[i], seconds: actual[i], audio: false, resolution });
           charge(take.usage.costUsd);
           const stored = await storeMedia(take.url, `${run.id}/${d.id}-${s.id}-clip-${randomUUID()}`);
           return { take, stored };
