@@ -13,7 +13,7 @@ const ffmpeg = ffmpegPath || "ffmpeg";
 const args = { timeout: 45_000, maxBuffer: 4 * 1024 * 1024 };
 
 /** `box` (fractions of the frame) is where the line was actually drawn; OCR then reads only that box. */
-export type CopyCue = { start: number; end: number; text: string; layer: "overlay" | "caption" | "end"; position?: "brand" | "line" | "cta"; box?: { x: number; y: number; w: number; h: number } };
+export type CopyCue = { start: number; end: number; text: string; layer: "overlay" | "caption" | "end"; position?: "brand" | "line" | "cta" | "footer"; box?: { x: number; y: number; w: number; h: number } };
 
 /**
  * OCR filter for one cue. A placed caption is read from its own box (plus a small margin) and binarised: the copy is
@@ -32,7 +32,8 @@ export function ocrFilter(cue: CopyCue) {
     cue.layer === "overlay" ? "crop=iw*0.84:ih*0.33:iw*0.08:ih*0.125," :
     cue.position === "brand" ? "crop=iw:ih*0.18:0:ih*0.31," :
     cue.position === "line" ? "crop=iw:ih*0.105:0:ih*0.47," :
-    cue.position === "cta" ? "crop=iw:ih*0.14:0:ih*0.57," : "";
+    cue.position === "cta" ? "crop=iw:ih*0.14:0:ih*0.57," :
+    cue.position === "footer" ? "crop=iw:ih*0.08:0:ih*0.72," : "";
   return `${crop}scale=840:-2,format=gray`;
 }
 export type SpeechWindow = { start: number; end: number; text: string; shotId?: string };

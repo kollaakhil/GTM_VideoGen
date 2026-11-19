@@ -107,17 +107,17 @@ async function probe(file: string) {
 }
 
 /** Burns captions from the script into the video and renders 9:16, 4:5 and 1:1 cuts (center crop). */
-export type EndCard = { brand: string; line?: string; cta?: string; color?: string; logo?: string | null; fontFile?: string | null; fontFamily?: string | null };
+export type EndCard = { brand: string; line?: string; cta?: string; footer?: string; color?: string; logo?: string | null; fontFile?: string | null; fontFamily?: string | null };
 
 const CTA_LABEL: Record<string, string> = { SHOP_NOW: "Shop now", LEARN_MORE: "Learn more", SIGN_UP: "Sign up", GET_OFFER: "Get offer", ORDER_NOW: "Order now" };
-const endCopy = (end: EndCard) => ({ brand: end.brand, line: end.line, cta: end.cta ? CTA_LABEL[end.cta] ?? end.cta : undefined });
+const endCopy = (end: EndCard) => ({ brand: end.brand, line: end.line, cta: end.cta ? CTA_LABEL[end.cta] ?? end.cta : undefined, footer: end.footer });
 export const END_SECONDS = 1.5;
 
 export function expectedCopy(segments: { start: number; end: number; text: string; onScreen?: string }[], end: EndCard, duration: number): CopyCue[] {
   return [
     ...shotOverlays(segments).map((o): CopyCue => ({ ...o, layer: "overlay" })),
     ...timedCues(segments).map((c): CopyCue => ({ ...c, layer: "caption" })),
-    ...(["brand", "line", "cta"] as const).flatMap((position): CopyCue[] => {
+    ...(["brand", "line", "cta", "footer"] as const).flatMap((position): CopyCue[] => {
       const text = endCopy(end)[position];
       return text ? [{ text, start: duration, end: duration + END_SECONDS, layer: "end", position }] : [];
     }),
@@ -154,6 +154,7 @@ function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) 
     ev(fit(h / 11, end.brand.length), Math.round(h * 0.4), clean(end.brand)),
     ...(line ? [ev(fit(h / 28, line.length), Math.round(h * 0.52), line)] : []),
     ...(end.cta ? [ev(fit(h / 18, end.cta.length), Math.round(h * 0.64), CTA_LABEL[end.cta] ?? clean(end.cta))] : []),
+    ...(end.footer ? [ev(fit(h / 34, end.footer.length), Math.round(h * 0.76), clean(end.footer))] : []),
   ].join("\n");
 }
 

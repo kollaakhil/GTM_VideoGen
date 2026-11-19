@@ -296,3 +296,14 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
   - "captions vs voice (word sync)": mean coverage × 10, minus fails.
   - "sampled frames": every export frame the vision judge checked, scored pass 10, review 7, fail 3.
 - The full rubric (`quality.rubric`, `quality.rubricScore`) is saved on the quality report, so every run's breakdown is auditable.
+
+### 13.9 E2E run 1: script repair v2 result, and end-card mandatories
+
+- **PR18 result:** the repair round fixed all of the old blockers (`[script] Repair kept: 6 → 0 blockers.`). The script went from 6 to 7 with no checks, proof problems or unsupported claims left.
+- **Next failure:** the one remaining judge note was "the final card drops the offer and omits the mandatory footer". The brief listed "End card: …" and "Footer badge: …" as mandatories. The writer could not fit them under the 7-word overlay rule, and the app's end card only showed the brand and CTA, so the judge was right that nobody delivered them.
+- **Fix:**
+  - `endCardItems` moves those items out of the writer's mandatories into `brief.endCard`.
+  - The script prompts and the judge are told that the end card delivers them.
+  - The typeset end card now draws the offer line (y 52%) and the footer (y 76%).
+  - OCR reads both: the footer has its own crop band at 72–80%.
+- Nothing about the rubric changed. The judge's complaint was correct, and we fixed what the ad delivers.

@@ -20,6 +20,7 @@ import { inspirationGuidance } from "@/lib/inspiration";
 import { negativePrompt, specBlock } from "@/lib/shot-spec";
 import { candidateCount, draftEstimate, pickCandidate } from "@/lib/best-of-n";
 import { captionSync, captionSyncFindings } from "@/lib/caption-sync";
+import { endCardItems } from "@/lib/brief-policy";
 import { saveCreative } from "./creatives";
 import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
 import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
@@ -451,6 +452,9 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   const end = {
     brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
     cta: d.approvedScript!.cta,
+    // Offer line and footer badge from the brief's end-card mandatories (the writer leaves them to post).
+    line: endCardItems(run.brief)[0],
+    footer: endCardItems(run.brief)[1],
     color: kit?.colorRoles?.primary || run.research?.colors?.[0],
     logo: kit?.logo ? await mediaDataUrl(kit.logo).catch(() => null) : null,
     fontFile: kit?.font?.file ? await mediaFile(kit.font.file).catch(() => null) : null,
