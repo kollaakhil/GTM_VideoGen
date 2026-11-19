@@ -1,4 +1,5 @@
 import { chatJSON, generateImage, type Part } from "./ai";
+import { negativePrompt, specBlock, toSpec } from "./shot-spec";
 import { text, texts } from "./judge-schema";
 import { creativeBrief } from "./brief-policy";
 import { z } from "zod";
@@ -32,7 +33,7 @@ export async function planShots(
   const scriptBlock = sc
     ? `\nApproved script (${sc.framework}). It is final: one shot per beat in order. Add framing and lighting, never replace the action, product or proof:\n${sc.beats.map((b, i) => `${i + 1}. [${b.seconds}s] scene: ${b.visual} | vo: "${b.vo}" | overlay for post: "${b.onScreen}"`).join("\n")}\n`
     : "";
-  const { data, usage } = await chatJSON<{ shots: { beat: string; visual: string; camera: string; vo: string }[] }>(
+  const { data, usage } = await chatJSON<{ shots: { beat: string; visual: string; camera: string; vo: string; spec?: unknown }[] }>(
     model,
     "You are a performance-ad director storyboarding a vertical 9:16 video ad. You write shot lists that AI video models render well.",
     `Direction: ${JSON.stringify({ title: d.title, hook: d.hook, angle: d.angle, script: d.script })}
@@ -45,18 +46,21 @@ Rules:
 - "visual": one concrete, filmable scene (subject, action, setting, light, palette). Same product appearance and same people across shots for continuity.
 - Never put text, signs, captions, price tags, phones, screens, web pages, apps or UI in frame; all text is added in post. If the script beat mentions a screen or page, show the physical product and the person's reaction instead. The real product label (from the reference photo) is allowed.
 - "camera": one gentle camera move (e.g. slow push-in, slow pan, top-down static, slight orbit). Keep every person and the product fully in frame for the whole shot; never push in so far that anyone is cropped out.
+- "spec": structured instructions the video model follows literally: {"subject": who/what is in frame and their exact look, kept identical across shots; "productFraming": how big the product is in frame, its angle and that its real label faces camera (e.g. "can fills the lower third, label square to camera"); "lensMm": number (24 wide, 35 medium, 50 close-up, 85 tight, 100 macro); "cameraMove": one move with speed (e.g. "slow 10% push-in"); "lighting": key light direction, quality and colour temperature; "setting": location, surfaces and props; "motionBeats": 1–3 timed beats covering the whole shot (e.g. "0–1.5s hand tilts the can", "1.5–4s cola streams over ice, fizz rises"); "negative": 0–4 shot-specific things to avoid}. Keep hands simple (one hand, fingers relaxed, no fiddly gestures) and give the product time to stay still and readable.
 - "vo": the words spoken over this shot only, at most ${Math.round(secs * 2.3)} words, natural speech, only facts from the brief. The last shot ends on the call to action.
-Return JSON: {"shots":[{"beat","visual","camera","vo"}]}`,
+Return JSON: {"shots":[{"beat","visual","camera","vo","spec"}]}`,
   );
   const shots = sc ? lockScriptShots(sc, data.shots ?? []) : beats.map((beat, i) => {
     const s = data.shots?.[i];
-    return { id: `s${i}`, beat, seconds: secs, visual: s?.visual ?? "", camera: s?.camera ?? "slow push-in", vo: s?.vo ?? "", status: "planned" as const };
+    const visual = s?.visual ?? "", camera = s?.camera ?? "slow push-in";
+    return { id: `s${i}`, beat, seconds: secs, visual, camera, vo: s?.vo ?? "", status: "planned" as const, spec: toSpec(s?.spec, { visual, camera }) };
   }).filter((s) => s.visual);
   return { shots, cost: usage.costUsd };
 }
 
-export function lockScriptShots(sc: NonNullable<Direction["approvedScript"]>, ideas: { visual: string; camera: string }[]): Shot[] {
+export function lockScriptShots(sc: NonNullable<Direction["approvedScript"]>, ideas: { visual: string; camera: string; spec?: unknown }[]): Shot[] {
   return sc.beats.map((beat, i) => ({
+    spec: toSpec(ideas[i]?.spec, { visual: ideas[i]?.visual?.trim() || beat.visual, camera: ideas[i]?.camera?.trim() || "slow push-in" }),
     id: `s${i}`,
     beat: i === 0 ? "hook" : i === sc.beats.length - 1 ? "cta" : `beat ${i + 1}`,
     seconds: beat.seconds,
@@ -70,8 +74,8 @@ export function lockScriptShots(sc: NonNullable<Direction["approvedScript"]>, id
 }
 
 function keyframePrompt(s: Shot, cat: VideoCategory, colors: string[] = [], look = "", set = false) {
-  return `Vertical 9:16 photoreal still frame for a video ad (${CATEGORIES[cat].label}). ${s.visual} Camera: ${s.camera}. Look: ${CATEGORIES[cat].look}.${look ? ` ${look}` : ""}${set ? " Shoot it inside the attached set plate: keep its architecture, materials and light direction exactly." : ""}${colors.length ? ` Palette accents: ${colors.slice(0, 3).join(", ")}.` : ""}
-Absolutely no text, letters, numbers, signs, labels, price tags or logos anywhere. Keep the main subject inside the center 70% of the frame. If a product photo is attached, the product must match it exactly (shape, color, material, proportions).`;
+  return `Vertical 9:16 photoreal still frame for a video ad (${CATEGORIES[cat].label}). ${s.visual} ${specBlock(s)} Camera: ${s.camera}. Look: ${CATEGORIES[cat].look}.${look ? ` ${look}` : ""}${set ? " Shoot it inside the attached set plate: keep its architecture, materials and light direction exactly." : ""}${colors.length ? ` Palette accents: ${colors.slice(0, 3).join(", ")}.` : ""}
+Absolutely no invented text, letters, numbers, signs, price tags or logos anywhere; the only lettering allowed is the real product label from the attached photo. Avoid: ${negativePrompt(s)}. Keep the main subject inside the center 70% of the frame. If a product photo is attached, the product must match it exactly (shape, color, material, proportions).`;
 }
 
 export async function keyframe(imageModel: string, s: Shot, cat: VideoCategory, refs: string[], colors?: string[], fixes?: string[], look = "", plate?: string | null) {

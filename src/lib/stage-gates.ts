@@ -3,6 +3,7 @@ import { list, text, texts } from "./judge-schema";
 import { chatJSON, type Part } from "./ai";
 import { clamp, stageScore, threshold, type Check } from "./stage-policy";
 import { operationalMandatory } from "./brief-policy";
+import { specGaps } from "./shot-spec";
 import type { Brief, JudgeCalibration, QualityFinding, Research, Shot, ShotQA, StageScore, StudioRun, VoiceOfCustomer } from "./types";
 
 /** Judges and rule checks for each stage gate (thresholds and blocking live in stage-policy.ts). */
@@ -78,6 +79,10 @@ export function shotRules(shots: Shot[]): Check[] {
     { name: "lighting", score: clamp(4 + lit * 6), note: `${Math.round(lit * 100)}% describe light`, by: "rules", weight: 0.5 },
     { name: "matches script", score: clamp((match.reduce((a, b) => a + b, 0) / n) * 12), note: "Word overlap with each locked beat", by: "rules" },
     { name: "continuity anchors", score: shared >= 4 ? 10 : shared >= 2 ? 7 : 4, note: `${shared} shared cast/set/product words across shots`, by: "rules" },
+    ...(() => {
+      const gaps = shots.flatMap(specGaps);
+      return [{ name: "structured spec", score: clamp(10 - gaps.length * 1.5), note: gaps.length ? gaps.slice(0, 4).join("; ") : "Subject, product framing, lens mm, move, light, setting and motion beats on every shot", by: "rules" as const, weight: 1.5 }];
+    })(),
   ];
 }
 
