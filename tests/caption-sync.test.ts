@@ -41,7 +41,7 @@ it("captions follow the spoken span, not the whole shot", () => {
 it("one text layer: no spoken captions while a shot shows its overlay", () => {
   const seg = [
     { start: 0, end: 3, text: "Love cola, dread the sugar guilt?", onScreen: "Classic cola ritual. 5g sugar." },
-    { start: 3, end: 7, text: "Half off two-plus cases. Shop at drinkolipop.com." },
+    { start: 3, end: 7, text: "Half off two-plus cases. Shop at drinkolipop.com.", onScreen: "Shop at drinkolipop.com" },
   ];
   const cues = timedCues(seg);
   expect(cues.every((c) => c.start >= 3)).toBe(true);
