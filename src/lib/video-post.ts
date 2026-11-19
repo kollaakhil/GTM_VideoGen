@@ -165,8 +165,13 @@ function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) 
 
 /** Burns captions, crops to each aspect and appends a typeset end card (brand, offer line, CTA) so the wordmark is always spelled right. */
 /** Caption cues timed to each shot's window instead of spread evenly over the whole video. */
-export function timedCues(segments: { start: number; end: number; text: string }[], wordsPerCue = 4) {
-  return segments.flatMap((s) => captionCues(s.text, s.end - s.start, wordsPerCue, true).map((c) => ({ ...c, start: c.start + s.start, end: c.end + s.start })));
+export function timedCues(segments: { start: number; end: number; text: string; speech?: { start: number; end: number } }[], wordsPerCue = 4) {
+  // Captions follow the voice, not the shot: spreading a 3.4 s line over a 4 s shot ran the last cue ~0.6 s late and
+  // into the next line (caption word-sync 4.9, run_8a9c7c9db627 take 2; 13.25).
+  return segments.flatMap((s) => {
+    const a = s.speech ? Math.max(s.start, s.speech.start) : s.start, b = s.speech ? Math.min(s.end, Math.max(a + 0.3, s.speech.end)) : s.end;
+    return captionCues(s.text, b - a, wordsPerCue, true).map((c) => ({ ...c, start: c.start + a, end: c.end + a }));
+  });
 }
 
 const toFile = async (dir: string, name: string, media: string) => {

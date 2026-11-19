@@ -477,7 +477,17 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     beatSync: plan.beatSync !== false, sfx: plan.sfx === false ? [] : sfxCues(shots),
   });
   const lenOf = (i: number) => (st.starts[i + 1] ?? st.duration) - st.starts[i];
-  const segments = shots.map((s, i) => ({ shotId: s.id, start: st.starts[i], end: st.starts[i] + lenOf(i), text: s.vo, onScreen: s.onScreen }));
+  // Where each line is actually spoken (voice start + its measured length at the applied tempo); captions follow it.
+  const spans: ({ start: number; end: number } | undefined)[] = [];
+  {
+    let v = 0;
+    for (const s of shots) {
+      const voice = s.vo.trim() ? voiceData[v++] : undefined;
+      const len = voice ? await mediaDuration(voice.url).catch(() => 0) : 0;
+      spans.push(voice && len > 0 ? { start: voice.start, end: voice.start + len / (voice.tempo || 1) } : undefined);
+    }
+  }
+  const segments = shots.map((s, i) => ({ shotId: s.id, start: st.starts[i], end: st.starts[i] + lenOf(i), text: s.vo, onScreen: s.onScreen, speech: spans[i] }));
   const end = {
     brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
     cta: d.approvedScript!.cta,
