@@ -146,3 +146,8 @@ it("brand tolerance: coined brand heard within 2 edits, one function-word swap, 
   expect(brandNear("Keep the cola, swap in OLIPOP now.", "Keep the cola, swap in OLIPOP.", "OLIPOP")).toBe(false); // extra word
   expect(brandNear("Try the Lux one", "Try the Lux one", "Lux")).toBe(false); // short names get no tolerance
 });
+
+it("sameSpeech reads 2+ as two plus", () => {
+  expect(sameSpeech("50% off 2+ cases. Shop at drinkolipop.com", "Fifty percent off two-plus cases. Shop at drinkolipop.com.")).toBe(true);
+  expect(sameSpeech("50% off 3+ cases", "Fifty percent off two-plus cases.")).toBe(false);
+});

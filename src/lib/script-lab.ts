@@ -147,7 +147,7 @@ export const exactCopy = (text: string) => text.normalize("NFKC").toLowerCase()
 
 export function sameSpeech(heard: string, expected: string) {
   const tokens = (text: string) => numberize(exactCopy(text.replace(/(\d),(?=\d)/g, "$1")
-    .replace(/\$(\d+)/g, "$1 dollars").replace(/(\d+)\s*%/g, "$1 percent")).split(/\s+/).filter(Boolean))
+    .replace(/\$(\d+)/g, "$1 dollars").replace(/(\d+)\s*%/g, "$1 percent").replace(/(\d)\s*\+/g, "$1 plus")).split(/\s+/).filter(Boolean))
     .map((w) => w === "dollar" || w === "bucks" ? "dollars" : w).join(" ");
   if (tokens(heard) === tokens(expected)) return true;
   // Domains and compounds: "drinkolipop.com" is heard as "drink olipop dot com"; compare without spaces or "dot".
