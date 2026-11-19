@@ -120,7 +120,8 @@ export function selectVoice(persona: VoicePersona, brand: string): string {
     male: ["Roger", "Charlie", "George", "Callum", "Liam", "Will", "Eric", "Chris", "Brian", "Daniel"],
   };
 
-  const gender = persona.gender.toLowerCase().includes("male") ? "male" : "female";
+  const genderLower = persona.gender.toLowerCase();
+  const gender = genderLower === "male" ? "male" : "female";
   const pool = VOICES[gender] || VOICES.female;
   
   // Deterministic selection based on brand name hash
