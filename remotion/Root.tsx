@@ -1,6 +1,8 @@
 import React from "react";
 import { AbsoluteFill, Composition, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
-import type { CaptionLine, CardProps, OverlayLine, OverlayProps } from "./props";
+import type { CaptionLine, CardProps, OverlayLine, OverlayProps, TextCardProps, LowerThirdProps } from "./props";
+import { TextCard } from "./TextCard";
+import { LowerThird } from "./LowerThird";
 
 const FONT = `@font-face { font-family: "DejaVu Sans"; font-weight: 700; src: url("${staticFile("DejaVuSans-Bold.ttf")}") format("truetype"); }`;
 const fontFamily = "'DejaVu Sans', sans-serif";
@@ -98,5 +100,9 @@ export const Root: React.FC = () => (
     <Composition id="EndCard" component={CardComp} fps={fps} width={486} height={864} durationInFrames={75}
       defaultProps={{ width: 486, height: 864, seconds: 2.5, card: { brand: "Brand", bg: "#111111", ink: "white", accent: "#FFE14D" } } as CardProps}
       calculateMetadata={({ props }) => ({ width: props.width, height: props.height, durationInFrames: Math.max(1, Math.round(props.seconds * fps)) })} />
+    <Composition id="TextCard" component={TextCard as unknown as React.FC<Record<string, unknown>>} fps={fps} width={486} height={864} durationInFrames={60}
+      defaultProps={{ text: "Sample Text", placement: "center", bg: "#0b0b0f", ink: "#ffffff", accent: "#666666" } as Record<string, unknown>} />
+    <Composition id="LowerThird" component={LowerThird as unknown as React.FC<Record<string, unknown>>} fps={fps} width={486} height={864} durationInFrames={60}
+      defaultProps={{ text: "Sample Text", placement: "lower third", bg: "#0b0b0f", accent: "#666666" } as Record<string, unknown>} />
   </>
 );

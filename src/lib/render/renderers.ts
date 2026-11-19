@@ -75,7 +75,8 @@ export function remotionRenderer(deps: RemotionDeps = {}): Renderer {
         const file = deps.card
           ? await deps.card(row, ctx, out)
           : await renderEndCard({ width: ctx.width, height: ctx.height, seconds: row.seconds, card: { brand: c.brand, line: c.line, cta: c.cta, footer: c.footer, bg: c.bg ?? "#0b0b0f", ink: c.ink ?? "white", logo: null, accent: c.accent ?? "#ffffff" } }, out);
-        return { url: `data:video/mp4;base64,${(await fs.readFile(file)).toString("base64")}`, costUsd: 0 };
+        const data = await fs.readFile(file);
+        return { url: `data:video/mp4;base64,${data.toString("base64")}`, costUsd: 0 };
       } finally {
         await fs.rm(dir, { recursive: true, force: true });
       }

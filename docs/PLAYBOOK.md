@@ -612,3 +612,48 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
 - Editing: any edit in the table refits timings, bumps the sheet version and re-gates. Changing an engine locks it (`engineLocked`) so routing won't override it.
 - Cheap models only: gemini-3.8-flash for brief and sheet. Real cost of brief + sheet for the Neon run: $0.04, about 25 s + 48 s.
 - Gotchas: the model tends to write SFX times as absolute seconds ("at 2.1s") instead of shot-relative; components defined inside components lose input focus (keep them at module scope); every paid call is appended to `SPEND_LEDGER` with the running total in column 5.
+
+## 14.4 Remotion renderer for shot sheets
+
+The Remotion renderer handles shot sheet rows with `engine: "remotion"`: kinetic text cards, title overlays, and the closing end card. Renders locally to MP4, no external API calls.
+
+**Compositions:**
+- `TextCard`: Kinetic text cards with placement (upper, center, lower). Text fades in with subtle spring movement.
+- `LowerThird`: Text overlays that slide in over optional background clips. Semi-transparent backing with accent border.
+- `EndCard`: Closing card with logo, headline, line, CTA, and footer. Elements stagger in and settle by 0.9s.
+
+**Usage:**
+```typescript
+import { renderRemotionShot } from "@/lib/remotion-shot";
+
+const result = await renderRemotionShot(row, brand, sheet, {
+  width: 486,
+  height: 864,
+  fps: 30,
+  cacheDir: "/tmp/remotion-cache", // optional
+});
+// result: { path: string, durationSec: number, ms: number }
+```
+
+**Caching:** Renders are cached by input hash (shot ID, text, duration, brand colors, resolution). Unchanged rows skip rendering. Cache keys are stable and deterministic.
+
+**House style:** Black background (`#0b0b0f`), desaturated accent colors, restrained type (DejaVu Sans Bold). Hard cuts, fade to black before end card. Text feels like part of the scene, not a graphic overlay.
+
+**Routing:** The render router picks Remotion for:
+- Rows with `engine: "remotion"` or `model: "remotion:..."`
+- Rows with `graphic: true` (text/graphic cards, no filmed subject)
+- The last shot when it's an end card
+
+**Local smoke test:**
+```bash
+npx tsx scripts/remotion-smoke.ts
+```
+Renders a 3-second end card and tests cache hit. Output: `/tmp/remotion-smoke-test.mp4`.
+
+**Failure cases:**
+- **Missing text:** Remotion shots (except end cards) require `text.copy`. Router should catch this upstream.
+- **Bundle failure:** If `@remotion/bundler` fails, check that `remotion/index.ts` exists and `assets/fonts/` has the font file.
+- **Chrome missing:** Remotion needs Chrome/Chromium. In Docker/CI, install `chromium` and set `PUPPETEER_EXECUTABLE_PATH`.
+- **Memory limits:** Large compositions can OOM. Keep `concurrency: 2` and duration under 10s per shot.
+
+**Integration:** The renderer is wired into `src/lib/render/renderers.ts` as `remotionRenderer()`. The shot sheet pipeline calls it through `renderRouted()` when routing picks Remotion.
