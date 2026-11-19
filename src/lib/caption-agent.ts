@@ -58,7 +58,7 @@ export function keywordCues(segments: { start: number; end: number; text: string
     // A shot whose approved on-screen copy repeats its line (the CTA) shows that copy, not a keyword pick: its overlay
     // is suppressed as a duplicate, so this cue is the shot's only required text (take 7: "approved CTA missing").
     const own = s.onScreen?.trim();
-    if (own && own.split(/\s+/).length <= 5 && exactish(s.text).includes(exactish(own))) {
+    if (own && own.split(/\s+/).length <= 6 && exactish(s.text).includes(exactish(own))) {
       return [{ start: s.speech ? Math.max(s.start, s.speech.start - 0.15) : s.start, end: s.end, text: own }];
     }
     const a = s.speech ? Math.max(s.start, s.speech.start) : s.start;
