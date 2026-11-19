@@ -111,7 +111,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
       try {
         const j = await fetchJSON("/api/studio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...extra }) });
         setRun(j.run);
-        if (action === "research") router.replace(`/studio?run=${j.run.id}`);
+        if (action === "research") router.replace(`/studio/classic?run=${j.run.id}`);
         return true;
       } catch (e) {
         flash((e as Error).message);
@@ -183,7 +183,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
                 <MessageSquare /> Activity
               </Button>
             )}
-            <Button size="sm" className="h-8" onClick={() => router.push("/studio")}>
+            <Button size="sm" className="h-8" onClick={() => router.push("/studio/classic")}>
               <Plus /> New run
             </Button>
           </div>
@@ -197,7 +197,7 @@ function StudioInner({ models, defaults }: { models: Model[]; defaults: Record<M
               onClose={() => setShowHistory(false)}
               onOpen={(id) => {
                 setShowHistory(false);
-                router.push(`/studio?run=${id}`);
+                router.push(`/studio/classic?run=${id}`);
               }}
             />
           )}
