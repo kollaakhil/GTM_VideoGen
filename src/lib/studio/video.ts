@@ -438,7 +438,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
   }
   const main = variants.find((v) => v.aspect === "9:16")!.url;
   const script = shots.map((s) => s.vo).join(" ");
-  const speech = await verifySpeech(main, [...segments, { start: 0, end: st.duration + END_SECONDS, text: script }], transcribe);
+  const speech = await verifySpeech(main, [...segments, { start: 0, end: st.duration + END_SECONDS, text: script }], transcribe, end.brand);
   charge(speech.cost);
   findings.push(...speech.findings);
   for (const finding of speech.findings) {

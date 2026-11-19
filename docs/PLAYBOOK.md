@@ -170,3 +170,38 @@ Each static direction renders `TOURNAMENT_SIZE` takes (default 2, max 4) and kee
 - **Tests:** `tests/caption-layout.test.ts` covers the OLIPOP can geometry, overlay/caption collisions, the
   duplicate-overlay rule, the OCR crop, and a pixel test where a detailed "can" under the default slot stays
   untouched.
+
+### 13.2 The four warnings that kept the OLIPOP final unpublishable
+
+"Making the final video with 4 warnings" came from `finalBlockers()`. Each was traced to its root cause:
+
+1. **Proof problem: "the opening establishes the stock obstacle before the goal."** The judge's story rule demanded
+   Goal → Stakes → Obstacle in that order, but the hook lab itself offers "Buyer friction" and "Proof first"
+   openings, so every friction hook was flagged. **Fix:** the rule now accepts a friction-led or proof-led opening as
+   long as the goal and stakes are clear by the end of beat 2.
+2. **Proof problem: "Tap Notify Me for this pour" contradicts the pour.** This was a real defect, but the repair loop
+   rewrote only the judge's single `blockerBeat` using the judge's single note (which was about the sugar
+   disclosure). Global problems and other proof problems were never sent to the writer, so re-scores kept finding
+   them (6/10 across 7 re-scores). **Fix:** one repair round gets every fix note (`scriptFixNotes`: checks,
+   unsupported claims, proof problems, the judge's note) and may rewrite every unlocked beat. `betterScript` keeps the
+   repair only if it adds no new unsupported claim and has fewer blockers (or as many and a higher score). A new
+   writer rule says the VO action must match what the visual shows.
+3. **"Redraw keyframes 1–4 until they match and score 9/10."** All four keyframes passed on every frame ("accurately
+   reflects the locked script…") and still scored 7. That is the same flash-judge habit found in calibration
+   (§11, third run): it parks good work at 7. **Recalibration (justified):** shot and keyframe QA no longer asks for a
+   number. Each frame is graded on a checklist: action, product, label, hands, artifacts, framing. Each item is
+   ok, minor, major or na, and `checklistScore` = 10 − 1 per minor − 4 per major (worst severity per item), with a
+   failing frame counted as at least one major and any major capping the shot at 6. One cosmetic flaw still allows 9
+   ("no meaningful defects"); two don't. The judge's own number is kept as `judgeScore` for the record. This is
+   stricter on real defects (a major item now fails its frame even if the judge said "pass") and only removes the
+   fixed 7 ceiling. To do: add golden keyframe items to **Calibrate judges**.
+4. **Video gate 4.6 on the take:** shot 1 asked the video model for "a page showing Out of Stock and Notify Me".
+   Video models garble UI and words, and QA rightly failed the melting screen. **Fix:** `renderedTextProblem()`
+   flags screens, pages, apps, signs, notifications and quoted words in hook and beat visuals (a script check, so
+   the repair round fixes it before approval). The writer and shot-planner rules now forbid phones, screens and UI in
+   frame. The real product label is still allowed.
+
+**Also fixed, the export speech failure:** whisper heard the clean TTS line "drinkolipop.com" as "drinkoleopop.com".
+`verifySpeech` now passes whisper a `--prompt` that lists only the brand name, domains and coined all-caps or
+CamelCase words (`asrVocabulary`), never the whole line, so real mis-speech still fails. On the stored OLIPOP final,
+the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
