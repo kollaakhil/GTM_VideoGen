@@ -18,6 +18,9 @@ export interface AiVideoDeps {
   defaultModel: string;
 }
 
+/** The provider aspect string for a render size. */
+export const aspectOf = (w: number, h: number) => (w > h ? "16:9" : w < h ? "9:16" : "1:1");
+
 /** AI video through the existing provider switch (fal, OpenRouter, Higgsfield). The caller owns the prompt. */
 export function aiVideoRenderer(deps: AiVideoDeps): Renderer {
   const gen = deps.generate ?? generateVideo;
@@ -29,7 +32,7 @@ export function aiVideoRenderer(deps: AiVideoDeps): Renderer {
     estimateUsd: (row) => price(modelOf(row)) * row.seconds,
     async render(row, ctx) {
       if (!ctx.prompt) throw new RendererUnavailable("ai-video", "no prompt for this shot");
-      const take = await gen(modelOf(row), ctx.prompt, { firstFrame: ctx.firstFrame, seconds: row.seconds, audio: false, resolution: ctx.resolution ?? "480p" });
+      const take = await gen(modelOf(row), ctx.prompt, { firstFrame: ctx.firstFrame, seconds: row.seconds, audio: false, resolution: ctx.resolution ?? "480p", aspect: aspectOf(ctx.width, ctx.height) });
       return { url: take.url, costUsd: take.usage.costUsd };
     },
   };
