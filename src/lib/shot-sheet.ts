@@ -76,7 +76,7 @@ export const SheetSchema = z.object({
   aspect: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
   fps: z.number().int().min(12).max(60).default(24),
   audioMode: z.enum(["vo", "foley"]),
-  bed: Str(200).default("low analog synth drone"),
+  bed: Str(200).default(""),
   palette: Str(120).default(""),
   rules: z.array(RuleSchema).max(30),
   shots: z.array(ShotSchema).min(1).max(40),

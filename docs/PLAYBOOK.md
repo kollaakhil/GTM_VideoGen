@@ -1119,3 +1119,38 @@ All tests in `tests/blender-queue.test.ts`:
 ### Related
 - PR branch: `devin/1794972912-studio-quality-gates`
 - See also: PLAYBOOK §14 (Studio flow), §9 (Video plan), §6 (Stage gates)
+
+## 22. Audio copied the Neon reference (fixed)
+
+**Symptom:** Every video's audio sounded like the Gemini 4 Neon reference instead of matching its own script and video.
+
+**Root causes:**
+- `droneBed()` synthesized the same sub-sine drone for every video. The `sheet.bed` default was "low analog synth drone" and the writer prompt asked for a "music/drone bed".
+- `src/lib/sfx.ts` and `src/lib/audio/mode.ts` gave foley as a fixed list of lavfi-synthesized kinds (whoosh, pop, fizz, pour, clink, click, thud, slide, sizzle), matched by regex. Anything else got nothing or a generic whoosh on every cut.
+- `voiceover(line, "Rachel", ...)` was hard-coded with the same voice for every brand.
+
+**Fix (PR: unique-audio-per-video):**
+1. **Sound design step** (`src/lib/audio/sound-design.ts`): A cheap text-LLM call that uses the existing chatJSON and the run's text model. From the sheet (each shot's subject, action, VO, sfx line, transition and timing), the brief (brand, tone, audience) and the story pattern if one exists, it produces a SoundPlan:
+   - Per shot: 0-3 SFX cues with an exact description (specific to what's on screen, such as "ceramic mug set down on oak desk" rather than "thud"), an offset and a gain.
+   - A music decision: none, or a cue with a prompt describing genre, tempo, instruments and mood from the script, where each run gets a different cue derived from its content.
+   - A voice persona (gender, age, energy, pace) chosen from the brand and script.
+   - Respects pattern rules (e.g. if a rule says "leave out music", music is none).
+
+2. **Generated audio, matched to picture**: Prefer video-to-audio so the sound is synced to the actual clip.
+   - Per shot: generate SFX from the rendered clip plus the cue prompt using MMAudio (fal, \$0.001/sec) or other models from the version stack.
+   - Music: use the existing `musicBed()` in `src/lib/ai.ts` (ElevenLabs Music v2.5 \$0.6/clip default, or Stable Audio \$0.2/clip) with the plan's prompt, only when the plan says music.
+   - Voice: map the persona to a voice id from the voices `voiceover()` already supports. No longer hard-coded "Rachel" - deterministic choice per brand.
+   - Every call goes through the existing paid()/meter, costs are tracked per model, appears in the version cost estimate, and is blocked by the run cap.
+   - Cache per shot by input hash, the same as the clips.
+   - Fallback: if a provider is unavailable or the cap is hit, fall back to local lavfi SFX and NO drone, and log it.
+
+3. **Remove the Neon default**: Changed the bed default from "low analog synth drone" to empty string. Keep `droneBed` only if the plan explicitly asks for a drone. Rewrote the writer prompt so it asks for script-specific sound lines per shot (exact sounds tied to the on-screen action) instead of a drone bed.
+
+4. **Mixing**: Keep the voice on top, SFX under it, and music (when present) ducked. Honour silence gaps from the sheet or pattern. Aim for about -14 LUFS, using the existing loudness check in `src/lib/stage-gates.ts`.
+
+5. **Audio models in registry**: Added audio stages (sfx, music, voice) to the model registry (`src/lib/registry/`) alongside video, image, qa. Wired them through `defaultRenderDeps(stackModels)` so each version stack can pick its audio models.
+   - Premium/Auto defaults use top quality: MMAudio V2 (video-to-audio, \$0.001/sec), ElevenLabs Music v2.5 (\$0.6/clip), ElevenLabs v4 TTS (\$0.1/1k chars).
+   - Open source preset uses: Stable Audio 3 Small SFX (open), ACE-Step (open music), Chatterbox (open TTS).
+   - Models verified live: `fal-ai/mmaudio-v2`, `sonilo/v1.1/text-to-sound-effects`, `elevenlabs/sound-effects/v3`, `elevenlabs/music/v2.5`, `fal-ai/stable-audio-25/text-to-audio`, `elevenlabs/tts/eleven-v4`.
+
+6. **Quality over budget**: Removed artificial per-call limits for audio. The run cap is user-settable in the UI with no hard-coded low ceiling. Audio goes through the meter and ledger for tracking, but quality comes first.

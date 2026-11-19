@@ -41,14 +41,15 @@ ${i.rules.map((r) => `- [${r.id}] ${r.text}`).join("\n") || "- (none)"}
 
 ${patternPrompt}
 
-Format: ${i.targetSec}s total, aspect ${i.aspect}, 24 fps. Audio: ${i.audioMode === "foley" ? "FOLEY-FIRST: no voiceover at all; every shot gets one crisp close-miked sound effect on its action, plus a low bed under everything" : "voiceover: short spoken lines, plus sound effects and a music bed"}.
+Format: ${i.targetSec}s total, aspect ${i.aspect}, 24 fps. Audio: ${i.audioMode === "foley" ? "FOLEY-FIRST: no voiceover at all; every shot gets one crisp close-miked sound effect on its action, plus a low bed under everything" : "voiceover: short spoken lines, max ~2.5 words per second, plus sound effects"}.
 Engines per shot: "blender" for product, hero, label, macro, sign, object and abstract shots (free, readable labels, exact camera); "ai_video" only for people, hands or live action; "remotion" for pure text cards and the final end card. ${i.hasPhotos ? "Real product photos are available: product shots use blender template product_hero." : "No product photos: use glow_word, macro_label or lab templates."}
 Blender templates: glow_word (neon tube lettering of "word"), macro_label (engraved "label" text on brushed metal, extreme macro), product_hero (real product photo), lab (smoked-glass panel with glowing gas tubes, a brass switch and engraved labels; good for detail/trigger/reveal loops).
 The LAST shot must be the end card (engine remotion), and the shot before it transitions "fade_black".
+For each shot's "sfx" line, write exact sounds tied to the on-screen action (e.g. "glass bottle set down on marble" not "thud"). The sound designer will use these to generate audio matched to the actual video.
 ${fixes.length ? `\nFIX THESE PROBLEMS FROM THE LAST DRAFT:\n${fixes.map((f) => `- ${f.text}`).join("\n")}\n` : ""}
 Return JSON:
 {"script":"the script as 2-6 lines",
- "sheet":{"targetSec":${i.targetSec},"audioMode":"${i.audioMode}","bed":"${i.patternId === 'confession_loop' ? 'null (no music)' : 'one line describing the music/drone bed'}","palette":"colour palette in a few words","patternId":"${i.patternId || 'confession_loop'}",
+ "sheet":{"targetSec":${i.targetSec},"audioMode":"${i.audioMode}","bed":"${i.patternId === 'confession_loop' ? '' : 'one line describing the music/drone bed (empty for confession_loop)'}","palette":"colour palette in a few words","patternId":"${i.patternId || 'confession_loop'}",
   "endCard":{"title":"product name","line":"where to get it, from the facts","footer":"one verified proof line or empty"},
   "shots":[{"start":0,"end":1.5,"shotType":"ECU macro|CU|MCU|MS|WS|EWS|insert|end card","framing":"what fills the frame and where","camera":{"angle":"eye level|low|high|top-down|dutch","move":"slow push-in 15%|slow orbit 20°|static","lensMm":100},"subject":"...","action":"what happens, with timing inside the shot","lighting":"key, rim, practicals, colour","text":null or {"copy":"exact words","placement":"diegetic on the plate|lower third|centre","chunks":["2-4","word","chunks"]},"audio":{"vo":null or "exact line","sfx":"exact sound and when, e.g. brass switch snap at 0.3s","music":null},"transition":"cut|fade_black|crossfade|whip","engine":"${ENGINES.join("|")}","blender":{"template":"${BLENDER_TEMPLATES.join("|")}","word":"...","label":"...","color":"#rrggbb","ignite":0.4} or null,"prompt":"for ai_video only: the full image-to-video prompt" or null,"editorNote":"one instruction to the editor for this cut","beat":"goal|personal_stake|stake_raised|physical_example|but_silence|owned_cause|low_point|crazy_plan|cut_before_attempt|takeaway"}]}}`;
 }
@@ -118,7 +119,7 @@ export function normaliseSheet(raw: unknown, i: Pick<SheetInput, "targetSec" | "
     aspect: i.aspect,
     fps: 24,
     audioMode: i.audioMode,
-    bed: String(r.bed ?? "low analog synth drone").slice(0, 200),
+    bed: String(r.bed ?? "").slice(0, 200),
     palette: String(r.palette ?? "").slice(0, 120),
     rules: i.rules,
     endCard: r.endCard ?? { title: "Brand" },
