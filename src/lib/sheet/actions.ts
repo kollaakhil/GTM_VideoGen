@@ -175,6 +175,7 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
       aspect: run.input.aspect,
       audioMode: run.input.audioMode,
       hasPhotos: run.input.photos.length > 0,
+      patternId: run.input.patternId,
     };
     
     const oldSheet = run.sheet;
@@ -212,15 +213,20 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
           }
         }
         
-        // Keep best attempt (fewest errors, or same errors with higher implied quality)
+        // Keep best attempt (passes, or has fewer errors, or this is the first attempt)
         const currentErrors = currentGate.issues.filter((i) => i.level === "error").length;
         const bestErrors = bestGate.issues.filter((i) => i.level === "error").length;
-        if (currentErrors < bestErrors || currentGate.pass) {
+        if (attempt === 1 || currentErrors < bestErrors || currentGate.pass) {
           bestSheet = currentSheet;
           bestGate = currentGate;
         }
       } catch (e) {
+        const errMsg = (e as Error).message;
         console.error(`[fix_gaps] Attempt ${attempt} failed:`, e);
+        // If it's a cap error, return immediately instead of trying more attempts
+        if (errMsg.includes("cap reached")) {
+          return NextResponse.json({ error: errMsg }, { status: 400 });
+        }
         break;
       }
     }
