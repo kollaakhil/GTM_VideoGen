@@ -16,8 +16,22 @@ describe("speech budget", () => {
     expect(beatFitProblem("Keep the cola, swap in OLIPOP.", 4)).toBeNull();
     expect(beatFitProblem("Your favorite cola, made merry, with just fifty calories.", 4)).toBeNull();
     expect(beatFitProblem("Fifty percent off two-plus cases. Shop at drinkolipop.com.", 4)).toMatch(/cut it to \d+ syllables/);
-    expect(beatFitProblem("Half off two-plus cases. Shop at drinkolipop.com.", 4)).toBeNull();
+    // (the trimmed CTA fit under Turbo; Eleven v3 needs more room for it, see the 13.30 block below)
     expect(spokenSeconds("")).toBe(0);
-    expect(spokenSeconds("Fifty percent off two-plus cases. Shop at drinkolipop.com.")).toBeCloseTo(0.25 + 17 / 4.6 + 0.2, 2);
+    expect(spokenSeconds("Fifty percent off two-plus cases. Shop at drinkolipop.com.")).toBeCloseTo(0.25 + 17 / 4.6 + 0.4 + 0.45, 2);
+  });
+});
+
+describe("Eleven v3 calibration (13.30)", () => {
+  it("rejects the CTA line that v3 read in 4.6 s for a 4 s beat, before any voice is bought", () => {
+    expect(beatFitProblem("Half off two-plus cases. Shop at drinkolipop.com.", 4)).toMatch(/takes about 4\.\ds/);
+  });
+  it("still passes the three lines v3 fit", () => {
+    expect(beatFitProblem("Love cola, dread the sugar guilt?", 3)).toBeNull();
+    expect(beatFitProblem("Keep the cola, swap in OLIPOP.", 4)).toBeNull();
+    expect(beatFitProblem("Your favorite cola, made merry, with just fifty calories.", 4)).toBeNull();
+  });
+  it("lets the same CTA through when the free packshot beat is lengthened to 5 s", () => {
+    expect(beatFitProblem("Half off two-plus cases. Shop at drinkolipop.com.", 5)).toBeNull();
   });
 });

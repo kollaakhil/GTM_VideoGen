@@ -516,3 +516,13 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
   independent reviews (`medianReview`), which neither takes the best nor the worst; a flaw two of three see still fails.
   Cost +2 vision calls per shot (~$0.02 a take).
 - **s0 can cropped at the left edge during the pour. Real** (consistent across takes). Needs a paid re-render; open.
+
+### 13.30 Eleven v3 broke the CTA beat; speech budget recalibrated
+- First v3 draft stopped at the voice gate (6/10, $0.017, no music or video bought: 13.22 working as designed): the
+  CTA "Half off two-plus cases. Shop at drinkolipop.com." took 4.60 s in a 4 s beat (×1.24). Turbo said it in ~3.6 s.
+  v3 holds 0.41 s at the full stop and reads the domain slowly. v3's `speed` did nothing measurable (3.89 s at 1.0 and
+  3.91 s at 1.1 on the trimmed line), so speed-up at synthesis is not a lever.
+- Fix upstream in the free gate: `spokenSeconds` adds 0.4 s per sentence break (was 0.2) and 0.45 s per spoken domain.
+  Commas are not charged (the two-comma 16-syllable line took 3.63 s and fits). The CTA now fails the script gate.
+- For this run the packshot beat goes from 4 s to 5 s: it is our own CGI shot, so a longer beat costs nothing, and it
+  keeps the full CTA. (Trimming to "Half off two-plus cases at drinkolipop.com." still took 3.97 s, over the 3.885 s limit.)
