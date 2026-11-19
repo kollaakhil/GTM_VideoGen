@@ -1,6 +1,7 @@
 import type { Brief, Research } from "@/lib/types";
 import type { ShotSheet, StyleRule } from "@/lib/shot-sheet";
 import type { GateResult } from "./gate";
+import type { VersionStack } from "@/lib/versions";
 
 /** Run cost so far; the render pipeline's cost meter enforces the cap on paid render calls. */
 export type CostEntry = { at: string; stage: string; what: string; model: string; usd: number; estimate: number };
@@ -28,8 +29,8 @@ export type ShotRender = {
 
 export type Version = {
   id: string;
-  /** Model stack for this version (owned by the registry/versions work). */
-  stack: { id: string; label: string } & Record<string, unknown>;
+  /** Model stack for this version: complete set of model choices. */
+  stack: VersionStack;
   tier: "preview" | "final";
   status: "queued" | "rendering" | "done" | "failed" | "refused";
   estimate: { usd: number; lines: { what: string; model: string; usd: number }[]; blocked: string[] } | null;

@@ -676,3 +676,81 @@ Renders a 3-second end card and tests cache hit. Output: `/tmp/remotion-smoke-te
 - **Memory limits:** Large compositions can OOM. Keep `concurrency: 2` and duration under 10s per shot.
 
 **Integration:** The renderer is wired into `src/lib/render/renderers.ts` as `remotionRenderer()`. The shot sheet pipeline calls it through `renderRouted()` when routing picks Remotion.
+
+## 14.5 Version stacks: side-by-side model comparison
+
+The **Versions** feature (PR #60) lets one shot sheet render as 2–4 versions in parallel, each using a different model stack. The operator picks the best version to carry into Final.
+
+**Data model:**
+- A `VersionStack` holds an id, label, description, per-stage model picks (`Partial<Record<Stage, string>>`), and an estimated cost in USD.
+- Stacks are stored on the run in `run.versions[]`, where each `Version` includes the stack, tier (preview/final), status (queued/rendering/done/failed/refused), render results (shots, videoUrl, usd, ms, score), and optional error.
+
+**UI flow (Previews step):**
+1. User selects 2–4 stacks from:
+   - **Presets:** "Premium" (top closed models), "Open" (open-source), "Blender" (Blender-heavy), "Experimental" (latest).
+   - **Custom:** pick models through the existing model picker, with live cost estimate.
+2. Cost estimates shown per stack. Total checked against `run.cost.capUsd - run.cost.spentUsd`; start blocked if over budget.
+3. Click **Start renders** → `POST /api/sheet { action: "start_versions", runId, stacks }`.
+4. Side-by-side compare grid shows:
+   - Video player slot per version
+   - Model stack chips
+   - Cost, render time, preview check score
+   - Status (queued/rendering/done/failed)
+5. **Pick winner** button on done versions → advances to Final step with that stack's picks.
+
+**API:**
+- `start_versions`: validates stacks (models exist, serve correct stages, budget OK), creates `Version` entries with status `queued`, normalizes partial stacks to fill missing stages with defaults. Returns run + message since rendering not wired yet.
+- `pick_winner`: checks version is `done`, stores winner's stack as final picks, advances run to `final` step.
+- Budget enforcement: rejects if `sum(stacks[].estimatedCostUsd) > run.cost.capUsd - run.cost.spentUsd`.
+
+**Preset stacks (validated against registry on every test run):**
+- All model ids exist in `CATALOG` and serve their assigned stages.
+- Premium: Claude Opus 5.5, Kling 4.0, Veo 3.1, ElevenLabs v3.
+- Open: Qwen 3.8, DeepSeek V4 Pro, Flux 3, Wan 3.1, HF voice.
+- Blender: uses `auto` for video routing (products → Blender, text → Remotion, people → best video model).
+- Experimental: Gemini 4 Neon, Veo 3.1, Higgsfield models.
+
+**Cost estimation:**
+- `estimateStackCost(stack, { shots, targetSec })` aggregates per-stage costs:
+  - Video: `cost.usd * (targetSec / shots) * shots` for `per_sec` models
+  - Image: `cost.usd * shots` for `per_image` keyframes
+  - Voice: `cost.usd * (150 * shots) / 1000` for `per_1k_chars`
+  - Text: `(cost.usd * 2 + cost.usdOut * 1) / 1000` for `per_mtok`
+  - Music/SFX: `cost.usd` for `per_clip`
+  - 3D asset: `cost.usd` for `per_asset`
+  - Free/credits: 0
+- Cost increases with more shots and longer target duration (tested).
+
+**Rendering integration (pending):**
+- `start_versions` queues versions but returns "rendering not wired yet" message.
+- When render routing lands end-to-end, each version will call the existing per-shot render router with stack's model overrides, running versions in parallel within pool limits, reusing per-shot cache.
+- Per-shot preview check scores aggregate to version-level score.
+
+**Tests (tests/versions.test.ts, tests/versions-api.test.ts):**
+- ✅ All preset model ids resolve to real registry entries
+- ✅ All preset models serve their assigned stages
+- ✅ Validation rejects non-existent models and wrong-stage assignments
+- ✅ Cost estimates add up and increase with shots/duration
+- ✅ Budget cap blocks start when total exceeds remaining budget
+- ✅ Pick winner sets Final stack and advances step
+- ✅ API validates input (2-4 stacks, valid models, budget)
+- ✅ Custom stacks normalize to fill missing stages with defaults
+
+**Gotchas:**
+- Stack validation runs on every `start_versions` call. Model ids and stage assignments are checked against the live catalog, so a typo or misconfigured stack fails fast with a clear error.
+- Preset stacks use only `runnable: true` models. A catalogued but non-runnable model (adapter not wired yet) would pass validation but fail at render time.
+- `auto` is valid for video and asset3d stages. Don't reject it.
+- Cost estimates are rough pre-flight totals. Actual costs depend on render time, token counts, etc. The cap enforces spending limits but estimates can drift.
+- Normalized stacks fill every stage with defaults. A partial stack from the UI becomes a complete stack in the version entry.
+- Picking a winner stores the stack but does not automatically render the final. The operator still clicks "Render final" on step 5.
+
+**Migration:** `supabase/migrations/0006_version_stacks.sql` documents the structure and adds an index on `updated_at`. No schema change needed since `data` is already jsonb.
+
+**Files:**
+- `src/lib/versions.ts`: types, presets, validation, cost estimation, normalization
+- `src/lib/sheet/run-types.ts`: `Version` type with `VersionStack`
+- `src/lib/sheet/actions.ts`: `start_versions` and `pick_winner` API handlers
+- `src/components/sheet-studio/versions-panel.tsx`: UI for stack selection and comparison
+- `src/components/sheet-studio/render-steps.tsx`: integrates panel into Previews step
+- `tests/versions.test.ts`: stack validation, cost estimation, presets
+- `tests/versions-api.test.ts`: API validation, budget enforcement, winner selection
