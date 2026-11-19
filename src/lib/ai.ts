@@ -1,4 +1,7 @@
 import { providerOf } from "./models";
+import { buildFalBody, type FalKnobs } from "./registry/fal-knobs";
+import { FAL_KNOBS } from "./registry/fal-snapshot";
+import { estimateUsd, getModel } from "./registry";
 
 const OR_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -26,7 +29,29 @@ async function listPrice(model: string): Promise<[number, number] | null> {
 /** openai/* models go straight to OpenAI when OPENAI_API_KEY is set; everything else via OpenRouter. */
 const viaOpenAI = (model: string) => model.startsWith("openai/") && !!process.env.OPENAI_API_KEY;
 
+const HF_ROUTER_URL = "https://router.huggingface.co/v1/chat/completions";
+
+/** Open models served by Hugging Face Inference Providers (OpenAI-compatible router, HF_TOKEN). Ids look like `hf:Qwen/Qwen3.8-27B`. */
+async function huggingfaceChat(body: Record<string, unknown> & { model: string }) {
+  const key = process.env.HF_TOKEN;
+  if (!key) throw new Error("HF_TOKEN is not set");
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(HF_ROUTER_URL, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...body, model: body.model.replace(/^hf:/, "") }) });
+    if ((res.status !== 429 && res.status < 500) || attempt >= 4) break;
+    const after = Number(res.headers.get("retry-after"));
+    await new Promise((r) => setTimeout(r, (after > 0 ? Math.min(after, 60) : 4 * 2 ** attempt) * 1000 + Math.random() * 1000));
+  }
+  if (!res.ok) throw new Error(`Hugging Face ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const json = await res.json();
+  const c = getModel(body.model)?.cost;
+  const u = json.usage ?? {};
+  json.usage = { ...u, cost: c ? ((u.prompt_tokens ?? 0) * c.usd + (u.completion_tokens ?? 0) * (c.usdOut ?? c.usd)) / 1e6 : 0 };
+  return json;
+}
+
 async function chat(body: Record<string, unknown> & { model: string }) {
+  if (providerOf(body.model) === "huggingface") return huggingfaceChat(body);
   if (!viaOpenAI(body.model)) return openrouter(body);
   const model = body.model.slice("openai/".length);
   let res: Response;
@@ -101,7 +126,21 @@ export async function chatJSON<T>(model: string, system: string, user: string | 
   }
 }
 
+/** Image models served by fal (text-to-image endpoint, plus an edit endpoint when the model takes reference images). */
+async function falImage(model: string, prompt: string, refs: string[]): Promise<{ url: string; usage: Usage }> {
+  const entry = getModel(model);
+  const endpoint = refs.length ? entry?.fal?.edit : model;
+  if (!endpoint) throw new Error(`${entry?.label ?? model} cannot take reference images, so it cannot keep the real product. Pick an image model that accepts references (Nano Banana, GPT Image, FLUX.2 Pro) or remove the references.`);
+  const knobs = FAL_KNOBS[endpoint];
+  if (!knobs) throw new Error(`No request schema for ${endpoint}; run node scripts/verify-models.mjs --write-snapshot`);
+  const out = await falRun<{ images?: { url: string }[]; image?: { url: string } }>(endpoint, buildFalBody(knobs, prompt, { refs: refs.slice(0, 4), aspect: "9:16" }));
+  const url = out.images?.[0]?.url ?? out.image?.url;
+  if (!url) throw new Error("fal returned no image");
+  return { url: await downloadAsDataUrl(url), usage: { costUsd: entry ? estimateUsd(entry, { images: 1 }) : 0 } };
+}
+
 export async function generateImage(model: string, prompt: string, refs: string[] = []): Promise<{ url: string; usage: Usage }> {
+  if (providerOf(model) === "fal") return falImage(model, prompt, refs);
   const content: Part[] = [{ type: "text", text: prompt }, ...refs.map((url) => ({ type: "image_url" as const, image_url: { url } }))];
   const json = await openrouter({ model, modalities: ["image", "text"], messages: [{ role: "user", content }] });
   const url: string | undefined = json.choices?.[0]?.message?.images?.[0]?.image_url?.url;
@@ -112,8 +151,17 @@ export async function generateImage(model: string, prompt: string, refs: string[
 const FAL_QUEUE = "https://queue.fal.run/";
 const falFamily = (model: string) => (model.includes("/seedance/") ? "seedance" : model.includes("kling-video/") ? "kling" : model.includes("veo3") ? "veo" : "other");
 
+/** The first fal models wired in keep their hand-tuned bodies (and tests); every other registry model uses its derived knobs. */
+const LEGACY_FAL = new Set(["fal-ai/bytedance/seedance/v1/lite/image-to-video", "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video", "fal-ai/kling-video/v2.5-turbo/pro/image-to-video", "fal-ai/veo3.1/fast/image-to-video"]);
+const registryKnobs = (endpoint: string): FalKnobs | null => (LEGACY_FAL.has(endpoint) ? null : (FAL_KNOBS[endpoint] ?? null));
+const frameRule = (endpoint: string) => (/\/wan\//.test(endpoint) ? "wan" : /ltx/.test(endpoint) ? "ltx" : undefined);
+
 /** Clip lengths each fal video family accepts. */
 export function falDurations(model: string): number[] {
+  const k = registryKnobs(model);
+  if (k?.dur?.values?.length) return k.dur.values;
+  if (k?.dur) return Array.from({ length: Math.max(0, (k.dur.max ?? 10) - (k.dur.min ?? 1) + 1) }, (_, i) => (k.dur?.min ?? 1) + i);
+  if (k?.frames) { const fps = k.frames.fpsDef ?? 24; return Array.from({ length: Math.max(1, Math.floor(k.frames.max / fps)) }, (_, i) => i + 1); }
   const f = falFamily(model);
   return f === "seedance" ? [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : f === "kling" ? [5, 10] : f === "veo" ? [4, 6, 8] : [5];
 }
@@ -127,6 +175,8 @@ export function falError(status: number, body: string): string {
 
 /** Request body for a fal image-to-video model; exported for tests. */
 export function falVideoBody(model: string, prompt: string, o: VideoOpts) {
+  const k = registryKnobs(model);
+  if (k) return buildFalBody(k, prompt, { firstFrame: o.firstFrame, lastFrame: o.lastFrame, seconds: o.seconds, resolution: o.resolution, aspect: "9:16", audio: o.audio, negative: o.negative, frameRule: frameRule(model) });
   const f = falFamily(model);
   const duration = String(nearest(falDurations(model), o.seconds ?? 5));
   const body: Record<string, unknown> = { prompt: prompt.slice(0, 2500) };
@@ -175,9 +225,11 @@ async function falPricePerSec(model: string, resolution: string): Promise<number
   return (tokensPerSec / per) * p.price;
 }
 
-async function falVideo(model: string, prompt: string, o: VideoOpts = {}): Promise<{ url: string; usage: Usage }> {
+async function falVideo(picked: string, prompt: string, o: VideoOpts = {}): Promise<{ url: string; usage: Usage }> {
   const key = process.env.FAL_KEY;
   if (!key) throw new Error("fal.ai is not connected (set FAL_KEY)");
+  // A registry entry's id is its image-to-video endpoint; with no keyframe the text-to-video sibling is used.
+  const model = !o.firstFrame && getModel(picked)?.fal?.t2v ? (getModel(picked)?.fal?.t2v as string) : picked;
   if (!/^[a-z0-9][a-z0-9./-]+$/.test(model)) throw new Error("Invalid fal model");
   const headers = { Authorization: `Key ${key}`, "Content-Type": "application/json" };
   const body = falVideoBody(model, prompt, o);
@@ -203,13 +255,15 @@ async function falVideo(model: string, prompt: string, o: VideoOpts = {}): Promi
   if (!res.ok) throw new Error(falError(res.status, JSON.stringify(out?.detail ?? out)));
   const url: string | undefined = out.video?.url ?? out.videos?.[0]?.url;
   if (!url) throw new Error("fal returned no video");
-  const secs = Number(String(body.duration ?? "5").replace("s", ""));
+  const k = registryKnobs(model);
+  const secs = Number(String(body.duration ?? (k?.frames ? Number(body[k.frames.key] ?? 0) / (k.frames.fpsDef ?? 24) : o.seconds ?? 5)).replace("s", "")) || o.seconds || 5;
   const rate = await falPricePerSec(model, String(body.resolution ?? "720p"));
-  return { url: await downloadAsDataUrl(url), usage: { costUsd: rate ? rate * secs : 0 } };
+  const entry = getModel(picked);
+  return { url: await downloadAsDataUrl(url), usage: { costUsd: rate ? rate * secs : entry ? estimateUsd(entry, { seconds: secs }) : 0 } };
 }
 
 type VideoSpec = { durations?: number[] | null; resolutions?: string[] | null; aspects?: string[] | null; frames?: string[] | null; pricing?: Record<string, string> | null };
-export type VideoOpts = { firstFrame?: string; lastFrame?: string; seconds?: number; audio?: boolean; resolution?: string };
+export type VideoOpts = { firstFrame?: string; lastFrame?: string; seconds?: number; audio?: boolean; resolution?: string; negative?: string };
 let videoCatalog: { at: number; specs: Map<string, VideoSpec> } | null = null;
 
 async function openrouterVideoSpec(model: string): Promise<VideoSpec> {
@@ -291,7 +345,7 @@ export async function videoDurations(model: string): Promise<number[] | null> {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const VIDEO_TIMEOUT_MS = 12 * 60_000;
 
-async function downloadAsDataUrl(url: string, headers: Record<string, string> = {}): Promise<string> {
+export async function downloadAsDataUrl(url: string, headers: Record<string, string> = {}): Promise<string> {
   const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`Video download failed (${res.status})`);
   const type = res.headers.get("content-type")?.split(";")[0] || "video/mp4";
@@ -491,13 +545,15 @@ async function hfmcpVideo(model: string, prompt: string, o: VideoOpts): Promise<
 export async function generateVideo(model: string, prompt: string, opts?: string | VideoOpts): Promise<{ url: string; usage: Usage }> {
   const o: VideoOpts = typeof opts === "string" ? { firstFrame: opts } : (opts ?? {});
   const provider = providerOf(model);
+  if (model.startsWith("blender:") || model.startsWith("remotion:")) throw new Error(`${model} is a local renderer, not an AI video model: route it with renderRouted`);
+  if (getModel(model) && !getModel(model)?.runnable) throw new Error(`${getModel(model)?.label ?? model} is catalogued but has no adapter yet: ${getModel(model)?.note ?? "not callable"}`);
   if (provider === "fal") return falVideo(model, prompt, o);
   if (provider === "higgsfield") return higgsfieldVideo(model, prompt, o);
   if (provider === "hfmcp") return hfmcpVideo(model, prompt, o);
   return openrouterVideo(model, prompt, o);
 }
 
-async function falRun<T>(endpoint: string, input: Record<string, unknown>): Promise<T> {
+export async function falRun<T>(endpoint: string, input: Record<string, unknown>): Promise<T> {
   const key = process.env.FAL_KEY;
   if (!key) throw new Error("FAL_KEY is not set");
   const headers = { Authorization: `Key ${key}`, "Content-Type": "application/json" };

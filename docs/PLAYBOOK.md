@@ -602,6 +602,25 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
 - Take 25 edit continuity was 4.5: "action reverses: a settled, filled glass in shot 2, then pouring again in shot 3". `singlePour` (in `enforceShotRules`) keeps the first pour. In every later shot, pour and tilt-over-glass beats and sentences (including the locked script's expectedVisual) become "the glass is already full: bubbles rise and the foam settles", and the negative prompt adds "pouring again".
 - Export review: `EXPORT_REVIEWS = 5` (was 3). Evidence: the identical cached s0 clip scored 10 in take 24 and a median of 3 (3, 1, 5) in take 25. The rubric and thresholds are unchanged. Only the sample count goes up, which lowers variance without biasing the result (the median, not the max). Costs about $0.01 more per shot.
 
+### 13.37 Product 3D asset (image-to-3D): when it helps and when it does not (2026-11-19)
+- **Why we tried it:** `packshot.py` rebuilds the can from a cylindrical label unwrap. Irregular products (shoes, toys, gadgets, characters) have no primitive to wrap, and a hand-built stand-in is the weak point of every Blender product shot. Image-to-3D could give Blender the real object.
+- **What was added:** a registry stage `asset3d` ("Product 3D asset"): one product photo in, one GLB out. Models: `speridlabs/idol/max/turbo` (about $0.10, about 20 s, texture projected from the splat) and `speridlabs/idol/max` ($0.20, base colour repainted from the photo). Both were checked in fal's live catalog on 2026-11-19 (status active, category image-to-3d) and are in `fal-snapshot.ts`, so `verify-models.mjs` flags them if fal removes them.
+- **Failure case (real test, OLIPOP can, Idol Max Turbo, about 19 s, $0.10):** not hero quality for a can. The condensation droplets in the photo were baked into lumpy geometry, the silhouette wobbled, and the back side was invented. A can is a cylinder with a flat label, which the procedural primitive renders perfectly and for free, so a reconstructed mesh can only be worse.
+- **Routing rule (enforced in `classifyProduct` and `autoPick`):**
+  - **Simple primitives** (cans, bottles, jars, boxes, cartons, tubes, pouches, cups): the procedural Blender primitive with the label image UV-wrapped (`packshot.py`). No mesh is generated and nothing is paid.
+  - **Irregular products** (shoes, toys, gadgets, headphones, bags, characters): an Idol mesh. Auto uses **Idol Max for finals** and **Turbo for previews**; the picker can pin either.
+  - **Unclassified** products stay on the primitive: a paid mesh needs a positive reason. A product that matches both lists ("toy in a box") counts as a primitive.
+  - `autoPick` returns `mesh: { modelId, usd }` only for irregular products on a Blender shot with a product photo, so the Studio can show the one-time cost.
+- **Schema (read from fal's OpenAPI, not guessed):**
+  - In: `image_url` (required), `image_type` (`real` for photographs, `synthetic` for renders), `enable_pbr`, `mesh_resolution` (128, 256, 512, 768, 1024, 1536), `rig`, `seed`, `enable_usdz`.
+  - Out: `game_glb` (30k triangles, UVs, 2048 px base colour and normal map; roughness/metallic only with `enable_pbr`), `model_glb` (full-resolution **vertex-coloured, no texture**), `mesh_stats`.
+  - We always import `game_glb`; `model_glb` has no texture, so a label would be lost. The generic mesh picker in `adapters.ts` lists `game_glb` first for this reason.
+- **Settings we choose:** `image_type: "real"` (brand photos are photographs); `enable_pbr` off (adds 20 s to 2 min and printed labels are not metallic); `rig` off (fal says rigid props get an unusable skeleton).
+- **Cache:** `generateProductMesh()` in `src/lib/registry/product-3d.ts`. The key is a hash of the image bytes (the URL text for remote images), model id, options and a version. Files live in `$DATA_DIR/cache/product-3d/<key>.glb` with a `.json` sidecar. A hit costs $0 and makes no call; a cached file that is not a GLB is re-fetched; nothing is written unless the download starts with `glTF`.
+- **Not done yet (Blender side):** the `glb_turntable` template and an importer (centre, scale to a known height, origin at the base, keep the baked texture) belong to the renderer; this step only guarantees a clean GLB path. Nothing renders a mesh until that lands.
+- **Still unverified:** how Idol Max (not Turbo) does on an irregular product. The only real test so far was Turbo on a can. Before relying on the rule for finals, run one Idol Max test on a shoe or toy and look at the silhouette and the back.
+- **Tests:** `tests/product-3d.test.ts` (mocked provider: no fal call, no cost).
+
 ## 14. Five-step Studio and the shot sheet (PRs #53, #55)
 
 - Flow at `/studio`: Brand & goal -> Brief -> Shot sheet -> Previews -> Final. The old studio is at `/studio/classic`. Runs live in the `sheet_runs` table (migration 0005).
