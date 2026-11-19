@@ -1188,3 +1188,42 @@ All tests in `tests/blender-queue.test.ts`:
 **Cost Control:** The fix attempts are metered through the existing `meterFor(run)`, so a low run cap blocks expensive loops. Each attempt is logged in the run's cost entries.
 
 **Related:** See §14.3 (shot sheet gate), §14.2 (writer), §6 (stage gates).
+
+## 24. Style rules blocked all rendering (fixed 2026-11-19)
+
+**Symptom:** Operators could not generate videos at all. Style rules extracted from inspiration videos (e.g., "Hold the contemplative stillness for at least four full seconds...") became HARD gate errors in `src/lib/sheet/gate.ts` (`ruleIssues`), so the Previews button stayed disabled (`studio.tsx:283 !run.gate?.pass`) and render actions 400'd (`actions.ts:90`, `render-actions.ts:15`). Even perfect sheets with only minor style deviations couldn't render. The "Fix the gaps" button (`actions.ts fix_gaps`) sometimes made sheets WORSE (more total issues), dying on `TypeError: fetch failed ... ConnectTimeoutError` to the LLM and leaving the broken version saved.
+
+**Root causes:**
+1. **Style rules as blocking errors:** `ruleIssues()` and `confessionLoopChecks()` returned `level: "error"` for all style/pattern violations. Clock issues (runtime mismatch), missing required fields (camera, audio), and false claims should block, but stylistic notes (wide-reveal duration, VO pacing, caption chunking) are editorial preferences that shouldn't prevent rendering.
+2. **Fix-gaps made things worse:** The action scored candidates only by error count, so moving from 2 errors to 1 error + 5 warnings looked better, but the new candidate could introduce NEW blocking issues. No retry on network errors (ConnectTimeoutError), and no "keep original if candidate doesn't improve" fallback.
+3. **No override path:** Clock/field errors that are NOT claims/safety (e.g., slightly broken timing, one shot missing a sound effect) had no "continue anyway" option. Users had to abandon the run or manually fix every detail.
+
+**Fix (severity tiers + override + fix-gaps improvements):**
+1. **Severity tiers in `sheetGate`:**
+   - **Blocking errors (`level: "error"`):** Clock/runtime mismatch (`timingIssues`), missing required fields (camera angle/move/lens, audio), unsupported/unverified claims (`claimIssues`), superlatives without fact support, safety violations.
+   - **Warnings (`level: "warn"`):** Style rules from inspiration (`ruleIssues` → always "warn"), story-pattern checks (`confessionLoopChecks` → always "warn"). Shown in the UI as amber "Style notes" separate from red blocking errors.
+   - `gate.pass = no blocking errors`. Warnings don't block previews or render.
+
+2. **"Continue anyway" button:**
+   - If there are blocking errors AND none are claim/safety (checked by text matching: `claims`, `unverified`, `facts mark as`, `verified facts don't support`), the UI shows an orange "Continue anyway" button (`studio.tsx`).
+   - User confirms, server records `gateOverride: { at, by, issues }` on the run (`run-types.ts` added `GateOverride | null`, `flow.ts` initializes it to null).
+   - Actions and render-actions (`actions.ts:90`, `render-actions.ts:15`) allow rendering when `!run.gate?.pass && !run.gateOverride`.
+   - Claim/safety errors CANNOT be overridden (server returns 400 with `cannotOverride` list).
+   - The override is shown in the UI with the user's name and timestamp. The gate badge shows "overridden (N issues)" in green.
+
+3. **Fix-gaps improvements (never make it worse):**
+   - **Scoring:** `score = (blocking errors * 10) + warnings`. Blocking errors weigh 10x more than warnings.
+   - **Keep best:** Across all attempts, including the ORIGINAL sheet, keep the candidate with the lowest score. If no candidate strictly improves (`candidateScore < originalScore`), keep the original unchanged and return `{ message: "Couldn't improve automatically; N issues remain", changes: [], fixed: 0, remaining: N }`.
+   - **Prompt updated:** Pass the FULL current sheet to `writeSheet` and require returning the same shot count, shot IDs, and total runtime unless the issue IS runtime. Minimal field changes only (preserve as much as possible).
+   - **Network retry:** On `fetch failed`, `ConnectTimeoutError`, `UND_ERR_CONNECT_TIMEOUT`, or 5xx, retry once with 2s backoff before counting an attempt.
+   - **Target warnings too:** The fixes list includes BOTH errors and warnings, so fix-gaps can also improve stylistic issues (not only hard blockers).
+
+4. **Tests (added/updated):**
+   - `tests/gate-severity.test.ts`: Style rule violations are warnings, claim errors remain blocking, confession loop checks are warnings, clock/missing-field errors remain blocking, gate passes with only warnings.
+   - `tests/fix-gaps-scoring.test.ts`: Scoring formula, keep original when candidate score is same or worse, network retry on ConnectTimeoutError/fetch failed/5xx, no retry on non-network errors.
+   - `tests/gate-threshold.test.ts`: Updated to expect `gate.pass = true` with warnings (style rules), not blocking.
+   - `tests/fix-gaps-revisions.test.ts`: Updated to reflect new behavior (keep original when no improvement).
+
+**Result:** Users can now render videos with style warnings. The Previews button is enabled when only warnings remain. If there ARE blocking errors (clock, missing fields), users can override non-claim errors with "Continue anyway" or use "Fix the gaps" (which now never makes things worse). Claim/safety errors still block and cannot be overridden.
+
+**Related:** See §14.3 (shot sheet gate), §23 (Fix the gaps button), §6 (stage gates).

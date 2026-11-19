@@ -7,7 +7,7 @@ const makeBaseSheet = (targetSec: number): ShotSheet => ({
   targetSec,
   aspect: "16:9",
   fps: 24,
-  audioMode: "foley",
+  audioMode: "vo",
   bed: "",
   palette: "",
   rules: [],
@@ -25,8 +25,8 @@ describe("gate threshold parsing", () => {
       ],
     };
     const result = sheetGate(sheet, { facts: "", rules: sheet.rules });
-    expect(result.pass).toBe(false);
-    expect(result.issues.some((i) => i.text.includes("no wide reveal holds for 4 s or more"))).toBe(true);
+    expect(result.pass).toBe(true); // Style rules are warnings, not blocking errors
+    expect(result.issues.some((i) => i.level === "warn" && i.text.includes("no wide reveal holds for 4 s or more"))).toBe(true);
   });
 
   it("passes when wide shot holds for exactly the threshold", () => {
@@ -74,8 +74,8 @@ describe("gate threshold parsing", () => {
       ],
     };
     const result = sheetGate(sheet, { facts: "", rules: sheet.rules });
-    expect(result.pass).toBe(false);
-    expect(result.issues.some((i) => i.text.includes("no wide reveal holds for 5 s or more"))).toBe(true);
+    expect(result.pass).toBe(true); // Style rules are warnings
+    expect(result.issues.some((i) => i.level === "warn" && i.text.includes("no wide reveal holds for 5 s or more"))).toBe(true);
   });
 
   it("defaults to 3s when no threshold is in the rule text", () => {
@@ -87,8 +87,8 @@ describe("gate threshold parsing", () => {
       ],
     };
     const result = sheetGate(sheet, { facts: "", rules: sheet.rules });
-    expect(result.pass).toBe(false);
-    expect(result.issues.some((i) => i.text.includes("no wide reveal holds for 3 s or more"))).toBe(true);
+    expect(result.pass).toBe(true); // Style rules are warnings
+    expect(result.issues.some((i) => i.level === "warn" && i.text.includes("no wide reveal holds for 3 s or more"))).toBe(true);
   });
 
   it("recognizes word-form numbers: one through ten", () => {
@@ -105,8 +105,8 @@ describe("gate threshold parsing", () => {
         ],
       };
       const result = sheetGate(sheet, { facts: "", rules: sheet.rules });
-      expect(result.pass).toBe(false); // Should parse "${word}" as ${expected}s
-      expect(result.issues.some((i) => i.text.includes(`no wide reveal holds for ${expected} s or more`))).toBe(true);
+      expect(result.pass).toBe(true); // Style rules are warnings
+      expect(result.issues.some((i) => i.level === "warn" && i.text.includes(`no wide reveal holds for ${expected} s or more`))).toBe(true);
     }
   });
 });
