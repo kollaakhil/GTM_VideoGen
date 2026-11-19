@@ -417,3 +417,17 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 ### 13.21 "two-plus" vs whisper's "2+"
 - Failure: the CTA line failed the pre-check: expected "Fifty percent off two-plus cases", heard "50% off 2+ cases". `%` was
   normalised to "percent" but `+` was stripped. Fix: `N+` → "N plus" in `sameSpeech` tokens.
+
+### 13.22 Lines too long for their beat were found by paying for voice + music
+- Failure: draft7 bought music ($0.60) and all four voice lines, then failed the voice & music gate at 7.7: the CTA line
+  ("Fifty percent off two-plus cases. Shop at drinkolipop.com.", 4 s beat) needed ×1.14. The script check counted *words*
+  (9 ≤ 11), but "drinkolipop.com" and "two-plus" are one word each and five/two spoken syllables.
+- Fix (free, before any spend): `speech-budget.ts` estimates speech time = 0.25 s + syllables/4.6 + 0.2 s per sentence break,
+  with numbers/%/+/domains expanded, calibrated on the four measured lines of run_8a9c7c9db627. `checkScript` (script gate,
+  repair loop, and draft preflight) rejects a VO that needs more than the beat minus 0.3 s at ≤ ×1.05 (the voice gate's own pass
+  mark), naming the syllable budget. The script prompt states the same budget.
+- Spend order: the voice gate is now evaluated on the voice lines *before* music is bought, so a voice failure costs only the
+  TTS (~$0.003/line). Music was already cached per (category, seconds, tone, style), so re-drafts after a script trim do not
+  re-buy it.
+- Operator edit on run_8a9c7c9db627: beat 4 VO → "Half off two-plus cases. Shop at drinkolipop.com." (14 syllables, est 3.5 s;
+  the "50% off 2+ cases" end-card mandatory is unchanged and still shown).

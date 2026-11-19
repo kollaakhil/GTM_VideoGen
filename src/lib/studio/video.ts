@@ -268,6 +268,13 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
     }
     start += s.seconds;
   }
+  // Judge the voice lines before buying music ($0.60/min): a line that has to be sped up fails here for free (13.22).
+  const voicePre = stageScore("voice", voiceChecks(voiceLines, { planned: !!plan.music, ok: true }), "rules", 1,
+    voiceChecks(voiceLines, { planned: !!plan.music, ok: true }).filter((c) => c.score < 8).map((c) => `${c.name}: ${c.note}`));
+  saveStage(run, voicePre, d.id);
+  const voicePreBlock = stageBlock(run, "voice", d.id);
+  if (voicePreBlock) throw new Error(`${voicePreBlock} ${voicePre.notes.join(" ")} No music or video was bought.`);
+
   let music: string | null = null;
   if (plan.music) {
     if (!live(run)) throw new Error("Stopped before music production.");

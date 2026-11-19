@@ -8,6 +8,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { rehearseScript, rehearsalMetrics } from "./script-rehearsal";
 import { styleTemplate } from "./script-styles";
+import { beatFitProblem } from "./speech-budget";
 import { jevScriptGate } from "./jev";
 
 /** Script gate bar (default 8, NEXT_PUBLIC_GATE_THRESHOLDS="script=…"); the lab repairs until it clears it. */
@@ -246,7 +247,10 @@ export function checkScript(s: AdScript, lengthSec: number, mustSay: string[] = 
   if (s.beats.length < 2 || s.beats.some((b) => !b.visual.trim())) out.push("Provide a concrete visual for every beat.");
   s.beats.forEach((b, i) => {
     const n = words(b.vo).length;
-    if (n > Math.ceil(b.seconds * WORDS_PER_SEC) + 1) out.push(`Beat ${i + 1} has ${n} words for ${b.seconds}s; max ${Math.ceil(b.seconds * WORDS_PER_SEC) + 1} at a natural pace.`);
+    if (n > Math.ceil(b.seconds * WORDS_PER_SEC) + 1) out.push(`Beat ${i + 1} has ${n} words for ${b.seconds}s; max ${Math.ceil(b.seconds * WORDS_PER_SEC) + 1} at a natural pace.`);    else {
+      const fit = beatFitProblem(b.vo, b.seconds);
+      if (fit) out.push(`Beat ${i + 1} VO ${fit}.`);
+    }
   });
   s.beats.forEach((b, i) => {
     const t = renderedTextProblem(b.visual);
@@ -293,7 +297,7 @@ ${c.proof ? `Proof brief (approved by the operator): ${JSON.stringify({ tension:
 const SCRIPT_RULES = (len: number) => `Rules:
 - Vertical 9:16 performance ad, ${len}s total. One buyer tension, one visible demonstration of a supported claim, one CTA. No extra storylines.
 - Story: ${STORY}
-- "vo": only the words spoken aloud, natural speech, max ${WORDS_PER_SEC} words per second of the beat. No speaker labels or stage directions.
+- "vo": only the words spoken aloud, natural speech, max ${WORDS_PER_SEC} words per second of the beat and short enough to say in the beat minus 0.3s at ~4.6 syllables per second (numbers, % and web addresses count as spoken: "drinkolipop.com" = drink-o-li-pop-dot-com). No speaker labels or stage directions.
 - "onScreen": one short message per beat (at most 7 words: one stat, one benefit or the CTA) that fits the window; give mandatory terms their own beat instead of stacking them. Empty text is allowed.
 - "visual": one filmable action per beat; never compress several setup steps into one. Never show phones, screens, web pages, apps, notifications, signs or invented words in the scene (video models garble them); put words in "onScreen". The real product, with its real label as in the product photo, should be clearly visible and identifiable whenever it appears (never "unmarked" or generic packaging). Use only established product details.
 - Every action you suggest in VO must agree with what the visual shows (do not say "tap" or "order" over a scene that shows something else).
