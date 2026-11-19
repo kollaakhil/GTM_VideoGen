@@ -394,3 +394,11 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
   unwrapped with one can width for every row; near the shoulder the photo's can narrows, so the top corners sampled dark background.
 - Fix: unwrap per row using that row's own mask edges, median-smoothed over ~6% of the height (raw edges jitter with condensation
   drops and shred the lettering), and cap the unwrap angle at 74° (beyond that the photo is the shaded edge of the can).
+
+### 13.19 Packshot "dull metal / floor reflections" (keyframe 8/10)
+- Failure: after 13.18, artifacts were ok but the judge marked product+action minor: "floor reflections and can metal finish appear
+  somewhat dull". EEVEE without ray tracing reflects only the world, and the world was the dark backdrop, so the aluminium read black.
+- Fix: EEVEE ray tracing on; the world is a Light Path mix: camera rays see the flat backdrop, reflections see a studio dome with a
+  vertical gradient (horizon = backdrop tone, bright top). Brighter, smoother aluminium (0.91 / roughness 0.12); a darker, glossier
+  floor (roughness 0.16) that mirrors the can; a backdrop spot pool. Off-camera emissive strips are kept but EEVEE's screen-space
+  tracing can't see off-screen objects, so the dome does the real work (lesson: in EEVEE, put reflection sources in the world).
