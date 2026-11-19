@@ -32,7 +32,7 @@ describe("every paid call is gated server side before a request leaves", () => {
 
   it("blocks video, voice and music at the cap, and prices video by seconds", async () => {
     vi.stubEnv("FAL_KEY", "k");
-    const fetchMock = vi.fn(async () => { throw new Error("network must not be reached"); });
+    const fetchMock = vi.fn(async (..._a: unknown[]) => { throw new Error("network must not be reached"); });
     vi.stubGlobal("fetch", fetchMock);
     const m = new CostMeter({ capUsd: 0.5, spentUsd: 0.45 });
     await withMeter(m, async () => {
