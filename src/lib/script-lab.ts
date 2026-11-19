@@ -1,4 +1,5 @@
 import { chatJSON } from "./ai";
+import { creativeBrief } from "./brief-policy";
 import { GATE_THRESHOLDS } from "./gate-config";
 import type { AdScript, Brief, Direction, Research, ScriptHook, ScriptProofBrief, ScriptScore, StyleDNA, Swipe, VoiceOfCustomer } from "./types";
 import { SCRIPT_RUBRIC } from "./quality-policy";
@@ -253,7 +254,7 @@ export const proofAssetUrl = (input: string) => {
 };
 
 const ctxBlock = (c: ScriptCtx) => `Concept (creative input, not evidence): ${JSON.stringify({ title: c.direction.title, angle: c.direction.angle })}
-Brief: ${JSON.stringify(c.brief)}
+Brief: ${JSON.stringify(creativeBrief(c.brief))}
 Product facts (the only facts you may state): ${JSON.stringify({ brand: c.research.brand, summary: c.research.summary, valueProps: c.research.valueProps, audience: c.research.audience })}
 Brand tone: ${c.research.tone}
 Buyer objections (hypotheses, not quotes): ${JSON.stringify(c.voc?.objections ?? [])}

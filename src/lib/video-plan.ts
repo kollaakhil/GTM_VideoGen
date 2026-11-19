@@ -1,4 +1,5 @@
 import { chatJSON, generateImage, type Part } from "./ai";
+import { creativeBrief } from "./brief-policy";
 import { z } from "zod";
 import { CATEGORIES } from "./video-categories";
 import { VIDEO_PASS } from "./quality-policy";
@@ -34,7 +35,7 @@ export async function planShots(
     model,
     "You are a performance-ad director storyboarding a vertical 9:16 video ad. You write shot lists that AI video models render well.",
     `Direction: ${JSON.stringify({ title: d.title, hook: d.hook, angle: d.angle, script: d.script })}
-Brief: ${JSON.stringify(b)}
+Brief: ${JSON.stringify(creativeBrief(b))}
 Brand tone: ${r.tone}
 Category: ${cat.label}. Look: ${cat.look}. Voice: ${cat.voice}.${lookLine(plan) ? ` Operator look for every shot: ${lookLine(plan)}` : ""}${rules}${style ? `\nBorrowed style: ${style.tone}; ${style.visualLanguage}; pacing ${style.pacing}. Never use ${style.brand}'s name, logo or slogans.` : ""}
 ${examples.length ? `Shots that scored 8+ in this category before (borrow what made them render well: framing, light, motion; never their content):\n${examples.map((e) => `- ${e.beat}: ${e.visual} (${e.camera}) [${e.score}/10]`).join("\n")}\n` : ""}${scriptBlock}Write exactly ${beats.length} shots, beats in order: ${beats.join(", ")}.${sc ? "" : ` Each shot is ${secs}s.`}
