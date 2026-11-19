@@ -88,6 +88,11 @@ try:
     scene.eevee.taa_render_samples = 48
 except AttributeError:
     pass
+try:  # screen-space ray tracing: without it EEVEE metal/gloss reflects only the world, and reads dull
+    scene.eevee.use_raytracing = True
+    scene.eevee.ray_tracing_options.resolution_scale = "1"
+except (AttributeError, TypeError):
+    pass
 scene.render.resolution_x, scene.render.resolution_y = W, H
 scene.render.fps = FPS
 scene.frame_start, scene.frame_end = 1, FRAMES
@@ -105,6 +110,28 @@ world.use_nodes = True
 bgc = hex_rgb(opt["--bg"])
 world.node_tree.nodes["Background"].inputs[0].default_value = (*bgc, 1)
 world.node_tree.nodes["Background"].inputs[1].default_value = 0.35
+# Reflections see a bright studio dome with a vertical gradient (soft top light); the camera still sees the flat
+# backdrop tone. Metal with nothing bright to reflect renders near black ("dull metal finish" from the judge).
+wn, wl = world.node_tree.nodes, world.node_tree.links
+lp = wn.new("ShaderNodeLightPath")
+studio = wn.new("ShaderNodeBackground")
+studio.inputs[1].default_value = 1.0
+grad_coord = wn.new("ShaderNodeTexCoord")
+sep = wn.new("ShaderNodeSeparateXYZ")
+ramp = wn.new("ShaderNodeValToRGB")
+ramp.color_ramp.elements[0].position, ramp.color_ramp.elements[0].color = 0.62, (*bgc, 1)  # horizon = backdrop tone, so the glossy floor stays dark
+ramp.color_ramp.elements[1].position, ramp.color_ramp.elements[1].color = 0.9, (0.95, 0.95, 0.95, 1)
+mapr = wn.new("ShaderNodeMapRange")
+mapr.inputs["From Min"].default_value, mapr.inputs["From Max"].default_value = -1.0, 1.0
+wl.new(grad_coord.outputs["Generated"], sep.inputs[0])
+wl.new(sep.outputs["Z"], mapr.inputs["Value"])
+wl.new(mapr.outputs["Result"], ramp.inputs["Fac"])
+wl.new(ramp.outputs["Color"], studio.inputs["Color"])
+mix = wn.new("ShaderNodeMixShader")
+wl.new(lp.outputs["Is Camera Ray"], mix.inputs["Fac"])
+wl.new(studio.outputs["Background"], mix.inputs[1])
+wl.new(wn["Background"].outputs["Background"], mix.inputs[2])
+wl.new(mix.outputs["Shader"], wn["World Output"].inputs["Surface"])
 
 r = 1.0
 h = 2 * r * aspect
@@ -140,9 +167,9 @@ body.data.materials.append(m)
 metal = bpy.data.materials.new("metal")
 metal.use_nodes = True
 mb = metal.node_tree.nodes["Principled BSDF"]
-mb.inputs["Base Color"].default_value = (0.78, 0.79, 0.8, 1)
+mb.inputs["Base Color"].default_value = (0.91, 0.92, 0.93, 1)
 mb.inputs["Metallic"].default_value = 1.0
-mb.inputs["Roughness"].default_value = 0.22
+mb.inputs["Roughness"].default_value = 0.12
 
 
 def lid(z, radius, depth):
@@ -174,9 +201,31 @@ floor = bpy.context.object
 fm = bpy.data.materials.new("floor")
 fm.use_nodes = True
 fb = fm.node_tree.nodes["Principled BSDF"]
-fb.inputs["Base Color"].default_value = (*bgc, 1)  # same tone as the world: no visible horizon
-fb.inputs["Roughness"].default_value = 0.18
+fb.inputs["Base Color"].default_value = (*[c * 0.22 for c in bgc], 1)  # darker than the backdrop: the studio dome lights it up to about the same tone (no visible horizon)
+fb.inputs["Roughness"].default_value = 0.16  # glossy: a soft mirror of the can grounds it
 floor.data.materials.append(fm)
+
+
+def softbox(name, loc, rot_z, w, hgt, strength):
+    """Off-camera emissive strips: brushed metal and gloss only read as metal when they have something bright to reflect."""
+    bpy.ops.mesh.primitive_plane_add(size=1, location=loc, rotation=(math.radians(90), 0, rot_z))
+    o = bpy.context.object
+    o.scale = (w, hgt, 1)
+    em = bpy.data.materials.new(name)
+    em.use_nodes = True
+    n = em.node_tree.nodes
+    n.remove(n["Principled BSDF"])
+    e = n.new("ShaderNodeEmission")
+    e.inputs["Strength"].default_value = strength
+    em.node_tree.links.new(e.outputs["Emission"], n["Material Output"].inputs["Surface"])
+    o.data.materials.append(em)
+    o.visible_camera = False
+    return o
+
+
+softbox("strip_l", (-3.2, -1.2, 2.6), math.radians(-70), 1.2, 6.0, 6.0)
+softbox("strip_r", (3.2, -1.2, 2.6), math.radians(70), 1.2, 6.0, 4.0)
+softbox("top", (0, -2.5, 6.0), 0, 8.0, 6.0, 9.0).rotation_euler = (0, 0, 0)
 
 
 def light(name, loc, energy, size, color=(1, 1, 1)):
@@ -193,6 +242,14 @@ def light(name, loc, energy, size, color=(1, 1, 1)):
 light("key", (-4.5, -5.5, 5.0), 1400, 4.0, (1.0, 0.96, 0.9))
 light("rim", (4.0, 3.5, 4.5), 900, 2.0, (0.9, 0.95, 1.0))
 light("fill", (5.0, -6.0, 2.0), 300, 5.0)
+# A pool of light on the backdrop behind the can: separates it from the background and gives the floor a gradient.
+bd = bpy.data.lights.new("pool", "SPOT")
+bd.energy, bd.spot_size, bd.spot_blend = 2500, math.radians(55), 0.9
+pool = bpy.data.objects.new("pool", bd)
+scene.collection.objects.link(pool)
+pool.location = (0, 2.5, 7.0)
+pc = pool.constraints.new("TRACK_TO")
+pc.target, pc.track_axis, pc.up_axis = body, "TRACK_NEGATIVE_Z", "UP_Y"
 
 cam_d = bpy.data.cameras.new("cam")
 cam_d.lens = 85
