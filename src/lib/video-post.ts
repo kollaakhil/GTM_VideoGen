@@ -5,7 +5,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import type { CopyCue } from "./media-qa";
-import { duplicateOverlay, energyMap, layoutCopy, shotOverlays } from "./caption-layout";
+import { type Box, boxAt, duplicateOverlay, energyMap, layoutCopy, shotOverlays, textBox } from "./caption-layout";
+import { type AgentAction, type CaptionMode, keywordCues, mapSubject, placeCaptions } from "./caption-agent";
 import { detectBeats, snapCuts } from "./beat-sync";
 import { type SfxCue, sfxFile } from "./sfx";
 import { motionGraphicsEnabled, overlayKind, renderEndCard, renderOverlay } from "./motion-graphics";
@@ -123,10 +124,10 @@ export const END_SECONDS = 2.5;
 export const END_STING = "aevalsrc=0.16*(sin(2*PI*523.25*t)+0.9*sin(2*PI*659.25*t)+0.8*sin(2*PI*783.99*t)+0.35*sin(2*PI*1046.5*t)+0.15*sin(2*PI*2093*t))*exp(-2.4*t)|0.16*(sin(2*PI*523.25*t)+0.9*sin(2*PI*659.25*t)+0.8*sin(2*PI*783.99*t)+0.35*sin(2*PI*1046.5*t)+0.15*sin(2*PI*2093*t))*exp(-2.4*t):s=44100:c=stereo";
 const endTs = `0:00:${END_SECONDS.toFixed(2).padStart(5, "0")}`;
 
-export function expectedCopy(segments: { start: number; end: number; text: string; onScreen?: string }[], end: EndCard, duration: number): CopyCue[] {
+export function expectedCopy(segments: { start: number; end: number; text: string; onScreen?: string }[], end: EndCard, duration: number, mode: CaptionMode = "full"): CopyCue[] {
   return [
-    ...shotOverlays(segments).map((o): CopyCue => ({ ...o, layer: "overlay" })),
-    ...timedCues(segments).map((c): CopyCue => ({ ...c, layer: "caption" })),
+    ...shotOverlays(segments, mode).map((o): CopyCue => ({ ...o, layer: "overlay" })),
+    ...timedCues(segments, 4, mode, end.brand).map((c): CopyCue => ({ ...c, layer: "caption" })),
     ...(["brand", "line", "cta", "footer"] as const).flatMap((position): CopyCue[] => {
       const text = endCopy(end)[position];
       return text ? [{ text, start: duration, end: duration + END_SECONDS, layer: "end", position }] : [];
@@ -178,7 +179,9 @@ function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) 
  */
 export const ONE_TEXT_LAYER = true;
 
-export function timedCues(segments: { start: number; end: number; text: string; onScreen?: string; speech?: { start: number; end: number } }[], wordsPerCue = 4) {
+export function timedCues(segments: { start: number; end: number; text: string; onScreen?: string; speech?: { start: number; end: number } }[], wordsPerCue = 4, mode: CaptionMode = "full", brand?: string) {
+  if (mode === "off") return [];
+  if (mode === "keywords") return keywordCues(segments.filter((s) => !(ONE_TEXT_LAYER && s.onScreen?.trim() && !duplicateOverlay(s.onScreen, s.text))), brand);
   // Captions follow the voice, not the shot: spreading a 3.4 s line over a 4 s shot ran the last cue ~0.6 s late and
   // into the next line (caption word-sync 4.9, run_8a9c7c9db627 take 2; 13.25).
   return segments.filter((s) => !(ONE_TEXT_LAYER && s.onScreen?.trim() && !duplicateOverlay(s.onScreen, s.text))).flatMap((s) => {
@@ -330,15 +333,17 @@ export async function captionVariants(
   segments?: { start: number; end: number; text: string; onScreen?: string }[],
   aspects: readonly (typeof ASPECTS)[number]["aspect"][] = ASPECTS.map((a) => a.aspect),
   compactCopy = false,
-): Promise<{ aspect: string; url: string; copy?: CopyCue[] }[]> {
+  mode: CaptionMode = "full",
+  subjects: { t: number; box: Box | null }[] = [],
+): Promise<{ aspect: string; url: string; copy?: CopyCue[]; agent?: AgentAction[] }[]> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));
   try {
     const input = path.join(dir, "in.mp4");
     await fs.writeFile(input, video.startsWith("data:") ? Buffer.from(video.split(",")[1], "base64") : await (await fetch(video)).arrayBuffer().then(Buffer.from));
     const src = await probe(input);
-    const cues = segments?.length ? timedCues(segments) : captionCues(script, src.duration);
-    const overlays = shotOverlays(segments ?? []).map((o): CopyCue => ({ ...o, layer: "overlay" }));
-    const results: { aspect: string; url: string; copy?: CopyCue[] }[] = [];
+    const cues = segments?.length ? timedCues(segments, 4, mode, end?.brand) : mode === "off" ? [] : captionCues(script, src.duration);
+    const overlays = shotOverlays(segments ?? [], mode).map((o): CopyCue => ({ ...o, layer: "overlay" }));
+    const results: { aspect: string; url: string; copy?: CopyCue[]; agent?: AgentAction[] }[] = [];
     for (const a of ASPECTS.filter((row) => aspects.includes(row.aspect))) {
       let w = src.width;
       let h = Math.round((src.width * a.h) / a.w);
@@ -355,9 +360,17 @@ export async function captionVariants(
         : `crop=${w}:${h}`;
       // Shot-timed copy is placed where the frame is quietest so it never sits on the product (see caption-layout.ts).
       let layout: ReturnType<typeof layoutCopy> | undefined;
+      let agent: AgentAction[] | undefined;
       if (segments?.length && (cues.length || overlays.length)) {
         const size = captionSize(w, h, compactCopy);
-        layout = layoutCopy(await energyMap(input, spatial, w, h), w, h, segments, cues, { caption: size, overlay: Math.round(size * 0.8) });
+        const map = await energyMap(input, spatial, w, h);
+        layout = layoutCopy(map, w, h, segments, cues, { caption: size, overlay: Math.round(size * 0.8) });
+        // Placement agent: every cue checked frame by frame against the subject and the overlays; move, shrink or drop.
+        const how = spatial.startsWith("scale") ? "pad" : "crop";
+        const here = subjects.map((x) => ({ t: x.t, box: x.box && mapSubject(x.box, { w: src.width, h: src.height }, { w, h }, how) }));
+        const placed = placeCaptions(layout.captions, layout.overlays, here, (text, y) => boxAt(y, textBox(text, size, w, h)));
+        layout = { ...layout, captions: placed.captions };
+        agent = placed.log;
       }
       await fs.writeFile(ass, assFile(cues, w, h, overlays, compactCopy, layout));
       const vf = [spatial, ...(cues.length || overlays.length ? [`subtitles=${ass}:fontsdir=${FONTS}`] : [])].join(",");
@@ -414,7 +427,7 @@ export async function captionVariants(
         ...layout.overlays.map((o): CopyCue => ({ start: o.start, end: o.end, text: o.text, layer: "overlay", box: o.box })),
         ...layout.captions.map((c): CopyCue => ({ start: c.start, end: c.end, text: c.text, layer: "caption", box: c.box })),
       ] : undefined;
-      results.push({ aspect: a.aspect, url: `data:video/mp4;base64,${(await fs.readFile(out)).toString("base64")}`, copy });
+      results.push({ aspect: a.aspect, url: `data:video/mp4;base64,${(await fs.readFile(out)).toString("base64")}`, copy, agent });
     }
     return results;
   } finally {

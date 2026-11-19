@@ -7,10 +7,11 @@ import { lookLine, musicPrompt } from "@/lib/video-looks";
 import { upscaleClip } from "@/lib/upscale";
 import { blenderAvailable, buildWorld, cameraPlate, REAL_SET_RESERVE, realSetStatus } from "@/lib/real-set";
 import { lipSync, loudness, sceneCuts, werCheck, wordTimings } from "@/lib/qa-tools";
-import { CATEGORIES, keyframe, medianReview, planShots, QA_PASS, reviewShotFrames } from "@/lib/video-plan";
+import { CATEGORIES, keyframe, locateSubjects, medianReview, planShots, QA_PASS, reviewShotFrames } from "@/lib/video-plan";
 import { checkScript, nearSpeech } from "@/lib/script-lab";
 import { canonExpected, canonHeard } from "@/lib/speech-canon";
 import { approvedStoryboardLength, scriptProductionBlockers, shotReady, storyboardKeyframeFixes, videoAspects, videoReady } from "@/lib/quality-policy";
+import { captionMode } from "@/lib/caption-agent";
 import { captionVariants, END_SECONDS, expectedCopy, meanVolume, mediaDuration, placedCues, stitchShots } from "@/lib/video-post";
 import { type CopyCue, asrVocabulary, audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
 import { list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
@@ -502,16 +503,27 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     fontFamily: kit?.font?.family ?? null,
   };
   await step(run, d, "QA: reading on-screen copy, checking speech and visuals", steps.qa, total, "qa");
-  const cues = expectedCopy(segments, end, st.duration);
+  const capMode = captionMode(plan.captions);
+  const cues = expectedCopy(segments, end, st.duration, capMode);
   const inspect = async (files: { aspect: string; url: string; copy?: CopyCue[] }[]) => (await Promise.all(files.map(async (v) => [
     // Read each line where it was actually placed (captions move off the product), end card from the fixed layout.
     ...await checkExport(v.url, v.aspect, st.duration + END_SECONDS, placedCues(v, cues)),
     ...await audioFindings(v.url, st.duration, v.aspect),
   ]))).flat();
-  let variants = await captionVariants(st.url, "", end, segments, aspects, d.compactCopy);
+  // Subject boxes for the caption-placement agent: where the product and hands are in each sampled frame.
+  const subjects: { t: number; box: { x: number; y: number; w: number; h: number } | null }[] = [];
+  if (capMode !== "off") {
+    for (const seg of segments) {
+      const frames = await evidenceFrames(st.url, frameTimes(seg.start, seg.end)).catch(() => []);
+      const r = await locateSubjects(run.models.vision, frames, `the ${end.brand} product`);
+      charge(r.cost);
+      subjects.push(...r.boxes);
+    }
+  }
+  let variants = await captionVariants(st.url, "", end, segments, aspects, d.compactCopy, capMode, subjects);
   let findings = await inspect(variants);
   if (!d.compactCopy && findings.some((f) => f.kind === "copy" || (f.kind === "coverage" && f.aspect))) {
-    variants = await captionVariants(st.url, "", end, segments, aspects, true);
+    variants = await captionVariants(st.url, "", end, segments, aspects, true, capMode, subjects);
     findings = await inspect(variants);
     d.compactCopy = true;
     warnings.push("Re-typeset the export after an on-screen copy mismatch; no shots were regenerated.");
@@ -526,7 +538,12 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     const shot = shots.find((s) => s.id === finding.shotId);
     if (shot?.vo) delete shot.voiceTrack;
   }
-  const words = await wordLevelFindings(main, segments, script, plan.category, cues.filter((c) => c.layer === "caption"), end.brand);
+  const mainVariant = variants.find((v) => v.aspect === "9:16")!;
+  const moved = (mainVariant.agent ?? []).filter((x) => x.action !== "kept");
+  if (moved.length) say(run, "agent", `Caption agent: ${moved.map((x) => `"${x.text}" ${x.action}${x.to_text ? ` to "${x.to_text}"` : ""}${x.reason ? ` (${x.reason})` : ""}`).join("; ")}.`);
+  // Word sync checks the captions actually drawn on the main export (the agent may have shortened or dropped some).
+  const drawn = mainVariant.copy?.filter((c) => c.layer === "caption") ?? cues.filter((c) => c.layer === "caption");
+  const words = await wordLevelFindings(main, segments, script, plan.category, drawn, end.brand);
   findings.push(...words.findings);
 
   const evidence: VideoQuality["shots"] = [];

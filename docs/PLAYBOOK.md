@@ -526,3 +526,19 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
   Commas are not charged (the two-comma 16-syllable line took 3.63 s and fits). The CTA now fails the script gate.
 - For this run the packshot beat goes from 4 s to 5 s: it is our own CGI shot, so a longer beat costs nothing, and it
   keeps the full CTA. (Trimming to "Half off two-plus cases at drinkolipop.com." still took 3.97 s, over the 3.885 s limit.)
+
+### 13.31 Captions: optional, keyword-style, placed by an agent (Akhil t56u)
+- Take 6 (v3 voice + Stable Audio): 7/10, final 6. Audio 8.9 (WER 3%), but the export judges kept flagging the text layer:
+  "text overlay exhibits graphical artifacts" (s1), "text overlays vary" on the packshot (s3 median 3), with captions
+  over the product in earlier takes. Both captions and overlays were drawn as whole lines.
+- `VideoPlan.captions`: "off" (voiceover only, no in-shot text; the end card keeps brand/offer/CTA), "keywords"
+  (default: one 2-4 word phrase per line, the strongest contiguous run with numbers/brand and no function-word edges or
+  comma crossings; shown from when its first word is said to the end of the line, min 1.2 s), "full" (old behaviour).
+  There is a toggle in the video-plan node, and expected copy (OCR) and word sync follow the mode.
+- Placement agent (`placeCaptions`, caption-agent.ts): before export it checks every cue frame by frame against the subject box
+  (vision `locateSubjects`, one call per shot over the stitched video's sampled frames, ~$0.003 each) and the overlays on
+  screen at the time. On a collision (over 20% of the caption box on the subject, or touching an overlay) it moves the
+  cue to another slot, then shrinks it to a shorter window of the same phrase, then drops it. Each action is logged to
+  the run chat. Subject boxes are mapped into the padded/cropped aspects.
+- Rejected: an edge-energy subject box. On take 6 it boxed 70-80% of every dinner-table frame and the agent dropped all
+  four cues. Busy sets are not subjects.
