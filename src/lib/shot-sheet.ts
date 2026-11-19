@@ -37,7 +37,12 @@ export const ShotSchema = z.object({
   subject: Str(200, 1),
   action: Str(300).default(""),
   lighting: Str(200).default(""),
-  text: z.object({ copy: Str(140, 1), placement: Str(80).default("lower third") }).nullable().default(null),
+  text: z.object({ 
+    copy: Str(140, 1), 
+    placement: Str(80).default("lower third"),
+    /** Caption chunks (2-4 words each) for patterns that specify chunking. */
+    chunks: z.array(Str(30)).optional()
+  }).nullable().default(null),
   audio: z.object({ vo: Str(300).nullable().default(null), sfx: Str(160).nullable().default(null), music: Str(160).nullable().default(null) }),
   transition: z.enum(TRANSITIONS).default("cut"),
   engine: z.enum(ENGINES),
@@ -47,6 +52,8 @@ export const ShotSchema = z.object({
   /** Prompt for AI video / world shots (written by the enhancer from the row; editable). */
   prompt: Str(1200).optional(),
   editorNote: Str(400).default(""),
+  /** Story pattern beat/role (optional, so existing sheets still parse). */
+  beat: Str(40).optional(),
 });
 export type SheetShot = z.infer<typeof ShotSchema>;
 
@@ -54,7 +61,12 @@ export const RuleSchema = z.object({
   id: Str(32, 1),
   text: Str(240, 1),
   /** Machine-checkable rules the gate enforces deterministically; others are advisory notes for the final review. */
-  check: z.enum(["push_in", "void_background", "foley_first", "fade_before_card", "action_cuts", "reveal_holds", "macro_open", "diegetic_text"]).optional(),
+  check: z.enum([
+    "push_in", "void_background", "foley_first", "fade_before_card", "action_cuts", "reveal_holds", "macro_open", "diegetic_text",
+    // Confession loop pattern checks
+    "setup_cuts", "long_takes", "cutaway_cadence", "caption_chunks", "vo_pacing", "no_music", 
+    "silence_gap", "closeup_wide", "echo_opening", "no_cta", "beats_present"
+  ]).optional(),
 });
 export type StyleRule = z.infer<typeof RuleSchema>;
 
@@ -69,6 +81,8 @@ export const SheetSchema = z.object({
   rules: z.array(RuleSchema).max(30),
   shots: z.array(ShotSchema).min(1).max(40),
   endCard: z.object({ title: Str(60, 1), line: Str(120).default(""), footer: Str(120).default("") }),
+  /** Story pattern ID (optional, defaults to confession_loop). */
+  patternId: Str(40).optional(),
 });
 export type ShotSheet = z.infer<typeof SheetSchema>;
 

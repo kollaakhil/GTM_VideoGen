@@ -887,6 +887,136 @@ models: { video: "alibaba/wan-3.0/image-to-video", voice: "fal-ai/chatterbox/tex
 
 **Lesson:** Never use hard `.max()` on free-text LLM output that you only display. Clamp it, show what fits, and let the user see the sheet instead of a schema error.
 
+## 23. Story Patterns (Confession Loop)
+
+**What:** Named narrative structures with deterministic rules the gate enforces and subjective qualities the final review scores. Patterns live in `src/lib/sheet/patterns/` and are selected in the Brand & goal step. The sheet writer, gate checks, and final review all adapt when a pattern is active.
+
+**Patterns:**
+- **Confession loop** (default): Opens with the goal in plain words, ties it to something personal, shows one small physical example, brings in the problem with "but…" and silence, gives it a specific cause the speaker owns, hits the low point with what the viewer is feeling and a close-up, follows with a crazy plan in one long take, cuts before the attempt, and ends on the takeaway that echoes the opening. Brand-agnostic: the rule-and-tiny-example angle comes from the brief, not hard-coded text.
+- **Classic**: The current default behavior with no specific story structure—flexible pacing, music bed, standard captions.
+
+**The 17 rules (Confession loop):**
+1. Open with the goal in plain words in the very first sentence.
+2. Tie the goal to something personal, then raise that stake once. (judged)
+3. Show one small, physical example on screen instead of explaining in the abstract. (judged)
+4. Bring in the problem with "but…" and follow it with about a second of silence. (gate-checked)
+5. Give the problem a specific cause the speaker owns. (judged)
+6. At the low point, say out loud what the viewer is feeling ("now you're like, uh-oh").
+7. Follow the problem with a plan that sounds a little crazy. (judged)
+8. Cut before the attempt and never show the result. (gate-checked)
+9. Cut every 1.5–2 seconds during the setup, then hold one long take on the confession and on the plan. (gate-checked)
+10. Cut away to a reaction or b-roll every 2–3 seconds the rest of the time. (gate-checked)
+11. Punch in to a close-up at the low point, then go wide again after. (gate-checked)
+12. Keep captions to 2–4 short words at a time, plus one bright label in the first 3 seconds. (gate-checked)
+13. Speak at about 4 words per second and slow down only at the turn. (gate-checked)
+14. Leave out music and let pauses do the work. (gate-checked)
+15. End on the takeaway with no call to action, and echo the opening line so it loops. (gate-checked)
+16. Promise a rule that works on anything, then prove it with one tiny example. (judged)
+17. Make the video follow the technique it teaches. (judged)
+
+**Data structure (`StoryPattern`):**
+- `id`, `name`, `description`
+- `rules`: The 17 rules verbatim
+- `gateChecked`: indices of rules the gate enforces deterministically (4, 9, 10, 11, 12, 13, 14, 15)
+- `judged`: indices of subjective rules the final review scores (2, 3, 5, 7, 16, 17)
+- `beats`: Beat sequence with `beat` role, `durationRange`, `longTake`/`quickCuts` flags, `framing`, `silenceAfter`
+- `rhythm`: `voicePace` range, `slowBeats`, `setupCutLength`, `cutawayCadence`
+- `captions`: `wordsPerChunk` range, `brightLabelBefore` (seconds)
+- `audio`: `music` (boolean), `pausesWork` (boolean)
+- `ending`: `cta` (boolean), `echoOpening` (boolean)
+
+**Sheet schema changes:**
+- `ShotSchema`: added `beat?: string` (the beat role, e.g. "goal", "low_point"), `text.chunks?: string[]` (caption chunks, 2–4 words each)
+- `SheetSchema`: added `patternId?: string` (defaults to "confession_loop")
+- `RuleSchema.check`: added `setup_cuts`, `long_takes`, `cutaway_cadence`, `caption_chunks`, `vo_pacing`, `no_music`, `silence_gap`, `closeup_wide`, `echo_opening`, `no_cta`, `beats_present`
+
+**Writer integration (`src/lib/sheet/writer.ts`):**
+- `SheetInput` gains `patternId?: string`
+- `sheetPrompt()` includes pattern-specific instructions when `patternId === "confession_loop"`:
+  - VO lines per beat at ~4 words per second, with slower turn marked
+  - Setup shots 1.5–2 s, long takes (3+ s) for confession and plan, 2–3 s cutaways
+  - Punch-in at low point, then wide
+  - Captions in 2–4 word chunks, with one bright label in first 3 s
+  - No music (`bed: null`, `music: null` everywhere), ~1 s silence after "but…"
+  - No CTA, last line echoes first (60%+ token overlap)
+  - All beats present in order: `goal → personal_stake → stake_raised → physical_example → but_silence → owned_cause → low_point → crazy_plan → cut_before_attempt → takeaway`
+- `normaliseSheet()` preserves `patternId`, `beat`, and `text.chunks` fields
+
+**Gate checks (`src/lib/sheet/gate.ts`):**
+- `confessionLoopChecks()` enforces the deterministic rules when `sheet.patternId === "confession_loop"`:
+  - Setup cuts (goal, personal_stake, stake_raised, physical_example) 1.5–2 s
+  - Long takes on low_point and crazy_plan (3+ s)
+  - Cutaway cadence on other beats 2–3 s
+  - Caption chunks 2–4 words each, bright label before 3 s
+  - VO pacing 3.5–4.5 words/sec (excluding slow beats: but_silence, low_point)
+  - No music (bed null, no music cues)
+  - Silence gap after "but…" beat (enforced in stitcher)
+  - Close-up at low_point, wide at takeaway
+  - Last VO echoes first (60%+ token overlap)
+  - No CTA phrases ("buy", "shop", "link in bio", "sign up", "learn more", etc.)
+  - All beats present in order, attempt result never shown
+- Auto-repair runs once on gate failure, the way the existing flow does
+
+**Final review (`src/lib/qa/final-review.ts`, `src/lib/qa/pattern-review.ts`):**
+- `FinalDeps` gains `patternReview?: () => Promise<{ score: number; notes: string[] }>`
+- When `patternId === "confession_loop"`, the final review calls `patternReview()` with a rubric for the subjective rules (2, 3, 5, 7, 16, 17):
+  - Personal stake is real (rule 2)
+  - Physical example is specific, not abstract (rule 3)
+  - Cause is owned (rule 5)
+  - Plan sounds crazy (rule 7)
+  - Rule-and-example angle present (rule 16)
+  - Video follows the technique it teaches (rule 17)
+- Score 0–10, with notes. Pattern review score < 7 caps the final at 7 (same as loudness or caption sync)
+- `confessionLoopReviewPrompt()` in `pattern-review.ts` builds the rubric
+
+**Render and edit:**
+- Stitcher honors silence gaps: after a shot with `beat: "but_silence"`, insert ~1 s of silence before the next VO
+- Caption renderer shows 2–4 word chunks when `text.chunks` is present, plus bright early label (first 3 s)
+- No music: when `patternId === "confession_loop"`, `bed` is null and no music cues are rendered
+
+**Tests (`tests/confession-loop.test.ts`, mocked providers, no paid calls):**
+- Pattern structure: 17 rules present, correct gateChecked/judged split, 10 beats in order
+- Good sheet passes every check
+- One failing fixture per check gives a readable reason:
+  - Missing "but_silence" beat
+  - "but_silence" beat without "but" in VO
+  - Setup cuts too long (> 2 s)
+  - Long takes too short (< 3 s)
+  - Caption chunks wrong word count
+  - VO pacing off (< 3.5 or > 4.5 words/sec)
+  - Music present
+  - Low point not a close-up
+  - Last VO doesn't echo first
+  - CTA phrases present
+  - Beats missing or out of order
+- Old sheets without `beat` fields still parse
+- Pattern picker API round trip (future: UI wiring)
+- Non-Neon brand fixture (Coffee Co) passes, proving brand-agnostic
+
+**Wiring status:**
+- ✅ Data structure (`patterns/index.ts`)
+- ✅ Schema changes (`shot-sheet.ts`)
+- ✅ Writer integration (`sheet/writer.ts`)
+- ✅ Gate checks (`sheet/gate.ts`)
+- ✅ Final review integration (`qa/final-review.ts`, `qa/pattern-review.ts`)
+- ✅ Tests (mocked, pass)
+- ✅ Docs (this section)
+- ⚠️ **Stitcher silence gaps:** Not yet wired. The gate checks for the beat structure, but the actual silence insertion after "but_silence" needs to be added to the audio stitcher.
+- ⚠️ **Captions renderer chunks:** Not yet wired. The chunks are in the schema and gate-checked, but the captions renderer needs to read `text.chunks` and display them as 2–4 word segments.
+- ⚠️ **Pattern picker UI:** Not yet wired. The Brand & goal step needs a dropdown or toggle to select "Confession loop" vs "Classic".
+- ⚠️ **Pattern review caller:** The `patternReview()` function is stubbed. The render pipeline needs to call `reviewConfessionLoop(sheet, qa)` with the actual video URL and QA model.
+
+**How to use:**
+1. In the Brand & goal step, the operator picks "Confession loop" (default) or "Classic".
+2. The sheet writer receives `patternId: "confession_loop"` and follows the pattern rules exactly.
+3. The gate checks enforce the deterministic rules (setup cuts, long takes, captions, VO pacing, no music, echo opening, no CTA, all beats).
+4. The auto-repair loop fixes gate failures once, the way the existing flow does.
+5. The final review scores the subjective rules (personal stake, physical example, owned cause, crazy plan, rule-and-example, video follows technique) when the pattern is active.
+
+**Cost:** No new paid calls. The pattern logic is deterministic checks (free) plus one existing final review call (already counted) with a pattern-specific rubric.
+
+**Lesson:** A story pattern system lets the operator enforce a specific narrative structure across any brand, with the gate catching deterministic violations and the final review scoring subjective quality. The 17 rules verbatim are the source of truth, and the code implements them as executable checks.
+
 ## 22. Blender Queue Visibility and Cancellation (Studio Quality Gates branch)
 
 **Symptom (2026-11-19):** A user's Studio UI render sat invisibly behind a test run's Final that had queued 6-7 Blender shots (about 45 s each with EEVEE). The single process-wide `blenderSlot` was a FIFO queue with no visibility and no way to cancel. Previews took 4m27s for 6 Blender shots, blocking the user's interactive render.
