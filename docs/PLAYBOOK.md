@@ -380,6 +380,10 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
 - **Fix:** `transcribeLine` takes the `asrVocabulary(line, brand)` prompt.
 - The cost estimate now counts real renders: a packshot is 1 render, a paid shot is N candidates.
 
+### 13.16 Packshot geometry
+
+- **Failure:** the first packshot keyframe scored 8 (product minor, artifacts minor): "can proportions and upper rim geometry show mild 3D modelling inaccuracies". Any keyframe under 9 forces a *test draft*, with 1 candidate and blocked for HD, so the whole take was capped.
+- **Fix:** the oversized lid cylinders were replaced with a tapered neck cone, a rolled rim and a base taper. The floor now matches the world tone and the camera looks about 3° down.
 ### 13.17 TTS brand pronunciation
 
 - **Failure:** with the whisper hint in place (13.15), the pre-check still heard "Keep the Cola. Swap in Olapop." ElevenLabs really does say "Olapop" for all-caps "OLIPOP".
