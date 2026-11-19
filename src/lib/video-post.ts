@@ -113,7 +113,9 @@ export type EndCard = { brand: string; line?: string; cta?: string; footer?: str
 
 const CTA_LABEL: Record<string, string> = { SHOP_NOW: "Shop now", LEARN_MORE: "Learn more", SIGN_UP: "Sign up", GET_OFFER: "Get offer", ORDER_NOW: "Order now" };
 const endCopy = (end: EndCard) => ({ brand: end.brand, line: end.line, cta: end.cta ? CTA_LABEL[end.cta] ?? end.cta : undefined, footer: end.footer });
-export const END_SECONDS = 1.5;
+/** End card hold. 1.5 s was too short to read an offer line and a footer badge (script judge, run_8a9c7c9db627). */
+export const END_SECONDS = 2.5;
+const endTs = `0:00:${END_SECONDS.toFixed(2).padStart(5, "0")}`;
 
 export function expectedCopy(segments: { start: number; end: number; text: string; onScreen?: string }[], end: EndCard, duration: number): CopyCue[] {
   return [
@@ -139,7 +141,7 @@ function endCardAss(end: EndCard, ink: "black" | "white", w: number, h: number) 
   const line = end.line ? clean(end.line) : "";
   const fit = (n: number, len: number) => Math.round(Math.min(n, (w * 1.7) / Math.max(len, 1)));
   const ev = (size: number, y: number, text: string, box = false) =>
-    `Dialogue: 0,0:00:00.00,0:00:01.50,${box ? "Box" : "Card"},{\\an5\\pos(${Math.round(w / 2)},${y})\\fs${size}}${text}`;
+    `Dialogue: 0,0:00:00.00,${endTs},${box ? "Box" : "Card"},{\\an5\\pos(${Math.round(w / 2)},${y})\\fs${size}}${text}`;
   return [
     "[Script Info]",
     "ScriptType: v4.00+",
@@ -366,9 +368,9 @@ export async function captionVariants(
           FFMPEG,
           [
             "-hide_banner", "-loglevel", "error", "-i", input,
-            "-f", "lavfi", "-i", `color=c=0x${bg.slice(1)}:s=${w}x${h}:d=1.5:r=30`,
-            ...(src.audio ? ["-f", "lavfi", "-t", "1.5", "-i", "anullsrc=r=44100:cl=stereo"] : []),
-            ...(logoFile ? ["-loop", "1", "-t", "1.5", "-i", logoFile] : []),
+            "-f", "lavfi", "-i", `color=c=0x${bg.slice(1)}:s=${w}x${h}:d=${END_SECONDS}:r=30`,
+            ...(src.audio ? ["-f", "lavfi", "-t", String(END_SECONDS), "-i", "anullsrc=r=44100:cl=stereo"] : []),
+            ...(logoFile ? ["-loop", "1", "-t", String(END_SECONDS), "-i", logoFile] : []),
             "-filter_complex", fc, "-map", "[v]", ...(src.audio ? ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"] : ["-an"]), ...enc,
           ],
           { timeout: 180_000 },
