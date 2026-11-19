@@ -223,7 +223,8 @@ function BriefStep({ run, busy, onSave, onNext }: { run: SheetRun; busy: boolean
 function SheetStep({ run, draft, setDraft, busy, onSave, onRewrite, onNext }: { run: SheetRun; draft: ShotSheet; setDraft: (s: ShotSheet) => void; busy: boolean; onSave: () => void; onRewrite: () => void; onNext: () => void }) {
   const dirty = JSON.stringify(draft) !== JSON.stringify(run.sheet);
   const [fixingGaps, setFixingGaps] = useState(false);
-  const [fixResult, setFixResult] = useState<{ changes: string[]; fixed: number; remaining: number } | undefined>();
+  const [overriding, setOverriding] = useState(false);
+  const [fixResult, setFixResult] = useState<{ changes: string[]; fixed: number; remaining: number; message?: string } | undefined>();
   const byShot = useMemo(() => {
     const m: Record<number, string[]> = {};
     for (const i of run.gate?.issues ?? []) if (i.shot && i.level === "error") (m[i.shot] ??= []).push(i.text);
@@ -232,7 +233,17 @@ function SheetStep({ run, draft, setDraft, busy, onSave, onRewrite, onNext }: { 
   const errors = run.gate?.issues.filter((i) => i.level === "error") ?? [];
   const warns = run.gate?.issues.filter((i) => i.level === "warn") ?? [];
   
+  // Check if we can override: no claim/safety issues
+  const cannotOverride = errors.filter((i) => 
+    i.text.includes("claims") || 
+    i.text.includes("unverified") || 
+    i.text.includes("facts mark as") ||
+    i.text.includes("verified facts don't support")
+  );
+  const canOverride = errors.length > 0 && cannotOverride.length === 0;
+  
   const hasActiveRender = run.versions.some((v) => v.status === "rendering" || v.status === "queued");
+  const canProceed = run.gate?.pass || run.gateOverride;
   
   const handleFixGaps = async () => {
     setFixingGaps(true);
@@ -245,7 +256,8 @@ function SheetStep({ run, draft, setDraft, busy, onSave, onRewrite, onNext }: { 
         const changes = Array.isArray(j.changes) ? j.changes as string[] : [];
         const fixed = typeof j.fixed === "number" ? j.fixed : 0;
         const remaining = typeof j.remaining === "number" ? j.remaining : 0;
-        setFixResult({ changes, fixed, remaining });
+        const message = typeof j.message === "string" ? j.message : undefined;
+        setFixResult({ changes, fixed, remaining, message });
         // Reload the run to get the updated sheet and gate
         window.location.reload();
       }
@@ -256,41 +268,79 @@ function SheetStep({ run, draft, setDraft, busy, onSave, onRewrite, onNext }: { 
     }
   };
   
+  const handleOverride = async () => {
+    if (!confirm(`Override ${errors.length} blocking error(s) and continue anyway? This will allow rendering despite gate failures.`)) return;
+    setOverriding(true);
+    try {
+      const j = await call({ action: "override_gate", runId: run.id });
+      if (j.error) {
+        alert(`Cannot override: ${j.error}`);
+      } else {
+        window.location.reload();
+      }
+    } catch (e) {
+      console.error("Override failed:", e);
+    } finally {
+      setOverriding(false);
+    }
+  };
+  
   return (
     <div className="space-y-4" data-testid="sheet-step">
       <div className="flex flex-wrap items-center gap-3">
-        <div className={cn("flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm", run.gate?.pass ? "border-emerald-900 bg-emerald-950/40 text-emerald-300" : "border-red-900 bg-red-950/40 text-red-300")} data-testid="gate">
-          {run.gate?.pass ? <Check className="size-4" /> : <AlertTriangle className="size-4" />}
-          Sheet check: {run.gate?.pass ? "passed" : `${errors.length} to fix`}{dirty && " (save to re-check)"}
+        <div className={cn("flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm", canProceed ? "border-emerald-900 bg-emerald-950/40 text-emerald-300" : "border-red-900 bg-red-950/40 text-red-300")} data-testid="gate">
+          {canProceed ? <Check className="size-4" /> : <AlertTriangle className="size-4" />}
+          Sheet check: {run.gate?.pass ? "passed" : run.gateOverride ? `overridden (${errors.length} issues)` : `${errors.length} blocking`}{warns.length > 0 && `, ${warns.length} style notes`}{dirty && " (save to re-check)"}
         </div>
-        {!run.gate?.pass && errors.length > 0 && !dirty && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={fixingGaps || hasActiveRender}
-            onClick={handleFixGaps}
-            className="border-amber-700 text-amber-300 hover:bg-amber-950/40"
-            title={hasActiveRender ? "Cannot fix gaps while a render is running" : "Let the LLM make minimal edits to satisfy gate rules"}
-            data-testid="fix-gaps"
-          >
-            {fixingGaps ? <><Loader2 className="size-3 animate-spin" /> Fixing…</> : "Fix the gaps"}
-          </Button>
+        {!canProceed && errors.length > 0 && !dirty && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={fixingGaps || hasActiveRender}
+              onClick={handleFixGaps}
+              className="border-amber-700 text-amber-300 hover:bg-amber-950/40"
+              title={hasActiveRender ? "Cannot fix gaps while a render is running" : "Let the LLM make minimal edits to satisfy gate rules"}
+              data-testid="fix-gaps"
+            >
+              {fixingGaps ? <><Loader2 className="size-3 animate-spin" /> Fixing…</> : "Fix the gaps"}
+            </Button>
+            {canOverride && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={overriding || hasActiveRender}
+                onClick={handleOverride}
+                className="border-orange-700 text-orange-300 hover:bg-orange-950/40"
+                title="Override blocking errors and allow rendering anyway (claim/safety errors cannot be overridden)"
+                data-testid="override-gate"
+              >
+                {overriding ? <><Loader2 className="size-3 animate-spin" /> Overriding…</> : "Continue anyway"}
+              </Button>
+            )}
+          </>
         )}
         <span className="text-xs text-zinc-500">v{draft.version} · {draft.shots.length} shots · {draft.targetSec}s · {draft.aspect} · {draft.audioMode === "foley" ? "foley-first" : "voiceover"}</span>
         <div className="ml-auto flex gap-2">
           <Button variant="outline" disabled={busy} onClick={onRewrite}>Rewrite sheet</Button>
           <Button variant="outline" disabled={!dirty || busy} onClick={onSave} data-testid="save-sheet">Save edits & re-check</Button>
-          <Button disabled={busy || dirty || !run.gate?.pass} onClick={onNext}>Previews <ChevronRight /></Button>
+          <Button disabled={busy || dirty || !canProceed} onClick={onNext}>Previews <ChevronRight /></Button>
         </div>
       </div>
       {fixResult && (
         <div className="rounded-lg border border-blue-900 bg-blue-950/40 p-3 text-sm text-blue-200">
-          <p className="font-semibold">Fixed {fixResult.fixed} issue(s){fixResult.remaining > 0 && `, ${fixResult.remaining} remaining`}</p>
+          <p className="font-semibold">{fixResult.message || `Fixed ${fixResult.fixed} issue(s)${fixResult.remaining > 0 ? `, ${fixResult.remaining} remaining` : ""}`}</p>
           {fixResult.changes.length > 0 && (
             <ul className="mt-2 space-y-1 text-xs">
               {fixResult.changes.map((c, i) => <li key={i}>• {c}</li>)}
             </ul>
           )}
+        </div>
+      )}
+      {run.gateOverride && (
+        <div className="rounded-lg border border-orange-900 bg-orange-950/40 p-3 text-sm text-orange-200">
+          <p className="font-semibold">Gate overridden by {run.gateOverride.by} at {new Date(run.gateOverride.at).toLocaleString()}</p>
+          <p className="mt-1 text-xs">Rendering is allowed despite {run.gateOverride.issues.length} blocking error(s).</p>
         </div>
       )}
       {run.script && <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer text-zinc-300">Script</summary><pre className="mt-2 whitespace-pre-wrap text-xs text-zinc-400">{run.script}</pre></details>}
@@ -300,11 +350,18 @@ function SheetStep({ run, draft, setDraft, busy, onSave, onRewrite, onNext }: { 
         <label className="space-y-1 text-sm"><span className="text-zinc-400">End card line</span><Input value={draft.endCard.line} onChange={(e) => setDraft({ ...draft, endCard: { ...draft.endCard, line: e.target.value } })} /></label>
         <label className="space-y-1 text-sm"><span className="text-zinc-400">Bed (drone / music)</span><Input value={draft.bed} onChange={(e) => setDraft({ ...draft, bed: e.target.value })} /></label>
       </div>
-      {(errors.length > 0 || warns.length > 0) && (
-        <div className="rounded-lg border p-3 text-xs">
+      {errors.length > 0 && (
+        <div className="rounded-lg border border-red-900 p-3 text-xs">
+          <div className="mb-1 font-semibold text-red-300">Blocking errors ({errors.length})</div>
           {errors.filter((i) => !i.shot).map((i) => <div key={i.text} className="text-red-400">• {i.text}</div>)}
-          {warns.map((i) => <div key={i.text} className="text-amber-400">• {i.text}</div>)}
           {errors.some((i) => i.shot) && <div className="text-zinc-500">Shot-level problems are shown in red on their rows.</div>}
+        </div>
+      )}
+      {warns.length > 0 && (
+        <div className="rounded-lg border border-amber-900 p-3 text-xs">
+          <div className="mb-1 font-semibold text-amber-300">Style notes ({warns.length})</div>
+          {warns.filter((i) => !i.shot).map((i) => <div key={i.text} className="text-amber-400">• {i.text}</div>)}
+          {warns.some((i) => i.shot) && <div className="text-zinc-500">Shot-level style notes are shown in amber.</div>}
         </div>
       )}
       <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer text-zinc-300">Editor instructions</summary><pre className="mt-2 overflow-x-auto whitespace-pre text-[11px] text-zinc-400" data-testid="editor-notes">{editorInstructions(draft)}</pre></details>

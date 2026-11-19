@@ -9,7 +9,7 @@ import { estimateSheetVersion, runPreviews, type RenderDeps } from "./render";
 import { DEFAULT_SHEET_VIDEO_MODEL, defaultRenderDeps } from "./render-deps";
 import { blenderQueue } from "@/lib/render/blender-queue";
 import { writeSheet, type Chat } from "./writer";
-import { sheetGate } from "./gate";
+import { sheetGate, type GateResult, type GateIssue } from "./gate";
 import { factBase } from "./flow";
 
 const VersionStackSchema = z.object({
@@ -87,7 +87,7 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
     }
 
     if (!run.sheet) return NextResponse.json({ error: "Write the shot sheet first." }, { status: 400 });
-    if (run.gate && !run.gate.pass) return NextResponse.json({ error: "The shot sheet gate has errors. Fix them before rendering." }, { status: 400 });
+    if (run.gate && !run.gate.pass && !run.gateOverride) return NextResponse.json({ error: "The shot sheet gate has errors. Fix them or override to continue." }, { status: 400 });
     // Budget from the sheet itself (server side; the client's whole-video guess is ignored): every version must fit the cap together.
     const sheet = run.sheet;
     const estimates = stacks.map((st) => estimateSheetVersion(sheet, st, DEFAULT_SHEET_VIDEO_MODEL()));
@@ -146,19 +146,37 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
     if (run.createdBy !== user) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     if (!run.sheet) return NextResponse.json({ error: "No sheet to fix" }, { status: 400 });
     if (!run.gate) return NextResponse.json({ error: "No gate result" }, { status: 400 });
-    if (run.gate.pass) return NextResponse.json({ error: "Sheet already passes the gate" }, { status: 400 });
     
     // Check if a render is running
     const hasActiveRender = run.versions.some((v) => v.status === "rendering" || v.status === "queued");
     if (hasActiveRender) return NextResponse.json({ error: "Cannot fix gaps while a render is running" }, { status: 409 });
     
     const meter = meterFor(run);
-    const chat: Chat = async <T,>(system: string, userPrompt: string) => {
+    const chatWithRetry: Chat = async <T,>(system: string, userPrompt: string) => {
       const TEXT_ESTIMATE = 0.02;
       const result = await meter.run({ stage: "fix_gaps", what: "fix gate failures", model: run.input.textModel, estimate: TEXT_ESTIMATE }, async () => {
         const { chatJSON } = await import("@/lib/ai");
-        const { data, usage } = await chatJSON<T>(run.input.textModel, system, userPrompt);
-        return { value: { data, usd: usage.costUsd }, usd: usage.costUsd };
+        let lastError: Error | null = null;
+        
+        // Retry on network errors
+        for (let retry = 0; retry < 2; retry++) {
+          try {
+            const { data, usage } = await chatJSON<T>(run.input.textModel, system, userPrompt);
+            return { value: { data, usd: usage.costUsd }, usd: usage.costUsd };
+          } catch (e) {
+            const err = e as Error;
+            const isNetworkError = /fetch failed|ConnectTimeoutError|UND_ERR_CONNECT_TIMEOUT|5\d{2}/i.test(err.message);
+            lastError = err;
+            
+            if (isNetworkError && retry < 1) {
+              console.warn(`[fix_gaps] Network error on attempt ${retry + 1}, retrying after backoff...`);
+              await new Promise(resolve => setTimeout(resolve, (retry + 1) * 2000));
+              continue;
+            }
+            throw err;
+          }
+        }
+        throw lastError!;
       });
       return result;
     };
@@ -180,69 +198,127 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
     
     const oldSheet = run.sheet;
     const oldVersion = oldSheet.version;
-    let currentSheet = oldSheet;
-    let currentGate = run.gate;
-    const errors = currentGate.issues.filter((i) => i.level === "error");
+    const oldGate = run.gate;
     
+    // Score: blocking errors * 10 + warnings
+    const scoreGate = (gate: GateResult) => {
+      const blocking = gate.issues.filter((i: GateIssue) => i.level === "error").length;
+      const warnings = gate.issues.filter((i: GateIssue) => i.level === "warn").length;
+      return blocking * 10 + warnings;
+    };
+    
+    let bestSheet = oldSheet;
+    let bestGate = oldGate;
+    let bestScore = scoreGate(oldGate);
     const changes: string[] = [];
-    let bestSheet = currentSheet;
-    let bestGate = currentGate;
     const MAX_ATTEMPTS = 2;
     
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS && !currentGate.pass; attempt++) {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const fixes = currentGate.issues.filter((i) => i.level === "error");
-        const result = await writeSheet(input, chat, fixes, oldVersion + attempt);
-        currentSheet = result.sheet;
-        currentGate = sheetGate(currentSheet, { facts: factBase(run), rules: run.rules });
+        // Target both errors and warnings
+        const fixes = bestGate.issues;
+        const result = await writeSheet(input, chatWithRetry, fixes, oldVersion + attempt);
+        const currentSheet = result.sheet;
+        const currentGate = sheetGate(currentSheet, { facts: factBase(run), rules: run.rules });
+        const currentScore = scoreGate(currentGate);
         
-        // Track what changed
-        for (let i = 0; i < Math.min(currentSheet.shots.length, oldSheet.shots.length); i++) {
-          const oldShot = oldSheet.shots[i];
-          const newShot = currentSheet.shots[i];
-          const durationChanged = Math.abs((newShot.end - newShot.start) - (oldShot.end - oldShot.start)) > 0.1;
-          const framingChanged = oldShot.shotType !== newShot.shotType || oldShot.framing !== newShot.framing;
-          
-          if (durationChanged || framingChanged) {
-            const oldDur = (oldShot.end - oldShot.start).toFixed(1);
-            const newDur = (newShot.end - newShot.start).toFixed(1);
-            const parts: string[] = [];
-            if (durationChanged) parts.push(`${oldDur}s → ${newDur}s`);
-            if (framingChanged) parts.push(`framing now ${newShot.shotType}`);
-            changes.push(`Shot ${i + 1}: ${parts.join(", ")}`);
+        // Keep only if strictly better
+        if (currentScore < bestScore) {
+          // Track what changed
+          changes.length = 0;
+          for (let i = 0; i < Math.min(currentSheet.shots.length, oldSheet.shots.length); i++) {
+            const oldShot = oldSheet.shots[i];
+            const newShot = currentSheet.shots[i];
+            const durationChanged = Math.abs((newShot.end - newShot.start) - (oldShot.end - oldShot.start)) > 0.1;
+            const framingChanged = oldShot.shotType !== newShot.shotType || oldShot.framing !== newShot.framing;
+            
+            if (durationChanged || framingChanged) {
+              const oldDur = (oldShot.end - oldShot.start).toFixed(1);
+              const newDur = (newShot.end - newShot.start).toFixed(1);
+              const parts: string[] = [];
+              if (durationChanged) parts.push(`${oldDur}s → ${newDur}s`);
+              if (framingChanged) parts.push(`framing now ${newShot.shotType}`);
+              changes.push(`Shot ${i + 1}: ${parts.join(", ")}`);
+            }
           }
-        }
-        
-        // Keep best attempt (passes, or has fewer errors, or this is the first attempt)
-        const currentErrors = currentGate.issues.filter((i) => i.level === "error").length;
-        const bestErrors = bestGate.issues.filter((i) => i.level === "error").length;
-        if (attempt === 1 || currentErrors < bestErrors || currentGate.pass) {
+          
           bestSheet = currentSheet;
           bestGate = currentGate;
+          bestScore = currentScore;
         }
       } catch (e) {
         const errMsg = (e as Error).message;
         console.error(`[fix_gaps] Attempt ${attempt} failed:`, e);
-        // If it's a cap error, return immediately instead of trying more attempts
+        // If it's a cap error, return immediately
         if (errMsg.includes("cap reached")) {
           return NextResponse.json({ error: errMsg }, { status: 400 });
         }
-        break;
+        // Continue to next attempt on other errors
       }
     }
     
-    // Save the best result as a new revision
-    run.sheet = bestSheet;
-    run.gate = bestGate;
+    const originalErrors = oldGate.issues.filter((i) => i.level === "error").length;
+    const bestErrors = bestGate.issues.filter((i) => i.level === "error").length;
+    const improved = bestScore < scoreGate(oldGate);
+    
+    if (improved) {
+      run.sheet = bestSheet;
+      run.gate = bestGate;
+      await saveProgress(run);
+      
+      return NextResponse.json({
+        run,
+        changes,
+        fixed: originalErrors - bestErrors,
+        remaining: bestErrors + bestGate.issues.filter((i) => i.level === "warn").length,
+      });
+    } else {
+      // Keep original sheet unchanged
+      return NextResponse.json({
+        run,
+        changes: [],
+        fixed: 0,
+        remaining: oldGate.issues.length,
+        message: `Couldn't improve automatically; ${oldGate.issues.length} issue(s) remain`,
+      });
+    }
+  }
+  
+  if (a === "override_gate") {
+    const body = raw as { runId?: string };
+    if (!body.runId) return NextResponse.json({ error: "runId required" }, { status: 400 });
+    
+    const run = await loadRun(body.runId);
+    if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    if (run.createdBy !== user) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (!run.gate) return NextResponse.json({ error: "No gate result" }, { status: 400 });
+    
+    const blockingErrors = run.gate.issues.filter((i) => i.level === "error");
+    
+    // Cannot override claim or safety issues (superlatives, unverified claims, banned phrases)
+    const cannotOverride = blockingErrors.filter((i) => 
+      i.text.includes("claims") || 
+      i.text.includes("unverified") || 
+      i.text.includes("facts mark as") ||
+      i.text.includes("verified facts don't support")
+    );
+    
+    if (cannotOverride.length > 0) {
+      return NextResponse.json({ 
+        error: "Cannot override claim/safety errors. Fix these issues first.",
+        cannotOverride: cannotOverride.map(i => i.text),
+      }, { status: 400 });
+    }
+    
+    run.gateOverride = {
+      at: new Date().toISOString(),
+      by: user,
+      issues: blockingErrors,
+    };
+    
     await saveProgress(run);
     
-    const remainingErrors = bestGate.issues.filter((i) => i.level === "error");
-    return NextResponse.json({
-      run,
-      changes,
-      fixed: errors.length - remainingErrors.length,
-      remaining: remainingErrors.length,
-    });
+    return NextResponse.json({ run });
   }
 
   if (a === "pick_winner") {

@@ -12,7 +12,7 @@ export async function renderAction(body: { runId?: string; versionId?: string; p
   const run = await healSheetRun(found);
   if (run.status === "working") return NextResponse.json({ error: "This run is already working on a step." }, { status: 409 });
   if (!run.sheet) return NextResponse.json({ error: "Write the shot sheet first." }, { status: 400 });
-  if (run.gate && !run.gate.pass) return NextResponse.json({ error: "The shot sheet gate has errors. Fix them before rendering." }, { status: 400 });
+  if (run.gate && !run.gate.pass && !run.gateOverride) return NextResponse.json({ error: "The shot sheet gate has errors. Fix them or override to continue." }, { status: 400 });
   if (run.cost.spentUsd >= run.cost.capUsd) return NextResponse.json({ error: `The run cap of $${run.cost.capUsd.toFixed(2)} is spent. Raise the cap to render more.` }, { status: 400 });
   
   // Get the version's stack models

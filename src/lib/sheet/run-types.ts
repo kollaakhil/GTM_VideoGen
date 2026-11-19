@@ -57,6 +57,12 @@ export type FinalResult = {
   creativeId?: string | null;
 };
 
+export type GateOverride = {
+  at: string;
+  by: string;
+  issues: Array<{ level: string; text: string; shot?: number; rule?: string }>;
+};
+
 export interface SheetRun {
   id: string;
   createdBy: string;
@@ -88,6 +94,7 @@ export interface SheetRun {
   script: string | null;
   sheet: ShotSheet | null;
   gate: GateResult | null;
+  gateOverride: GateOverride | null;
   versions: Version[];
   picks: { mode: "video" | "shot"; video: string | null; shots: Record<string, string> };
   final: FinalResult | null;

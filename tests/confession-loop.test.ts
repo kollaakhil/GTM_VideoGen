@@ -93,10 +93,10 @@ describe("confessionLoopChecks gate", () => {
   it("detects issues in a near-good sheet", () => {
     const issues = confessionLoopChecks(baseSheet);
     // Should detect some issues (chunks, pacing, echo) but not catastrophic failures
-    const errors = issues.filter((i) => i.level === "error");
-    // Expect some errors for caption chunks, pacing, and echo overlap
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors.length).toBeLessThan(15);
+    const warnings = issues.filter((i) => i.level === "warn");
+    // Expect some warnings for caption chunks, pacing, and echo overlap (pattern checks are warnings now)
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings.length).toBeLessThan(15);
   });
 
   it("fails when but_silence beat is missing", () => {
@@ -336,9 +336,9 @@ describe("Non-Neon brand test", () => {
     };
 
     const issues = confessionLoopChecks(genericBrandSheet);
-    const errors = issues.filter((i) => i.level === "error");
-    // Should have some errors but not catastrophic
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors.length).toBeLessThan(20);
+    const warnings = issues.filter((i) => i.level === "warn");
+    // Should have some warnings but not catastrophic (pattern checks are warnings now)
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings.length).toBeLessThan(20);
   });
 });

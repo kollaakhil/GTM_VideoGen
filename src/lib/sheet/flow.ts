@@ -37,7 +37,7 @@ export function newSheetRun(i: NewRunInput, user: string): SheetRun {
       photos: i.photos ?? [], targetSec: i.targetSec ?? 20, aspect: i.aspect ?? "16:9", audioMode: i.audioMode ?? "foley", patternId: i.patternId ?? "confession_loop",
       textModel: i.textModel || CHEAP_TEXT, visionModel: i.visionModel || CHEAP_VISION,
     },
-    research: null, brief: null, rules: [], ruleSource: null, script: null, sheet: null, gate: null, versions: [],
+    research: null, brief: null, rules: [], ruleSource: null, script: null, sheet: null, gate: null, gateOverride: null, versions: [],
     picks: { mode: "video", video: null, shots: {} }, final: null, timings: [],
     cost: { capUsd: i.capUsd ?? (Number(process.env.RUN_CAP_USD) || 2), spentUsd: 0, entries: [] },
   };

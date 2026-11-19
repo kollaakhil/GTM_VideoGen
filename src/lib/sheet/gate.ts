@@ -67,7 +67,7 @@ export function ruleIssues(sheet: ShotSheet, rules: StyleRule[]): GateIssue[] {
   const out: GateIssue[] = [];
   const pics = sheet.shots.filter((s) => !isCard(s));
   for (const r of rules) {
-    const bad = (text: string, shot?: number) => out.push({ level: "error", rule: r.id, shot, text: `Rule "${r.text}": ${text}` });
+    const bad = (text: string, shot?: number) => out.push({ level: "warn", rule: r.id, shot, text: `Rule "${r.text}": ${text}` });
     switch (r.check) {
       case "push_in":
         for (const s of pics) if (!/push|dolly in|creep|move in|track in/i.test(s.camera.move)) bad(`shot ${s.n} moves "${s.camera.move}", not a slow push-in.`, s.n);
@@ -114,7 +114,7 @@ export function ruleIssues(sheet: ShotSheet, rules: StyleRule[]): GateIssue[] {
   return out;
 }
 
-/** Confession loop pattern checks (deterministic gates). */
+/** Confession loop pattern checks (deterministic gates). These are always warnings, not blocking errors. */
 export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
   const issues: GateIssue[] = [];
   const pics = sheet.shots.filter((s) => !isCard(s));
@@ -122,11 +122,11 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
   // Rule 4: "but…" beat with ~1s silence after
   const butBeat = pics.find((s) => s.beat === "but_silence");
   if (!butBeat) {
-    issues.push({ level: "error", text: 'Missing "but_silence" beat (rule 4: bring in the problem with "but…" and silence).' });
+    issues.push({ level: "warn", text: 'Missing "but_silence" beat (rule 4: bring in the problem with "but…" and silence).' });
   } else {
     const butVo = (butBeat.audio.vo || "").toLowerCase();
     if (!butVo.includes("but")) {
-      issues.push({ level: "error", shot: butBeat.n, text: 'Beat "but_silence" must include "but" in the VO.' });
+      issues.push({ level: "warn", shot: butBeat.n, text: 'Beat "but_silence" must include "but" in the VO.' });
     }
     // Check for silence gap - this will be enforced in the stitcher, but we can check the beat structure
   }
@@ -137,7 +137,7 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
     if (setupBeats.includes(s.beat || "")) {
       const d = dur(s);
       if (d < 1.5 || d > 2.0) {
-        issues.push({ level: "error", shot: s.n, text: `Setup beat "${s.beat}" is ${d.toFixed(1)}s; should be 1.5–2s (rule 9).` });
+        issues.push({ level: "warn", shot: s.n, text: `Setup beat "${s.beat}" is ${d.toFixed(1)}s; should be 1.5–2s (rule 9).` });
       }
     }
   }
@@ -147,15 +147,15 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
   const crazyPlan = pics.find((s) => s.beat === "crazy_plan");
   
   if (!lowPoint) {
-    issues.push({ level: "error", text: 'Missing "low_point" beat (rule 10: hold one long take on the confession).' });
+    issues.push({ level: "warn", text: 'Missing "low_point" beat (rule 10: hold one long take on the confession).' });
   } else if (dur(lowPoint) < 3) {
-    issues.push({ level: "error", shot: lowPoint.n, text: `Beat "low_point" is ${dur(lowPoint).toFixed(1)}s; needs 3+ seconds for the long take (rule 10).` });
+    issues.push({ level: "warn", shot: lowPoint.n, text: `Beat "low_point" is ${dur(lowPoint).toFixed(1)}s; needs 3+ seconds for the long take (rule 10).` });
   }
   
   if (!crazyPlan) {
-    issues.push({ level: "error", text: 'Missing "crazy_plan" beat (rule 10: hold one long take on the plan).' });
+    issues.push({ level: "warn", text: 'Missing "crazy_plan" beat (rule 10: hold one long take on the plan).' });
   } else if (dur(crazyPlan) < 3) {
-    issues.push({ level: "error", shot: crazyPlan.n, text: `Beat "crazy_plan" is ${dur(crazyPlan).toFixed(1)}s; needs 3+ seconds for the long take (rule 10).` });
+    issues.push({ level: "warn", shot: crazyPlan.n, text: `Beat "crazy_plan" is ${dur(crazyPlan).toFixed(1)}s; needs 3+ seconds for the long take (rule 10).` });
   }
   
   // Rule 11: cutaway cadence (other shots) should be 2–3 seconds
@@ -176,7 +176,7 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
       for (const chunk of s.text.chunks) {
         const words = chunk.trim().split(/\s+/).length;
         if (words < 2 || words > 4) {
-          issues.push({ level: "error", shot: s.n, text: `Caption chunk "${chunk}" has ${words} words; must be 2–4 words (rule 12).` });
+          issues.push({ level: "warn", shot: s.n, text: `Caption chunk "${chunk}" has ${words} words; must be 2–4 words (rule 12).` });
         }
       }
     }
@@ -197,18 +197,18 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
       const d = dur(s);
       const wps = words / d;
       if (wps < 3.5 || wps > 4.5) {
-        issues.push({ level: "error", shot: s.n, text: `VO pacing is ${wps.toFixed(1)} words/sec; should be 3.5–4.5 (rule 13).` });
+        issues.push({ level: "warn", shot: s.n, text: `VO pacing is ${wps.toFixed(1)} words/sec; should be 3.5–4.5 (rule 13).` });
       }
     }
   }
   
   // Rule 14: no music
   if (sheet.bed && sheet.bed !== "null" && !sheet.bed.includes("no music")) {
-    issues.push({ level: "error", text: `Music bed is "${sheet.bed}"; rule 14 says no music.` });
+    issues.push({ level: "warn", text: `Music bed is "${sheet.bed}"; rule 14 says no music.` });
   }
   for (const s of pics) {
     if (s.audio.music) {
-      issues.push({ level: "error", shot: s.n, text: `Shot ${s.n} has music cue "${s.audio.music}"; rule 14 says no music.` });
+      issues.push({ level: "warn", shot: s.n, text: `Shot ${s.n} has music cue "${s.audio.music}"; rule 14 says no music.` });
     }
   }
   
@@ -216,7 +216,7 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
   if (lowPoint) {
     const isCU = /\b(CU|ECU|close)\b/i.test(lowPoint.shotType);
     if (!isCU) {
-      issues.push({ level: "error", shot: lowPoint.n, text: `Beat "low_point" should be a close-up (CU/ECU), not ${lowPoint.shotType} (rule 11).` });
+      issues.push({ level: "warn", shot: lowPoint.n, text: `Beat "low_point" should be a close-up (CU/ECU), not ${lowPoint.shotType} (rule 11).` });
     }
   }
   
@@ -238,7 +238,7 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
     const overlap = firstTokens.filter((t) => lastTokens.includes(t)).length;
     const overlapPct = overlap / Math.max(firstTokens.length, lastTokens.length);
     if (overlapPct < 0.6) {
-      issues.push({ level: "error", text: `Last VO line doesn't echo the first (${Math.round(overlapPct * 100)}% overlap; needs 60%+, rule 15).` });
+      issues.push({ level: "warn", text: `Last VO line doesn't echo the first (${Math.round(overlapPct * 100)}% overlap; needs 60%+, rule 15).` });
     }
   }
   
@@ -248,7 +248,7 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
     const allText = [s.audio.vo, s.text?.copy, s.action].filter(Boolean).join(" ").toLowerCase();
     for (const phrase of ctaPhrases) {
       if (allText.includes(phrase)) {
-        issues.push({ level: "error", shot: s.n, text: `Shot ${s.n} contains CTA phrase "${phrase}"; rule 15 says no call to action.` });
+        issues.push({ level: "warn", shot: s.n, text: `Shot ${s.n} contains CTA phrase "${phrase}"; rule 15 says no call to action.` });
       }
     }
   }
@@ -259,7 +259,7 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
   const missingBeats = expectedBeats.filter((b) => !actualBeats.includes(b));
   
   if (missingBeats.length > 0) {
-    issues.push({ level: "error", text: `Missing beats: ${missingBeats.join(", ")} (rule 17: all beats must be present).` });
+    issues.push({ level: "warn", text: `Missing beats: ${missingBeats.join(", ")} (rule 17: all beats must be present).` });
   }
   
   // Check order (simplified: just check that beats appear in roughly the right sequence)
@@ -299,16 +299,9 @@ export function sheetGate(sheet: ShotSheet, o: { facts: string; rules?: StyleRul
   if (sheet.audioMode === "vo" && !sheet.shots.some((s) => s.audio.vo)) issues.push({ level: "error", text: "Voiceover mode, but no shot has a VO line." });
   issues.push(...ruleIssues(sheet, o.rules ?? sheet.rules), ...claimIssues(sheet, o.facts));
   
-  // Pattern-specific checks for confession_loop
-  // After repair, pattern checks become warnings (not blockers) while facts/safety stay as errors
+  // Pattern-specific checks for confession_loop (always warnings, not blocking)
   if (sheet.patternId === "confession_loop") {
-    const patternIssues = confessionLoopChecks(sheet);
-    if (o.afterRepair) {
-      // Downgrade pattern check errors to warnings after repair
-      issues.push(...patternIssues.map((i) => ({ ...i, level: "warn" as const })));
-    } else {
-      issues.push(...patternIssues);
-    }
+    issues.push(...confessionLoopChecks(sheet));
   }
   
   return { pass: !issues.some((i) => i.level === "error"), issues, checkedAt: new Date().toISOString() };

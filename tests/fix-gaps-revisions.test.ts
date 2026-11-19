@@ -42,7 +42,10 @@ describe("fix_gaps revisions and undo", () => {
     };
     run.gate = {
       pass: false,
-      issues: [{ level: "error", text: 'Rule "Hold for 4 seconds": no wide reveal holds for 4 s or more.', rule: "reveal_holds" }],
+      issues: [
+        { level: "error", text: "Shot 1 has no sound: give it a VO line, a sound effect or a music cue." },
+        { level: "warn", text: 'Rule "Hold for 4 seconds": no wide reveal holds for 4 s or more.', rule: "reveal_holds" }
+      ],
       checkedAt: new Date().toISOString(),
     };
     await put("sheet_runs", run);
@@ -81,7 +84,7 @@ describe("fix_gaps revisions and undo", () => {
     
     const oldShot = structuredClone(run.sheet!.shots[0]);
     
-    // Mock to always return a sheet that passes (two shots: 5s + 5s = 10s total)
+    // Mock to always return a sheet that passes (two shots: 5s + 5s = 10s total, both with sound for foley mode)
     mockChatJSON.mockResolvedValue({
       data: {
         script: "x",
@@ -89,7 +92,7 @@ describe("fix_gaps revisions and undo", () => {
           bed: "", endCard: { title: "Test", line: "Line", footer: "" }, palette: "", patternId: undefined,
           shots: [
             { start: 0, end: 5, shotType: "WS", framing: "wide reveal", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "x", action: "x", lighting: "x", text: null, audio: { vo: null, sfx: "ambience", music: null }, transition: "cut", engine: "blender" },
-            { start: 5, end: 10, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "y", action: "y", lighting: "y", text: null, audio: { vo: null, sfx: null, music: null }, transition: "cut", engine: "blender" },
+            { start: 5, end: 10, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "y", action: "y", lighting: "y", text: null, audio: { vo: null, sfx: "whoosh", music: null }, transition: "cut", engine: "blender" },
           ],
         },
       },
@@ -118,7 +121,7 @@ describe("fix_gaps revisions and undo", () => {
     
     const oldSheet = structuredClone(run.sheet!);
     
-    // Mock to always return a sheet that passes (two shots: 5s + 5s = 10s total)
+    // Mock to always return a sheet that passes (two shots: 5s + 5s = 10s total, both with sound for foley mode)
     mockChatJSON.mockResolvedValue({
       data: {
         script: "x",
@@ -126,7 +129,7 @@ describe("fix_gaps revisions and undo", () => {
           bed: "", endCard: { title: "Test", line: "Line", footer: "" }, palette: "", patternId: undefined,
           shots: [
             { start: 0, end: 5, shotType: "WS", framing: "wide reveal", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "x", action: "x", lighting: "x", text: null, audio: { vo: null, sfx: "ambience", music: null }, transition: "cut", engine: "blender" },
-            { start: 5, end: 10, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "y", action: "y", lighting: "y", text: null, audio: { vo: null, sfx: null, music: null }, transition: "cut", engine: "blender" },
+            { start: 5, end: 10, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "y", action: "y", lighting: "y", text: null, audio: { vo: null, sfx: "whoosh", music: null }, transition: "cut", engine: "blender" },
           ],
         },
       },
@@ -147,11 +150,11 @@ describe("fix_gaps revisions and undo", () => {
     expect(json.run.sheet.version).toBe(3); // Version increments again
   });
 
-  it("increments version even when fix_gaps doesn't fully pass the gate", async () => {
+  it("keeps original sheet when candidate doesn't improve score", async () => {
     const { chatJSON } = await import("@/lib/ai");
     const mockChatJSON = chatJSON as ReturnType<typeof vi.fn>;
     
-    // Mock to return sheets that still fail (wide shot is only 3.5s, < 4s required, but matches targetSec)
+    // Mock returns sheet with a different error (not an improvement: 1 error -> 1 error)
     mockChatJSON.mockResolvedValue({
       data: {
         script: "x",
@@ -159,7 +162,7 @@ describe("fix_gaps revisions and undo", () => {
           bed: "", endCard: { title: "Test", line: "Line", footer: "" }, palette: "", patternId: undefined,
           shots: [
             { start: 0, end: 3.5, shotType: "WS", framing: "wide", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "x", action: "holds 3.5s", lighting: "x", text: null, audio: { vo: null, sfx: "ambience", music: null }, transition: "cut", engine: "blender" },
-            { start: 3.5, end: 10, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "y", action: "y", lighting: "y", text: null, audio: { vo: null, sfx: "whoosh", music: null }, transition: "cut", engine: "blender" },
+            { start: 3.5, end: 10, shotType: "MS", framing: "medium", camera: { angle: "", move: "static", lensMm: 50 }, subject: "y", action: "y", lighting: "y", text: null, audio: { vo: null, sfx: "whoosh", music: null }, transition: "cut", engine: "blender" },
           ],
         },
       },
@@ -170,11 +173,11 @@ describe("fix_gaps revisions and undo", () => {
     const response = await sheetActions({ action: "fix_gaps", runId: run.id }, "test@example.com");
     const json = await response!.json();
     
-    // Version still increments
-    expect(json.run.sheet.version).toBeGreaterThan(oldVersion);
-    // Gate still fails (sheet duration is 10s but wide shot action is < 4s, so rule still fails)
+    // Version doesn't increment because we kept the original
+    expect(json.run.sheet.version).toBe(oldVersion);
+    // Original sheet kept, so still has the original error
     expect(json.run.gate.pass).toBe(false);
-    // Reports that some issues remain
-    expect(json.remaining).toBeGreaterThan(0);
+    // Message indicates no improvement
+    expect(json.message).toMatch(/couldn't improve/i);
   });
 });
