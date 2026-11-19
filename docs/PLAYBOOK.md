@@ -373,3 +373,9 @@ the result went from "drinkoleopop.com" to "Get notified at drinkolipop.com".
   3. `read_factory_settings` wipes datablocks, so the label image has to be made after the reset.
 - **Cost:** about 2 s for a still and about 115 s for a 4.2 s clip (126 frames) at 486×864 on the 8 GB Mac.
 - **Licence:** Blender is GPL, and renders made with it belong to us. The label art is the brand's own product photo, already supplied as the product reference.
+
+### 13.15 Voice pre-check: whisper hint
+
+- **Failure:** the first draft of run_8a9c7c9db627 stopped before any video spend. The voice pre-check heard "Keep the cola swapping all a pop." for "Keep the cola, swap in OLIPOP.", twice. The TTS was fine. The pre-check called whisper without the brand vocabulary that final QA already uses (13.2).
+- **Fix:** `transcribeLine` takes the `asrVocabulary(line, brand)` prompt.
+- The cost estimate now counts real renders: a packshot is 1 render, a paid shot is N candidates.

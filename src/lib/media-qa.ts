@@ -194,11 +194,12 @@ async function recognize(wav: string, transcribe: (audio: string) => Promise<{ t
 
 type Transcriber = Parameters<typeof recognize>[1];
 
-export function transcribeLine(media: string, transcribe: Transcriber) {
+/** `hint` is a whisper --prompt (asrVocabulary): without it "swap in OLIPOP" came back "swapping all a pop". */
+export function transcribeLine(media: string, transcribe: Transcriber, hint = "") {
   return withMedia(media, async (file, dir) => {
     const wav = path.join(dir, "line.wav");
     await audioWindow(file, wav);
-    return recognize(wav, transcribe);
+    return recognize(wav, transcribe, hint);
   });
 }
 

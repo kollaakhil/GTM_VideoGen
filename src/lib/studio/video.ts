@@ -11,7 +11,7 @@ import { CATEGORIES, keyframe, planShots, QA_PASS, reviewShotFrames } from "@/li
 import { checkScript, nearSpeech } from "@/lib/script-lab";
 import { approvedStoryboardLength, scriptProductionBlockers, shotReady, storyboardKeyframeFixes, videoAspects, videoReady } from "@/lib/quality-policy";
 import { captionVariants, END_SECONDS, expectedCopy, meanVolume, mediaDuration, placedCues, stitchShots } from "@/lib/video-post";
-import { type CopyCue, audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
+import { type CopyCue, asrVocabulary, audioFindings, checkExport, evidenceFrames, exportVerdict, frameTimes, localOcrAvailable, reusableShot, transcribeLine, verifySpeech, videoTechnicalFindings } from "@/lib/media-qa";
 import { list, mediaDataUrl, mediaFile, newId, put, storeMedia } from "@/lib/store";
 import type { Direction, JobPhase, QAResult, QualityFinding, Shot, ShotQA, StudioRun, VideoQuality, VideoTake } from "@/lib/types";
 import { now, say, live, saveRun } from "./run-state";
@@ -221,7 +221,8 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
   const est = draftEstimate(missing.map((i) => ({ seconds: actual[i]!, perSec: perSec(i) * nFor(i) / Math.max(1, candidateCount(plan.candidates)) })), candidateCount(plan.candidates), reserve);
   const estimated = est.total;
   if (estimated > cap) throw new Error(`Preflight: estimated $${estimated.toFixed(2)} (${missing.length} shots × ${candidateCount(plan.candidates)} candidates) exceeds the $${cap.toFixed(2)} cap. No video was requested. Lower candidates per shot or raise the cap.`);
-  if (missing.length) say(run, "agent", `Cost estimate before any video spend: ${missing.length} shot${missing.length === 1 ? "" : "s"} × ${candidateCount(plan.candidates)} candidate${candidateCount(plan.candidates) === 1 ? "" : "s"} ≈ $${est.motion.toFixed(2)} motion + $${est.qa.toFixed(2)} QA + $${est.reserve.toFixed(2)} voice/music/final QA = $${estimated.toFixed(2)} (cap $${cap.toFixed(2)}).`);
+  const renders = missing.reduce((t, i) => t + nFor(i), 0);
+  if (missing.length) say(run, "agent", `Cost estimate before any video spend: ${missing.length} shot${missing.length === 1 ? "" : "s"}, ${renders} render${renders === 1 ? "" : "s"} (up to ${candidateCount(plan.candidates)} candidates per paid shot) ≈ $${est.motion.toFixed(2)} motion + $${est.qa.toFixed(2)} QA + $${est.reserve.toFixed(2)} voice/music/final QA = $${estimated.toFixed(2)} (cap $${cap.toFixed(2)}).`);
   const router = await openrouterCredits();
   const routerSpend = missing.reduce((sum, i) => sum + (providerOf(models[i]) === "openrouter" ? actual[i]! * perSec(i) * nFor(i) : 0), 0);
   if (router == null) throw new Error(ROUTER_UNREACHABLE);
@@ -254,7 +255,7 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
       const key = shortHash([line, plan.voice, s.seconds]);
       let tries = 1, lineDb: number | null = null;
       if (s.voiceTrack?.key !== key) {
-        const voice = await checkedVoice(line, plan.voice, charge, (n) => { tries = n; });
+        const voice = await checkedVoice(line, plan.voice, charge, (n) => { tries = n; }, run.research?.brand);
         const [len, db] = await Promise.all([mediaDuration(voice), meanVolume(voice)]);
         lineDb = db;
         const room = s.seconds - 0.3;
@@ -631,13 +632,13 @@ async function wordLevelFindings(main: string, segments: { shotId: string; start
   return { findings, wer, via, linesOutside, level, captionSync: sync.score };
 }
 
-async function checkedVoice(line: string, voice: string, charge: (n: number) => void, onTry?: (n: number) => void) {
+async function checkedVoice(line: string, voice: string, charge: (n: number) => void, onTry?: (n: number) => void, brand = "") {
   let last = "";
   for (let i = 0; i < 2; i++) {
     onTry?.(i + 1);
     const v = await voiceover(line, voice);
     charge(v.usage.costUsd);
-    const heard = await transcribeLine(v.url, transcribe);
+    const heard = await transcribeLine(v.url, transcribe, asrVocabulary(line, brand));
     charge(heard.usage.costUsd);
     if (nearSpeech(heard.text, line)) return v.url;
     last = heard.text;
