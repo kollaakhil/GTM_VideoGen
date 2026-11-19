@@ -19,7 +19,7 @@ import type { Direction, JobPhase, QAResult, QualityFinding, Shot, ShotQA, Studi
 import { now, say, live, saveRun } from "./run-state";
 import { brandFor, guidance, brandName, shortHash, swipesFor } from "./context";
 import { inspirationGuidance } from "@/lib/inspiration";
-import { negativePrompt, specBlock } from "@/lib/shot-spec";
+import { labelled, negativePrompt, specBlock } from "@/lib/shot-spec";
 import { candidateCount, draftEstimate, pickCandidate } from "@/lib/best-of-n";
 import { captionSync, captionSyncFindings } from "@/lib/caption-sync";
 import { endCardItems } from "@/lib/brief-policy";
@@ -46,6 +46,19 @@ async function winningShots(run: StudioRun) {
 
 const KEYFRAME_TRIES = 2;
 
+/** True-colour packshot still per run (free Blender render), cached so every labelled shot reuses one. */
+const trueColour = new Map<string, Promise<string | null>>();
+/**
+ * Labelled hero shots draw their keyframe from the true-colour packshot still first, then the real photo (13.34):
+ * the image model copies a flat, front-on, colour-managed label far better than a photo with glare and perspective.
+ */
+export async function keyframeRefs(run: StudioRun, s: Shot, refs: string[]): Promise<string[]> {
+  if (!labelled(s) || !refs[0] || !run.videoPlan?.packshot || !(await packshotAvailable())) return refs;
+  if (!trueColour.has(run.id)) trueColour.set(run.id, renderPackshot(refs[0], { width: 486, height: 864, still: true }).catch(() => null));
+  const still = await trueColour.get(run.id);
+  return still ? [still, refs[0]] : refs;
+}
+
 export async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: string[]): Promise<ShotQA> {
   const plan = run.videoPlan!;
   let best: { url: string; qa: ShotQA } | null = null;
@@ -55,7 +68,7 @@ export async function makeKeyframe(run: StudioRun, d: Direction, s: Shot, refs: 
     const plate = d.realSet?.plates[s.id] ? await mediaDataUrl(d.realSet.plates[s.id]) : null;
     const img = s.source === "packshot" && refs[0]
       ? { url: await renderPackshot(refs[0], { width: 486, height: 864, still: true }), usage: { costUsd: 0 } }
-      : await keyframe(run.models.image, s, plan.category, refs, run.research?.colors, notes, lookLine(plan, s), plate);
+      : await keyframe(run.models.image, s, plan.category, await keyframeRefs(run, s, refs), run.research?.colors, notes, lookLine(plan, s), plate);
     const q = await reviewShotFrames(run.models.vision, [{ at: 0, url: img.url }], s, refs, undefined, "keyframe");
     run.costUsd += img.usage.costUsd + q.cost;
     if (!best || shotReady(q.qa) || (!shotReady(best.qa) && q.qa.score > best.qa.score)) best = { url: img.url, qa: q.qa };
