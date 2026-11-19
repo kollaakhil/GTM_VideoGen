@@ -105,7 +105,7 @@ export function collision(box: Box, start: number, end: number, subjects: { t: n
  * other slots (nearest first), then shorter phrases (down to 2 words) in every slot, then drops the cue.
  */
 export function placeCaptions(
-  captions: PlacedCaption[], overlays: { start: number; end: number; box: Box }[], subjects: { t: number; box: Box | null }[],
+  captions: PlacedCaption[], overlays: { start: number; end: number; box: Box }[], subjects: { t: number; box: Box | null; product?: Box | null }[],
   boxFor: (text: string, y: number) => Box, slots: readonly number[] = CAPTION_SLOTS,
 ): { captions: PlacedCaption[]; log: AgentAction[] } {
   const out: PlacedCaption[] = [], log: AgentAction[] = [];
@@ -134,9 +134,12 @@ export function placeCaptions(
     if (!done && c.required) {
       // Approved copy (the hook or CTA the plan put on screen) is never dropped: it goes, unshortened, to the slot that
       // covers the least of the subject in its worst frame (take 9 dropped the hook and the director marked it missing).
-      const worst = (box: Box) => Math.max(0, ...subjects.filter((x) => x.box && x.t >= c.start - 0.05 && x.t <= c.end + 0.05).map((x) => inter(box, x.box!) / area(box)));
+      // The package label outranks hands, glass and liquid (take 24: the hook sat on "vintage cola" while the top of the
+      // frame only had the hand and the pour stream), so minimise label overlap first, then subject overlap.
+      const live = subjects.filter((x) => x.t >= c.start - 0.05 && x.t <= c.end + 0.05);
+      const worst = (box: Box, k: "box" | "product") => Math.max(0, ...live.filter((x) => x[k]).map((x) => inter(box, x[k]!) / area(box)));
       const opts = order.map((y) => ({ y, box: boxFor(c.text, y) })).filter((o) => inSafe(o.box) && !collision(o.box, c.start, c.end, [], [...overlays, ...out]));
-      const pick = opts.sort((a, b) => worst(a.box) - worst(b.box))[0];
+      const pick = opts.sort((a, b) => worst(a.box, "product") - worst(b.box, "product") || worst(a.box, "box") - worst(b.box, "box"))[0];
       if (pick) {
         out.push({ ...c, y: pick.y, box: pick.box });
         log.push({ text: c.text, start: c.start, action: "least-overlap", to: pick.y, reason: first ?? undefined });

@@ -334,7 +334,7 @@ export async function captionVariants(
   aspects: readonly (typeof ASPECTS)[number]["aspect"][] = ASPECTS.map((a) => a.aspect),
   compactCopy = false,
   mode: CaptionMode = "full",
-  subjects: { t: number; box: Box | null }[] = [],
+  subjects: { t: number; box: Box | null; product?: Box | null }[] = [],
 ): Promise<{ aspect: string; url: string; copy?: CopyCue[]; agent?: AgentAction[] }[]> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));
   try {
@@ -367,7 +367,8 @@ export async function captionVariants(
         layout = layoutCopy(map, w, h, segments, cues, { caption: size, overlay: Math.round(size * 0.8) });
         // Placement agent: every cue checked frame by frame against the subject and the overlays; move, shrink or drop.
         const how = spatial.startsWith("scale") ? "pad" : "crop";
-        const here = subjects.map((x) => ({ t: x.t, box: x.box && mapSubject(x.box, { w: src.width, h: src.height }, { w, h }, how) }));
+        const at = (b: Box | null | undefined) => b ? mapSubject(b, { w: src.width, h: src.height }, { w, h }, how) : null;
+        const here = subjects.map((x) => ({ t: x.t, box: at(x.box), product: at(x.product) }));
         const placed = placeCaptions(layout.captions, layout.overlays, here, (text, y) => boxAt(y, textBox(text, size, w, h)));
         layout = { ...layout, captions: placed.captions };
         agent = placed.log;

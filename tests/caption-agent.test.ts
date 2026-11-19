@@ -110,3 +110,15 @@ describe("caption placement agent", () => {
   });
 
 });
+
+describe("required copy prefers covering hands over the product label", () => {
+  it("moves the hook off the package even when the subject box spans the frame", () => {
+    const subject = { x: 0, y: 0.05, w: 1, h: 0.85 };   // hand + pour + can + glass
+    const product = { x: 0.1, y: 0.45, w: 0.4, h: 0.4 }; // the labelled can, lower half
+    const boxFor = (_t: string, y: number): Box => ({ x: 0.1, y: y - 0.04, w: 0.8, h: 0.08 });
+    const cap = { start: 0, end: 2, text: "Love cola, dread the sugar guilt?", y: 0.74, box: boxFor("", 0.74), required: true };
+    const { captions, log } = placeCaptions([cap], [], [{ t: 0.5, box: subject, product }, { t: 1.5, box: subject, product }], boxFor, [0.74, 0.66, 0.56, 0.36, 0.26, 0.17]);
+    expect(log[0].action).toBe("least-overlap");
+    expect(captions[0].y).toBeLessThan(0.4);
+  });
+});

@@ -524,7 +524,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     ...await audioFindings(v.url, st.duration, v.aspect),
   ]))).flat();
   // Subject boxes for the caption-placement agent: where the product and hands are in each sampled frame.
-  const subjects: { t: number; box: { x: number; y: number; w: number; h: number } | null }[] = [];
+  const subjects: { t: number; box: { x: number; y: number; w: number; h: number } | null; product?: { x: number; y: number; w: number; h: number } | null }[] = [];
   if (capMode !== "off") {
     for (const seg of segments) {
       const frames = await evidenceFrames(st.url, frameTimes(seg.start, seg.end)).catch(() => []);

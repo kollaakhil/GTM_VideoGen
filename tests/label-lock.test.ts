@@ -79,7 +79,9 @@ describe("continuity locks", () => {
 
   it("enforceShotRules applies both, and the edit judge asks about glass and label orientation", () => {
     const out = enforceShotRules([shot(), shot({ id: "s1" } as Partial<Shot>)]);
-    expect(out.every((s) => s.spec!.continuity?.length === 2 && !s.spec!.motionBeats.some(movesProduct))).toBe(true);
+    expect(out.every((s) => !s.spec!.motionBeats.some(movesProduct))).toBe(true);
+    expect(out[0].spec!.continuity).toHaveLength(2);
+    expect(out[1].spec!.continuity![2]).toMatch(/tab is already open/);
     expect(CONTINUITY_LOCK_ASK).toMatch(/glass changes type, size or shape/);
     expect(CONTINUITY_LOCK_ASK).toMatch(/label's orientation/);
   });

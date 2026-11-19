@@ -590,3 +590,10 @@ Take 5 (after #41): peak fixed (-2.3 dBFS), packshot CTA text back. What still d
   - Keyframes for labelled shots use the free true-colour Blender packshot still as reference 1 (real photo as 2) via `keyframeRefs`, so the i2v start frame carries a clean, front-on label.
   - Edit judge: `judgeContinuity` now also lists glass type/size/shape changes and label-orientation changes as major errors (`CONTINUITY_LOCK_ASK`). This is a stricter rubric, not a looser one.
 - Tests: tests/label-lock.test.ts.
+
+### 13.35 Take 24 under the label lock: the clips pass, so the caption and continuity become the cap
+- With 13.34, all four clips passed QA for the first time (10, 10, 9, 10; earlier s0 renders scored 0–5).
+- The take still scored 6 (video 6.1, final 7.8) because of two new drags:
+  - The export review put scene 0 at 5 because the required hook caption sat over the lower label ("vintage cola"). The vision subject box (hand + pour + can + glass) spanned the frame, so least-overlap picked the bottom slot. Fix: `locateSubjects` also returns the package-only `product` box, and the required-copy fallback minimises label overlap first, then subject overlap. A top slot that covers only the hand or stream now wins.
+  - The edit continuity judge scored 6: "the can is open in shots 1–2, sealed in shot 3". Fix: `continuityLocks` adds "the tab is already open" to every shot after the one where the can is cracked.
+- Tests: caption-agent (product-priority placement), label-lock (open-can lock).

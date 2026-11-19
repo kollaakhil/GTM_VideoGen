@@ -148,11 +148,14 @@ export function glassLock(shots: Pick<Shot, "spec" | "visual">[]): string | null
 /** Continuity locks shared by every generated shot: the same glass (size and shape) and the same label orientation. */
 export function continuityLocks(shots: Shot[]): Shot[] {
   const glass = glassLock(shots.filter((s) => s.source !== "packshot"));
+  // Take 24's edit judge: "the can is open in shots 1 and 2, but sealed in shot 3". Once cracked, it stays open.
+  const opened = shots.findIndex((s) => /\b(crack\w*|open\w*|pop\w*)\b[^.;]*\b(tab|can|bottle|cap)\b|\b(tab|can|bottle|cap)\b[^.;]*\b(crack\w*|opens?|opened)\b/i.test(`${s.visual} ${s.spec?.motionBeats.join(" ") ?? ""}`));
   const locks = [
     ...(glass ? [`Glass: the same ${glass} in every shot, identical size and shape, and the same height relative to the can as in the first shot`] : []),
     "Label: the front label stays upright and square to camera, same orientation in every shot",
   ];
-  return shots.map((s) => (s.source === "packshot" || !s.spec ? s : { ...s, spec: { ...s.spec, continuity: locks } }));
+  const openLock = "Can: the tab is already open (pulled back), as it was left in the shot where it was cracked";
+  return shots.map((s, i) => (s.source === "packshot" || !s.spec ? s : { ...s, spec: { ...s.spec, continuity: opened >= 0 && i > opened ? [...locks, openLock] : locks } }));
 }
 
 /** Code-enforced shot-plan rules for products with labels: label lock per shot, then continuity locks across shots. */
