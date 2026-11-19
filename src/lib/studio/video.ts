@@ -27,6 +27,7 @@ import { onBeatShare } from "@/lib/beat-sync";
 import { sfxCues } from "@/lib/sfx";
 import { PACKSHOT_MODEL, packshotAvailable, packshotShot, renderPackshot } from "@/lib/packshot";
 import { saveCreative } from "./creatives";
+import { exportReviewCount, qaMode, shotCheckTimes } from "@/lib/studio/qa-mode";
 import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
 import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
 import { latestCalibration } from "@/lib/judge-calibration";
@@ -326,7 +327,9 @@ export async function renderVideo(run: StudioRun, d: Direction, tier: "draft" | 
       if (technical.length) {
         return { score: 0, match: technical.some((f) => f.status === "fail") ? "fail" : "review", notes: technical.map((f) => `${f.at.toFixed(2)}s: ${f.observed}`) };
       }
-      const frames = await evidenceFrames(video, frameTimes(0, s.seconds), { start: 0, end: s.seconds });
+      // Preview drafts: one mid-shot frame, one review (13.37). Full QA samples the whole shot.
+      const mode = qaMode("draft", plan);
+      const frames = await evidenceFrames(video, shotCheckTimes(mode, 0, s.seconds, frameTimes), mode === "full" ? { start: 0, end: s.seconds } : undefined);
       const review = await reviewShotFrames(run.models.vision, frames, s, refs, firsts[i]);
       charge(review.cost);
       return review.qa;
@@ -566,12 +569,14 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     const segment = segments[i];
     const clipQa = a.clips[i]?.qa ?? null;
     let finalQa: ShotQA | undefined;
-    if (shotReady(clipQa)) {
+    // Median-of-N export reviews only on the full QA pass (Final video); a preview keeps the per-shot check (13.37).
+    const reviews = exportReviewCount(qaMode(tier, plan), EXPORT_REVIEWS);
+    if (reviews > 0 && shotReady(clipQa)) {
       try {
         const frames = await evidenceFrames(main, frameTimes(segment.start, segment.end), segment);
         // Median of EXPORT_REVIEWS independent reviews (13.29, 13.36): the identical cached clip scored 10 in take 24
         // and a median-of-3 of 3 (3, 1, 5) in take 25, so three samples still let noise decide the gate.
-        const vs = await Promise.all(Array.from({ length: EXPORT_REVIEWS }, () => 0).map(() => reviewShotFrames(run.models.vision, frames, capMode === "off" ? { ...s, onScreen: undefined } : s, refs, firsts[i], "export")));
+        const vs = await Promise.all(Array.from({ length: reviews }, () => 0).map(() => reviewShotFrames(run.models.vision, frames, capMode === "off" ? { ...s, onScreen: undefined } : s, refs, firsts[i], "export")));
         vs.forEach((v) => charge(v.cost));
         finalQa = medianReview(vs.map((v) => v.qa));
       } catch {
