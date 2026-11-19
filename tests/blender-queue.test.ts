@@ -440,9 +440,9 @@ describe("BlenderQueue", () => {
       const { kitJob } = await import("@/lib/render/blender-kit");
       
       const job = kitJob(
-        { id: "s1", seconds: 3, onScreen: "Product", source: "product", camera: { lensMm: 50, move: "static", angle: "straight-on" } },
-        { palette: "#ff3b1d", blender: { template: "product_hero", word: null, label: null, ignite: null } },
-        { width: 854, height: 480, mode: "preview", blender: { template: "product_hero", word: null, label: null, ignite: null } }
+        { id: "s1", n: 1, start: 0, end: 3, shotType: "product", framing: "", camera: { lensMm: 50, move: "static", angle: "straight-on" }, subject: "Product bottle", action: "", lighting: "", text: null, audio: { vo: null, sfx: null, music: null }, transition: "cut", engine: "blender", engineLocked: false, blender: { template: "product_hero", word: undefined, label: undefined, ignite: undefined }, editorNote: "" },
+        { palette: "#ff3b1d" },
+        { width: 854, height: 480, mode: "preview", blender: { template: "product_hero", word: undefined, label: undefined, ignite: undefined } }
       );
       
       expect(job.spec.mode).toBe("preview");
@@ -455,9 +455,9 @@ describe("BlenderQueue", () => {
       const { kitJob } = await import("@/lib/render/blender-kit");
       
       const job = kitJob(
-        { id: "s1", seconds: 3, onScreen: "Product", source: "product", camera: { lensMm: 50, move: "static", angle: "straight-on" } },
-        { palette: "#ff3b1d", blender: { template: "product_hero", word: null, label: null, ignite: null } },
-        { width: 1280, height: 720, mode: "final", blender: { template: "product_hero", word: null, label: null, ignite: null } }
+        { id: "s1", n: 1, start: 0, end: 3, shotType: "product", framing: "", camera: { lensMm: 50, move: "static", angle: "straight-on" }, subject: "Product bottle", action: "", lighting: "", text: null, audio: { vo: null, sfx: null, music: null }, transition: "cut", engine: "blender", engineLocked: false, blender: { template: "product_hero", word: undefined, label: undefined, ignite: undefined }, editorNote: "" },
+        { palette: "#ff3b1d" },
+        { width: 1280, height: 720, mode: "final", blender: { template: "product_hero", word: undefined, label: undefined, ignite: undefined } }
       );
       
       expect(job.spec.mode).toBe("final");
@@ -470,9 +470,9 @@ describe("BlenderQueue", () => {
       const { kitJob } = await import("@/lib/render/blender-kit");
       
       const job = kitJob(
-        { id: "s1", seconds: 3, onScreen: "Lab scene", source: "product", camera: { lensMm: 50, move: "static", angle: "straight-on" } },
-        { palette: "#ff3b1d", blender: { template: "lab", word: null, label: "Test Label", ignite: null } },
-        { width: 1280, height: 720, mode: "final", blender: { template: "lab", word: null, label: "Test Label", ignite: null } }
+        { id: "s1", n: 1, start: 0, end: 3, shotType: "product", framing: "", camera: { lensMm: 50, move: "static", angle: "straight-on" }, subject: "Lab scene", action: "", lighting: "", text: null, audio: { vo: null, sfx: null, music: null }, transition: "cut", engine: "blender", engineLocked: false, blender: { template: "lab", word: undefined, label: "Test Label", ignite: undefined }, editorNote: "" },
+        { palette: "#ff3b1d" },
+        { width: 1280, height: 720, mode: "final", blender: { template: "lab", word: undefined, label: "Test Label", ignite: undefined } }
       );
       
       expect(job.spec.mode).toBe("final");
