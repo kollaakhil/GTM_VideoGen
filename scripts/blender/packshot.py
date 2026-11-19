@@ -28,7 +28,7 @@ while i < len(argv):
 IMAGE, OUT = opt["--image"], opt["--out"]
 W, H, FPS = int(opt["--width"]), int(opt["--height"]), int(opt["--fps"])
 FRAMES = 1 if "still" in flags else max(2, round(float(opt["--seconds"]) * FPS))
-THETA = math.radians(78)
+THETA = math.radians(74)  # beyond ~70° the photo is the dark shaded edge of the can
 
 
 def hex_rgb(h):
@@ -54,8 +54,23 @@ y0b, y1b = y0 + trim, y1 - trim
 cx, R = (x0 + x1) / 2, (x1 - x0) / 2
 TW = 1024
 thetas = np.linspace(-THETA, THETA, TW)
-xs = np.clip(np.round(cx + R * np.sin(thetas)).astype(int), 0, sw - 1)
-label = px[y0b:y1b + 1, xs, :].copy()
+# Unwrap per row with that row's own edges: near the shoulder the can narrows, and a single width pulled the dark
+# background into the label's top corners (judged "rendering inconsistencies at the top rim").
+edges = []
+for y in range(y0b, y1b + 1):
+    xs_on = np.where(mask[y])[0]
+    edges.append((xs_on.min(), xs_on.max()) if len(xs_on) > 10 and (xs_on.max() - xs_on.min()) > R else (x0, x1))
+edges = np.array(edges, dtype=np.float32)
+# Smooth the edges over ~6% of the height: raw per-row edges jitter with condensation drops and shred the lettering.
+k = max(5, (len(edges) // 16) | 1)
+pad = np.pad(edges, ((k // 2, k // 2), (0, 0)), mode="edge")
+edges = np.stack([np.median(pad[j:j + k], axis=0) for j in range(len(edges))])
+rows_out = []
+for j, y in enumerate(range(y0b, y1b + 1)):
+    rc, rr = edges[j].mean(), (edges[j][1] - edges[j][0]) / 2
+    xs = np.clip(np.round(rc + rr * 0.985 * np.sin(thetas)).astype(int), 0, sw - 1)
+    rows_out.append(px[y, xs, :])
+label = np.stack(rows_out).copy()
 label[..., 3] = 1.0
 lh = label.shape[0]
 aspect = (y1b - y0b) / (2 * R)  # body height / diameter
