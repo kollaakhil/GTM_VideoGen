@@ -68,7 +68,9 @@ for k, v in (("taa_render_samples", samples), ("use_raytracing", use_raytracing)
     except Exception:
         pass
 scene.view_settings.view_transform = "AgX"
-for look in ("AgX - Medium High Contrast", "Medium High Contrast"):
+grade = SPEC.get("grade", "AgX - Medium High Contrast")
+grade_fallbacks = [grade, "Medium High Contrast", "AgX - Punchy", "Punchy", "AgX - Base Contrast", "None"]
+for look in grade_fallbacks:
     try:
         scene.view_settings.look = look
         break
@@ -81,7 +83,10 @@ bpy.context.preferences.edit.keyframe_new_interpolation_type = "LINEAR"
 world = bpy.data.worlds.new("void")
 scene.world = world
 world.use_nodes = True
-world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.0004, 0.0004, 0.0006, 1)
+bg_color = SPEC.get("background") or (0.0004, 0.0004, 0.0006, 1)
+if isinstance(bg_color, str):
+    bg_color = (*hex_rgb(bg_color), 1)
+world.node_tree.nodes["Background"].inputs["Color"].default_value = bg_color
 
 
 def mat(name, **p):
@@ -159,8 +164,9 @@ if T == "glow_word":
     size = min(0.32, 1.1 / max(3, len(word)) * 1.6)
     glass_m, _ = mat("tube_glass", **{"Base Color": (0.9, 0.9, 0.9, 1), "Roughness": 0.05, "Transmission Weight": 1.0})
     core_m, core_b = mat("core", **{"Base Color": (0.2, 0.2, 0.2, 1), "Emission Color": (*col, 1), "Emission Strength": 0.0})
+    font_path = SPEC.get("fontPath", "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf")
     for nm, m, rad in (("tube", glass_m, 0.007), ("core", core_m, 0.0045)):
-        o = text_obj(nm, word, size, (0, 0.0, 0.3), m, "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf")
+        o = text_obj(nm, word, size, (0, 0.0, 0.3), m, font_path)
         bpy.context.view_layer.objects.active = o
         o.select_set(True)
         bpy.ops.object.convert(target="CURVE")
@@ -192,14 +198,18 @@ if T == "glow_word":
     target = Vector((0, 0, 0.3))
 elif T == "macro_label":
     macro = True
-    metal_m, metal_b = mat("brushed", **{"Base Color": (0.42, 0.33, 0.2, 1), "Metallic": 1.0, "Roughness": 0.3})
+    metal_color = SPEC.get("materialColor") or (0.42, 0.33, 0.2, 1)
+    if isinstance(metal_color, str):
+        metal_color = (*hex_rgb(metal_color), 1)
+    metal_m, metal_b = mat("brushed", **{"Base Color": metal_color, "Metallic": 1.0, "Roughness": 0.3})
     scratches(metal_m, metal_b, scale=(500.0, 6.0, 6.0), base=0.28, amount=0.08)
     bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0.004, 0.25))
     pl = bpy.context.object
     pl.scale = (0.3, 0.006, 0.12)
     pl.data.materials.append(metal_m)
     ink_m, _ = mat("engrave", **{"Base Color": (0.01, 0.009, 0.008, 1), "Roughness": 0.7})
-    text_obj("label", SPEC.get("label", "LABEL")[:40], 0.022, (0, -0.0003, 0.25), ink_m, "/System/Library/Fonts/Supplemental/Courier New Bold.ttf", 0.0002)
+    font_path = SPEC.get("fontPath", "/System/Library/Fonts/Supplemental/Courier New Bold.ttf")
+    text_obj("label", SPEC.get("label", "LABEL")[:40], 0.022, (0, -0.0003, 0.25), ink_m, font_path, 0.0002)
     light("AREA", "rake", (-0.35, -0.12, 0.3), 4, (1.0, 0.95, 0.88), (0, 0, 0.25), 0.15)
     target = Vector((0, 0, 0.25))
 elif T == "product_hero":
@@ -246,8 +256,11 @@ elif T == "glb_turntable":
 
 # Cool rim from behind on both sides: the edge light that separates the subject from the void.
 rim = float(SPEC.get("rim", 60))
-light("SPOT", "rim_l", (-1.0, 0.9, 0.8), rim, (0.78, 0.86, 1.0), target)
-light("SPOT", "rim_r", (1.0, 0.8, 0.6), rim * 0.7, (0.78, 0.86, 1.0), target)
+rim_color = SPEC.get("rimColor") or (0.78, 0.86, 1.0)
+if isinstance(rim_color, str):
+    rim_color = hex_rgb(rim_color)
+light("SPOT", "rim_l", (-1.0, 0.9, 0.8), rim, rim_color, target)
+light("SPOT", "rim_r", (1.0, 0.8, 0.6), rim * 0.7, rim_color, target)
 
 cs = SPEC.get("camera", {})
 lens = float(cs.get("lens", 100 if macro else 50))
@@ -273,16 +286,41 @@ elev = {"low": -0.18, "high": 0.35, "top": 0.9}.get(ang, 0.05)
 start = target + Vector((0.12 * dist, -dist, elev * dist))
 move, amount = cs.get("move", "push"), float(cs.get("amount", 0.15))
 ends = []
-if move == "orbit":
+if "orbit" in move or "arc" in move or "turntable" in move:
     for k in range(5):
         a = math.radians(-14 + 28 * k / 4)
         v = start - target
         ends.append(target + Vector((v.x * math.cos(a) - v.y * math.sin(a), v.x * math.sin(a) + v.y * math.cos(a), v.z)))
-elif move == "pull":
+elif "pull" in move or "dolly out" in move.lower():
     ends = [start.lerp(target, amount), start]
-elif move == "static":
+elif "truck" in move.lower():
+    # Lateral movement perpendicular to camera direction
+    direction = (target - start).normalized()
+    right = Vector((direction.y, -direction.x, 0)).normalized()
+    lateral_offset = right * amount * dist * 0.5
+    ends = [start - lateral_offset, start + lateral_offset]
+elif "crane" in move.lower():
+    # Vertical movement (up/down)
+    vertical_offset = Vector((0, 0, amount * dist * 0.3))
+    ends = [start - vertical_offset, start + vertical_offset]
+elif "rack" in move.lower():
+    # Rack focus simulated with slight dolly
+    ends = [start, start.lerp(target, amount * 0.5)]
+elif "handheld" in move.lower() or "drift" in move.lower():
+    # Handheld drift: slight irregular movement
+    drift_x = math.sin(math.pi * 0.3) * amount * dist * 0.08
+    drift_y = math.cos(math.pi * 0.5) * amount * dist * 0.05
+    drift_z = math.sin(math.pi * 0.7) * amount * dist * 0.04
+    ends = [start, start.lerp(target, amount * 0.3) + Vector((drift_x, drift_y, drift_z))]
+elif "whip" in move.lower():
+    # Whip pan: fast horizontal rotation
+    v = start - target
+    angle = math.radians(amount * 90)
+    ends = [start, target + Vector((v.x * math.cos(angle) - v.y * math.sin(angle), v.x * math.sin(angle) + v.y * math.cos(angle), v.z))]
+elif "static" in move or "locked" in move:
     ends = [start, start]
 else:
+    # Default push/dolly in
     ends = [start, start.lerp(target, amount)]
 for k, pos in enumerate(ends):
     fr = 1 + round((FRAMES - 1) * k / (len(ends) - 1))

@@ -114,18 +114,22 @@ function extractJSON(text: string): unknown {
 // (src/lib/render/cost-meter.ts). With no meter in scope (tests, scripts) these are pass-throughs.
 export const EST = { chat: 0.03, image: 0.06, transcribe: 0.01, defaultVideoPerSec: 0.12 };
 
-export function chatJSON<T>(model: string, system: string, user: string | Part[]): Promise<{ data: T; usage: Usage }> {
-  return paid(`text:${model}`, EST.chat, () => chatJSONUnmetered<T>(model, system, user));
+export function chatJSON<T>(model: string, system: string, user: string | Part[], temperature?: number): Promise<{ data: T; usage: Usage }> {
+  return paid(`text:${model}`, EST.chat, () => chatJSONUnmetered<T>(model, system, user, temperature));
 }
 
-async function chatJSONUnmetered<T>(model: string, system: string, user: string | Part[]): Promise<{ data: T; usage: Usage }> {
+async function chatJSONUnmetered<T>(model: string, system: string, user: string | Part[], temperature?: number): Promise<{ data: T; usage: Usage }> {
   const messages: Msg[] = [
     { role: "system", content: `${system}\nRespond with a single valid JSON object only.` },
     { role: "user", content: user },
   ];
   let cost = 0;
   for (let attempt = 0; ; attempt++) {
-    const json = await chat({ model, messages, response_format: { type: "json_object" } });
+    const body: Record<string, unknown> & { model: string } = { model, messages, response_format: { type: "json_object" } };
+    if (temperature !== undefined) {
+      body.temperature = temperature;
+    }
+    const json = await chat(body);
     cost += json.usage?.cost ?? 0;
     const text: string = json.choices?.[0]?.message?.content ?? "";
     try {

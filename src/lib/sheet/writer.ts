@@ -43,10 +43,20 @@ Opening shot: ${i.concept.openingShot}
 
 Bring this concept to life in your shot sheet. The opening must match the concept's opening shot.` : "";
   
+  const researchBlock = i.research ? `
+Research:
+- Audience: ${i.research.audience}
+- Tone: ${i.research.tone}
+- Brand pronunciation: ${i.research.pronunciation ?? i.brand}
+- Colours: ${i.research.colors?.join(", ") || "(none)"}
+- Style reference: ${i.research.styleRef || "(none)"}
+- Angles: ${i.research.angles?.join(", ") || "(none)"}
+- Competitors: ${i.research.competitors?.map(c => `${c.name} (${c.difference})`).join(", ") || "(none)"}${performanceTone}` : `Audience and tone: (none)${performanceTone}`;
+  
   return `Brand/product: ${i.brand}
 Goal: ${i.goal}${i.offer ? `\nOffer: ${i.offer}` : ""}
 Brief: ${i.brief ? JSON.stringify(i.brief) : "(none)"}
-Audience and tone: ${i.research ? `${i.research.audience}; ${i.research.tone}` : "(none)"}${performanceTone}
+${researchBlock}
 VERIFIED FACTS (the only claims allowed, on screen, in VO, on labels or on the end card):
 ${i.facts || "(none: make no factual claims)"}
 
@@ -56,27 +66,32 @@ ${i.rules.map((r) => `- [${r.id}] ${r.text}`).join("\n") || "- (none)"}
 ${conceptPrompt}
 ${patternPrompt}
 
-Format: ${i.targetSec}s total, aspect ${i.aspect}, 24 fps. Audio: ${i.audioMode === "foley" ? "FOLEY-FIRST: no voiceover; every shot gets one crisp close-miked sound effect on its action, plus a low bed under everything" : "voiceover: short spoken lines, max ~2.5 words per second, plus sound effects"}.
-Engines per shot: "blender" for product, hero, label, macro, sign, object and abstract shots (free, readable labels, exact camera); "ai_video" only for people, hands or live action; "remotion" for pure text cards and the final end card. ${i.hasPhotos ? "Real product photos are available: product shots use blender template product_hero." : "No product photos available: do NOT use product_hero. Use glow_word, macro_label or lab templates instead."}
-Blender templates: glow_word (neon tube lettering of "word"), macro_label (engraved "label" text on brushed metal, extreme macro), product_hero (real product photo - ONLY when photos are available), lab (smoked-glass panel with glowing gas tubes, a brass switch and engraved labels; good for detail/trigger/reveal loops).
-The LAST shot must be the end card (engine remotion), and the shot before it transitions "fade_black".
-For each shot's "sfx" line, write exact sounds tied to the on-screen action (e.g. "glass bottle set down on marble" not "thud"). The sound designer will use these to generate audio matched to the actual video.
+Format: ${i.targetSec}s total, aspect ${i.aspect}, 24 fps. Audio: ${i.audioMode === "foley" ? "FOLEY-FIRST: no voiceover; every shot gets one crisp close-miked sound effect on its action" : "voiceover: short spoken lines, max ~2.5 words per second, plus sound effects"}.
+Engines per shot: "blender" for product shots needing exact labels or precise camera control; "ai_video" for any scene, environment, or product-in-world shot; "remotion" for text cards and the final end card. ${i.hasPhotos ? "Real product photos are available: product shots use blender template product_hero." : "No product photos available: do NOT use product_hero. Use glow_word, macro_label or lab templates instead."}
+Blender templates: glow_word (neon tube lettering), macro_label (engraved text on brushed metal, extreme macro), product_hero (real product photo - ONLY when photos are available), lab (smoked-glass panel with glowing elements).
+The end card (engine remotion) can be placed anywhere the concept requires; the shot before it transitions "fade_black".
+For each shot's "sfx" line, write exact sounds tied to the on-screen action, describing what object makes what sound. The sound designer will use these to generate audio matched to the actual video.
 When the ad includes people shots (engine ai_video with people/hands), define ONE recurring character in the "character" field: their look, wardrobe, approximate age and setting. Every people shot must reference this character consistently.
 ${fixes.length ? `\nFIX THESE PROBLEMS FROM THE LAST DRAFT:\n${fixes.map((f) => `- ${f.text}`).join("\n")}\n` : ""}
 Return JSON:
 {"script":"the script as 2-6 lines",
- "sheet":{"targetSec":${i.targetSec},"audioMode":"${i.audioMode}","bed":"${i.patternId === 'confession_loop' ? '' : 'one line describing the music/drone bed (empty for confession_loop)'}","palette":"colour palette in a few words","patternId":"${i.patternId || 'confession_loop'}",
-  "character":{"description":"ONE recurring character for people shots: look, wardrobe, age, setting (e.g. 'Mid-30s male, casual black hoodie, stubble, in a bright kitchen'). Empty string if no people shots.","referenceUrl":null},
-  "endCard":{"title":"product name","line":"where to get it, from the facts","footer":"one verified proof line or empty"},
-  "shots":[{"start":0,"end":1.5,"shotType":"ECU macro|CU|MCU|MS|WS|EWS|insert|end card","framing":"what fills the frame and where","camera":{"angle":"eye level|low|high|top-down|dutch","move":"slow push-in 15%|slow orbit 20°|static","lensMm":100},"subject":"...","action":"what happens, with timing inside the shot","lighting":"key, rim, practicals, colour","text":null or {"copy":"exact words","placement":"diegetic on the plate|lower third|centre","chunks":["2-4","word","chunks"]},"audio":{"vo":null or "exact line","sfx":"exact sound and when, e.g. brass switch snap at 0.3s","music":null},"transition":"cut|fade_black|crossfade|whip","engine":"${ENGINES.join("|")}","blender":{"template":"${BLENDER_TEMPLATES.join("|")}","word":"...","label":"...","color":"#rrggbb","ignite":0.4} or null,"prompt":"for ai_video only: the full image-to-video prompt, including the character description and performance tone" or null,"editorNote":"one instruction to the editor for this cut","beat":"goal|personal_stake|stake_raised|physical_example|but_silence|owned_cause|low_point|crazy_plan|cut_before_attempt|takeaway"}]}}`;
+ "sheet":{"targetSec":${i.targetSec},"audioMode":"${i.audioMode}","bed":"${i.patternId === 'confession_loop' ? '' : i.audioMode === 'foley' ? '' : 'one line describing the music/drone bed'}","palette":"colour palette in a few words","patternId":"${i.patternId || 'auto'}",
+  "music":{"direction":"emotional direction","genre":"genre","tempoBpm":120,"instrumentation":"main instruments","arc":"rising|falling|steady"} or null,
+  "voice":{"tone":"vocal tone","gender":"male|female|neutral" or null,"accent":"accent" or null,"pronunciation":"special pronunciations" or null} or null,
+  "look":{"background":"background description","palette":["#rrggbb","#rrggbb"],"grade":"color grade","rimColor":"#rrggbb","font":"font style","texture":"texture description"},
+  "character":{"description":"ONE recurring character for people shots: look, wardrobe, age, setting. Empty string if no people shots.","referenceUrl":null},
+  "endCard":{"title":"product name","line":"where to get it, from the facts","footer":"one verified proof line or empty","layout":"centered|split|minimal|bold"},
+  "shots":[{"start":0,"end":1.5,"shotType":"ECU|CU|MCU|MS|WS|EWS|insert|end card","framing":"what fills the frame and where","camera":{"angle":"eye level|low|high|top-down|dutch","move":"camera movement description (free text)","lensMm":50},"subject":"shot subject","action":"what happens, with timing inside the shot","lighting":"key, rim, practicals, colour","look":{"background":"optional per-shot override","palette":["#rrggbb"],"grade":"grade","rimColor":"#rrggbb","font":"font","texture":"texture"} or null,"text":null or {"copy":"exact words","placement":"diegetic on the plate|lower third|centre","chunks":["word","chunks"]},"audio":{"vo":null or "exact line","sfx":"exact sound and when, with object and action","music":null},"transition":"cut|fade_black|crossfade|whip","engine":"${ENGINES.join("|")}","blender":{"template":"${BLENDER_TEMPLATES.join("|")}","word":"the word","label":"the label text","color":"#rrggbb","ignite":0.4} or null,"prompt":"for ai_video only: the full image-to-video prompt, including the character description and performance tone" or null,"editorNote":"one instruction to the editor for this cut","beat":"optional beat marker, only if using pattern beats"}]}}`;
 }
 
 function getPatternPrompt(patternId?: string): string {
   if (patternId === "auto" || !patternId) {
     return `STORY STRUCTURE: Free-form (no fixed pattern)
-Create a unique story structure that fits the concept. You are NOT required to use the confession_loop beats.
+The chosen concept determines the structure, opening, ending, and whether there is a CTA.
+You are NOT required to use confession_loop beats or any fixed beat structure.
 The "beat" field is OPTIONAL - use it only if specific beats help you organize the story.
-Text is OPTIONAL and can be overlaid in the brand's style (Remotion engine) - it does NOT need to be painted on walls or objects in the scene.
+Text can be overlaid in the brand's style (Remotion engine) - it does NOT need to be painted on walls or objects in the scene.
+The end card can be placed wherever the concept requires it - not necessarily last.
 Focus on visual storytelling that matches the concept's premise, structure and visual world.`;
   }
   
@@ -97,9 +112,10 @@ Follow these rules EXACTLY:
 12. After the close-up at the low point, go wide again (beat: takeaway should use "WS" or "MS" framing).
 13. Keep captions to 2–4 short words at a time in the "chunks" array. Include one bright label in the first 3 seconds.
 14. VO should be about 4 words per second. Slow down at the turn (beats: but_silence, low_point).
-15. NO MUSIC: set "music":null for all shots and "bed":null.
+15. NO MUSIC: set "music":null for all shots and "bed":"".
 16. End on the takeaway (beat: takeaway) with NO call to action, and echo the opening line so it loops.
-17. Promise a rule that works on anything, then prove it with one tiny example (this is about the content angle, not shot-level).
+17. The LAST shot must be the end card, and the shot before it transitions "fade_black".
+18. Promise a rule that works on anything, then prove it with one tiny example (this is about the content angle, not shot-level).
 
 BEATS IN ORDER (use these in the "beat" field):
 goal → personal_stake → stake_raised → physical_example → but_silence → owned_cause → low_point → crazy_plan → cut_before_attempt → takeaway
@@ -165,10 +181,25 @@ export function normaliseSheet(raw: unknown, i: Pick<SheetInput, "targetSec" | "
   }
   
   const sheet = SheetSchema.parse(sheetData);
-  // Renderer routing proper lives in the render pipeline; here the model's pick stands and the last shot is the card.
+  // Renderer routing proper lives in the render pipeline; here the model's pick stands.
+  // For confession_loop, ensure the last shot is the end card. For auto pattern, respect the concept's structure.
   const routed = sheet.shots.map((s) => ({ ...s }));
-  const last = routed.length - 1;
-  routed[last] = { ...routed[last], engine: "remotion" };
+  if (i.patternId === "confession_loop") {
+    const last = routed.length - 1;
+    if (last >= 0) {
+      routed[last] = { ...routed[last], engine: "remotion" };
+    }
+  } else {
+    // For auto pattern, find the end card and ensure it uses remotion engine
+    const endCardIndex = routed.findIndex((s) => s.shotType?.toLowerCase().includes("end card") || s.beat === "end_card" || (s.n === routed.length && s.engine === "remotion"));
+    if (endCardIndex >= 0) {
+      routed[endCardIndex] = { ...routed[endCardIndex], engine: "remotion" };
+    } else if (routed.length > 0) {
+      // Fallback: if no explicit end card found, make the last shot remotion
+      const last = routed.length - 1;
+      routed[last] = { ...routed[last], engine: "remotion" };
+    }
+  }
   return { ...sheet, shots: fitTimings(routed, sheet.targetSec) };
 }
 
