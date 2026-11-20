@@ -108,6 +108,13 @@ const recentDevices = new Set<string>();
 const recentOpenings = new Set<string>();
 const recentSettings = new Set<string>();
 
+/** Reset novelty tracking (for tests) */
+export function resetNoveltyTracking(): void {
+  recentDevices.clear();
+  recentOpenings.clear();
+  recentSettings.clear();
+}
+
 export function checkNovelty(concept: Concept): NoveltyCheck {
   const warnings: string[] = [];
   const repeatedDevices: string[] = [];

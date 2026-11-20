@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { generateConcepts, pickStrongestConcept, checkNovelty, recordConcept, type Concept } from "@/lib/sheet/concepts";
+import { describe, expect, it, afterEach } from "vitest";
+import { generateConcepts, pickStrongestConcept, checkNovelty, recordConcept, resetNoveltyTracking, type Concept } from "@/lib/sheet/concepts";
 import { sheetPrompt, normaliseSheet, type SheetInput } from "@/lib/sheet/writer";
 import { sheetGate } from "@/lib/sheet/gate";
 import { newSheetRun } from "@/lib/sheet/flow";
 
 describe("Creative variety system", () => {
+  afterEach(() => {
+    // Reset novelty tracking to prevent state leakage between tests
+    resetNoveltyTracking();
+  });
   describe("Concept generation", () => {
     it("generates 3 distinct concepts", async () => {
       const mockChat = async <T,>(_system: string, _user: string): Promise<{ data: T; usd: number }> => ({

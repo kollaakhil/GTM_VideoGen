@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { newSheetRun } from "@/lib/sheet/flow";
 import { saveProgress, deleteLive } from "@/lib/sheet/jobs";
 import { get, put } from "@/lib/store";
@@ -13,6 +13,12 @@ describe("Cancel and stale save protection", () => {
       goal: "Test goal",
     }, "test-user");
     testRun.cost.capUsd = 5.0;
+  });
+
+  afterEach(() => {
+    // Clean up any test runs from the live set to prevent state leakage
+    deleteLive(testRun.id);
+    deleteLive("test-run-123");
   });
 
   it("merges stale saves preserving newer cap edits", async () => {
