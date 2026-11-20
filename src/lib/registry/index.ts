@@ -40,7 +40,7 @@ export const STAGE_DEFAULTS: Record<Stage, string> = {
   video: "bytedance/seedance-2.0-fast",
   voice: "fal-ai/elevenlabs/tts/eleven-v3",
   music: "elevenlabs/music/v2.5",
-  sfx: "fal-ai/mmaudio-v2",
+  sfx: "mirelo-ai/sfx2.0/text-to-audio",
   qa: "google/gemini-3.8-flash",
   asset3d: "speridlabs/idol/max",
 };
