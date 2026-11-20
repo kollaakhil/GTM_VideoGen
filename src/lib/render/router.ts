@@ -44,6 +44,7 @@ export async function renderRouted(row: ShotRow, ctx: RenderContext, renderers: 
     const r = renderers[id];
     if (!r) { why.push(`${id}: not configured`); continue; }
     if (!(await r.available())) { why.push(`${id}: not available`); continue; }
+    // Never fall back to ai-video without a first frame or prompt
     if (id === "ai-video" && id !== routing.renderer && !ctx.firstFrame && !ctx.prompt) { why.push("ai-video: no keyframe or prompt to fall back with"); continue; }
     const t0 = Date.now();
     try {

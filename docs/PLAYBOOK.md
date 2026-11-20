@@ -1227,3 +1227,58 @@ All tests in `tests/blender-queue.test.ts`:
 **Result:** Users can now render videos with style warnings. The Previews button is enabled when only warnings remain. If there ARE blocking errors (clock, missing fields), users can override non-claim errors with "Continue anyway" or use "Fix the gaps" (which now never makes things worse). Claim/safety errors still block and cannot be overridden.
 
 **Related:** See §14.3 (shot sheet gate), §23 (Fix the gaps button), §6 (stage gates).
+
+## Studio Quality Gate Fixes (2026-11-20)
+
+### Bug 1: Continue Anyway Gate Override
+**Failure**: `renderSheetVersion` threw "The shot sheet gate has errors" even when `gateOverride` was set. The API allowed override but the core render function ignored it.
+**Cause**: `renderSheetVersion` only checked `run.gate.pass` and ignored `run.gateOverride`.
+**Fix**: Honor `gateOverride` while still refusing claim or safety errors (superlatives, unverified claims). Also clear `gateOverride` when the sheet is edited and re-gated.
+
+### Bug 2: Final Review Scores Zero
+**Failure**: Final review always scored 0 with notes "Couldn't sample frames for QA". Loudness not measured, pattern quality 0.
+**Cause**: `runFinal` passed `version.videoUrl` (a relative `/api/media/...` path) to `qa()`. ffmpeg in filmstrip can't open relative paths.
+**Fix**: Resolve media URLs to data URLs via `mediaDataUrl()` before passing to `review()`, `loudness()`, and `ocr()` in render-deps.ts.
+
+### Bug 3: Short AI Clips Abort Stitch
+**Failure**: A 3.0s clip for a 3.2s shot threw "Shot N is shorter than its planned 3.2s". Wan and other models return whole seconds.
+**Cause**: Stitcher rejected clips short by any amount over 0.12s.
+**Fix**: When a clip is short by up to ~0.75s, extend it by holding the last frame (`tpad stop_mode=clone`). Only throw when grossly short (>1.0s).
+
+### Bug 4: Product Hero Without Photos Crashes Version
+**Failure**: A Blender `product_hero` shot with no product photo threw RendererUnavailable, router fell back to image-to-video with no image, fal returned 422 "image_url Field required".
+**Cause**: Writer didn't exclude `product_hero` when `hasPhotos: false`. Router fell back to image-to-video without checking for a first frame.
+**Fix**: Updated writer prompt to reject `product_hero` when photos unavailable. Added gate check for `product_hero` without photos. Router never falls back to image-to-video without a first frame.
+
+### Bug 5: Gate Warnings That Can Never Clear
+**Failure**: Several gate warnings flagged valid content:
+- Foley mode: gate warns "but_silence must include 'but' in VO" but foley has no VO
+- Takeaway beat always "missing" because end card excluded from `pics`
+- CTA check flagged "tap water" as containing "tap"
+- Rule 12 bright-label check only matched a few words
+- Writer left placeholder text like "One physical example"
+
+**Cause**: 
+- VO checks ran even when `audioMode: "foley"` nulled all VO
+- Takeaway check excluded remotion shots, so end card never counted
+- CTA used substring matching instead of word boundaries
+- Bright-label regex was too narrow
+- No placeholder detection
+
+**Fix**:
+- Skip VO-text checks when there's no VO; check on-screen text or captions instead
+- Count the end card for takeaway beat when it has `beat: "takeaway"`
+- Use word boundaries in CTA check (`\b${phrase}\b`) to avoid false positives
+- Expanded bright-label pattern to include "now", "introducing", "best", etc.
+- Added placeholder text detection (rejects "one physical example", "tbd", "xxx", etc.)
+- Removed "no voiceover at all" vs pattern VO contradiction in writer prompt
+
+### Bug 6: End-Card Footer Collides with Burned Captions
+**Failure**: The takeaway caption burned over the Remotion end card, colliding with the footer.
+**Cause**: Caption burning didn't exclude the end card.
+**Fix**: Filter caption cues to exclude those starting at or after the end card's start time.
+
+### Bug 7: Small Issues
+**7a. Failed version's ms**: Already correct - elapsed time set on failure path.
+**7b. Final duration trim**: Trim final to exact `sheet.targetSec` when duration exceeds target by >0.05s.
+**7c. fix_gaps reporting**: Count both errors and warnings: `fixed = (originalErrors - bestErrors) + (originalWarnings - bestWarnings)`.

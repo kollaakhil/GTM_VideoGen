@@ -219,7 +219,7 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
         const fixes = bestGate.issues;
         const result = await writeSheet(input, chatWithRetry, fixes, oldVersion + attempt);
         const currentSheet = result.sheet;
-        const currentGate = sheetGate(currentSheet, { facts: factBase(run), rules: run.rules });
+        const currentGate = sheetGate(currentSheet, { facts: factBase(run), rules: run.rules, hasPhotos: run.input.photos.length > 0 });
         const currentScore = scoreGate(currentGate);
         
         // Keep only if strictly better
@@ -266,11 +266,13 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
       run.gate = bestGate;
       await saveProgress(run);
       
+      const originalWarnings = oldGate.issues.filter((i) => i.level === "warn").length;
+      const bestWarnings = bestGate.issues.filter((i) => i.level === "warn").length;
       return NextResponse.json({
         run,
         changes,
-        fixed: originalErrors - bestErrors,
-        remaining: bestErrors + bestGate.issues.filter((i) => i.level === "warn").length,
+        fixed: (originalErrors - bestErrors) + (originalWarnings - bestWarnings),
+        remaining: bestErrors + bestWarnings,
       });
     } else {
       // Keep original sheet unchanged
