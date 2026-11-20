@@ -580,14 +580,38 @@ export async function falRun<T>(endpoint: string, input: Record<string, unknown>
   if (!key) throw new Error("FAL_KEY is not set");
   const headers = { Authorization: `Key ${key}`, "Content-Type": "application/json" };
   const submit = await fetch(`https://queue.fal.run/${endpoint}`, { method: "POST", headers, body: JSON.stringify(input) });
-  if (!submit.ok) throw new Error(`fal ${submit.status}: ${(await submit.text()).slice(0, 300)}`);
-  const { status_url, response_url } = await submit.json();
+  if (!submit.ok) {
+    const text = await submit.text();
+    let parsed: { detail?: string } | null = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Not JSON, use raw text
+    }
+    if (parsed?.detail) {
+      throw new Error(`fal ${endpoint}: ${parsed.detail}`);
+    }
+    throw new Error(`fal ${submit.status}: ${text.slice(0, 300)}`);
+  }
+  const response = await submit.json();
+  // Check for detail field in response (some deprecated endpoints return 200 with error detail)
+  if (response.detail) {
+    throw new Error(`fal ${endpoint}: ${response.detail}`);
+  }
+  const { status_url, response_url } = response;
   if (!String(status_url).startsWith("https://queue.fal.run/")) throw new Error("Unexpected fal status URL");
   const started = Date.now();
   while (Date.now() - started < VIDEO_TIMEOUT_MS) {
     await sleep(3000);
     const s = await (await fetch(status_url, { headers })).json();
-    if (s.status === "COMPLETED") return (await fetch(response_url, { headers })).json();
+    if (s.status === "COMPLETED") {
+      const result = await (await fetch(response_url, { headers })).json();
+      // Check for detail field in completed result too
+      if (result.detail) {
+        throw new Error(`fal ${endpoint}: ${result.detail}`);
+      }
+      return result;
+    }
     if (s.status === "FAILED" || s.status === "ERROR") throw new Error(`fal ${endpoint} failed`);
   }
   throw new Error(`fal ${endpoint} timed out`);

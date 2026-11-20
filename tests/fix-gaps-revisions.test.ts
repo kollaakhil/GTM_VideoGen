@@ -73,9 +73,18 @@ describe("fix_gaps revisions and undo", () => {
     const oldVersion = run.sheet!.version;
     const response = await sheetActions({ action: "fix_gaps", runId: run.id }, "test@example.com");
     const json = await response!.json();
+    expect(json.status).toBe("working");
     
-    expect(json.run.sheet.version).toBe(oldVersion + 1);
-    expect(json.run.sheet.version).toBe(2);
+    // Wait for background job
+    let updatedRun;
+    for (let i = 0; i < 50; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      updatedRun = await get("sheet_runs", run.id);
+      if (updatedRun?.status !== "working") break;
+    }
+    
+    expect(updatedRun!.sheet!.version).toBe(oldVersion + 1);
+    expect(updatedRun!.sheet!.version).toBe(2);
   });
 
   it("preserves the old sheet by storing it in the database before the fix", async () => {
@@ -104,6 +113,13 @@ describe("fix_gaps revisions and undo", () => {
     expect(oldRun!.sheet!.shots[0].end).toBe(3);
     
     await sheetActions({ action: "fix_gaps", runId: run.id }, "test@example.com");
+    
+    // Wait for background job
+    for (let i = 0; i < 50; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const r = await get("sheet_runs", run.id);
+      if (r?.status !== "working") break;
+    }
     
     // After fix_gaps, the new sheet is in the database (first shot is now 5s)
     const newRun = await get("sheet_runs", run.id);
@@ -138,16 +154,25 @@ describe("fix_gaps revisions and undo", () => {
 
     const response = await sheetActions({ action: "fix_gaps", runId: run.id }, "test@example.com");
     const json = await response!.json();
+    expect(json.status).toBe("working");
+    
+    // Wait for background job
+    let updatedRun;
+    for (let i = 0; i < 50; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      updatedRun = await get("sheet_runs", run.id);
+      if (updatedRun?.status !== "working") break;
+    }
     
     // Fixed sheet has 5s first shot
-    expect(json.run.sheet.shots[0].end).toBe(5);
+    expect(updatedRun!.sheet!.shots[0].end).toBe(5);
     
     // Operator can edit it back (fitTimings will stretch to match targetSec, so end time becomes 10)
-    const revertedSheet = { ...json.run.sheet!, shots: oldSheet.shots };
-    const result = applySheetEdit(json.run, revertedSheet);
+    const revertedSheet = { ...updatedRun!.sheet!, shots: oldSheet.shots };
+    const result = applySheetEdit(updatedRun!, revertedSheet);
     expect(result).toEqual({ ok: true });
-    expect(json.run.sheet.shots[0].end).toBe(10); // fitTimings stretches single shot to targetSec
-    expect(json.run.sheet.version).toBe(3); // Version increments again
+    expect(updatedRun!.sheet!.shots[0].end).toBe(10); // fitTimings stretches single shot to targetSec
+    expect(updatedRun!.sheet!.version).toBe(3); // Version increments again
   });
 
   it("keeps original sheet when candidate doesn't improve score", async () => {
@@ -172,12 +197,22 @@ describe("fix_gaps revisions and undo", () => {
     const oldVersion = run.sheet!.version;
     const response = await sheetActions({ action: "fix_gaps", runId: run.id }, "test@example.com");
     const json = await response!.json();
+    expect(json.status).toBe("working");
+    
+    // Wait for background job
+    let updatedRun;
+    for (let i = 0; i < 50; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      updatedRun = await get("sheet_runs", run.id);
+      if (updatedRun?.status !== "working") break;
+    }
     
     // Version doesn't increment because we kept the original
-    expect(json.run.sheet.version).toBe(oldVersion);
+    expect(updatedRun!.sheet!.version).toBe(oldVersion);
     // Original sheet kept, so still has the original error
-    expect(json.run.gate.pass).toBe(false);
+    expect(updatedRun!.gate!.pass).toBe(false);
     // Message indicates no improvement
-    expect(json.message).toMatch(/couldn't improve/i);
+    const fixResult = (updatedRun as any).fixGapsResult;
+    expect(fixResult?.message).toMatch(/couldn't improve/i);
   });
 });

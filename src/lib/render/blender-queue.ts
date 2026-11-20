@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import os from "node:os";
 
 export type QueueJobState = "waiting" | "running" | "done" | "cancelled" | "failed";
 export type QueuePriority = "high" | "normal";
@@ -326,5 +327,16 @@ export class BlenderQueue {
   }
 }
 
-/** Global singleton queue */
-export const blenderQueue = new BlenderQueue(Number(process.env.BLENDER_PARALLEL) || 1);
+/** 
+ * Global singleton queue.
+ * Default concurrency: 2 on machines with <=16GB RAM, 4 otherwise, overridable via BLENDER_PARALLEL env var.
+ */
+function defaultBlenderConcurrency(): number {
+  if (process.env.BLENDER_PARALLEL) {
+    return Number(process.env.BLENDER_PARALLEL);
+  }
+  const totalMemGB = os.totalmem() / (1024 ** 3);
+  return totalMemGB <= 16 ? 2 : 4;
+}
+
+export const blenderQueue = new BlenderQueue(defaultBlenderConcurrency());
