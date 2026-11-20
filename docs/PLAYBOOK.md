@@ -2217,3 +2217,118 @@ No new skips, no TODOs in place of code.
 - Writer emits `endCard.layout` based on concept
 - When missing, renderer falls back to brand palette colors
 - `shot.camera.move` stays free text; parser handles common moves and passes unknowns through
+
+---
+
+## Preflight Model Validation
+
+**Branch:** `cursor/preflight-validation-519b` → PR #83  
+**Status:** ✅ Merged conflicts, tests passing (785), build clean, **mergeable: CLEAN**
+
+### Problem
+
+The preflight script only checked that 4 provider endpoints were reachable, but didn't validate individual model IDs. This meant:
+- Deprecated models (fal 410 errors) went undetected
+- Text models could be configured in image/video/audio roles
+- Typos in model IDs weren't caught until runtime
+
+### Solution
+
+Comprehensive per-model validation checking EVERY model ID referenced in the codebase:
+- `src/lib/versions.ts` PRESET_STACKS
+- `registry/catalog.ts` CATALOG
+- `registry/index.ts` STAGE_DEFAULTS
+- `src/lib/sheet/render-deps.ts` RENDER_DEPS_FALLBACKS
+
+### Implementation
+
+**1. Validation Script:** `scripts/preflight-models.mjs`
+- Checks each model exists in provider catalog
+- Detects deprecated models (410 status or "deprecated" message)
+- Validates output modality matches role:
+  - Image role → image output
+  - Video role → video output
+  - Audio role → audio output
+  - Text role → text output
+- Exits nonzero on failure (CI integration)
+
+**2. API Endpoint:** `GET /api/preflight/models`
+- Same validation logic as script
+- Returns: `{ ok, errors, warnings, checked }`
+- Used by Studio banner
+
+**3. Studio Warning Banner:** `src/components/sheet-studio/preflight-banner.tsx`
+- Fetches `/api/preflight/models` on mount
+- Shows dismissible warning banner with errors/warnings
+- Displays up to 5 errors and 3 warnings
+- Positioned before Start button
+
+**4. Test Offline Guarantee:** `tests/setup.ts`
+- Deletes all provider API keys before tests run
+- Keys: OPENROUTER_API_KEY, FAL_KEY, ELEVENLABS_API_KEY, etc.
+- Ensures zero-spend test suite
+
+### Tests
+
+**New file:** `tests/preflight-validation.test.ts` (17 tests)
+- Flags text model in image role
+- Flags deprecated model (410)
+- Validates all model IDs from presets/catalog/defaults
+- Checks modality matches role
+- Skips local/auth models
+
+**Modified:** `tests/sound-concept-driven.test.ts`
+- Updated preflight expectations (was: "OpenRouter"/"fal models", now: PRESET_STACKS/CATALOG/modality)
+- Added 2 non-beverage brand tests (SaaS, footwear) proving NO cola sounds
+
+### Documentation
+
+**TEST_CHANGES.md**
+- Explains old vs new assertions in sound-concept-driven.test.ts
+- Old: Simple endpoint reachability ("OpenRouter", "fal models")
+- New: Per-model validation (exists, not deprecated, modality matches)
+
+**SFX_CODE_PATH.md**
+- Proves cola sounds (pop/fizz/pour/clink) only fire when pattern-matched
+- Key line: `FOLEY_PATTERNS.filter(({ re }) => re.test(text))`
+- No fallback adds them unconditionally
+- Non-beverage brands get other patterns (click, thud, slide)
+
+### Verification
+
+**Merge conflicts resolved:**
+- Merged latest `devin/1794972912-studio-quality-gates` (6d681e8)
+- Kept both PLAYBOOK sections (sound + visual look)
+
+**TypeScript:** `pnpm typecheck` ✓ clean  
+**Tests (run twice):**
+- Run 1: 785 passed, 7 skipped
+- Run 2: 785 passed, 7 skipped
+
+**Breakdown:**
+- 767 base tests (from merged branch)
+- +17 preflight validation tests
+- +2 SFX non-beverage tests
+- -1 removed banner test (React Testing Library N/A)
+= 785 passing ✓
+
+**Build:** `pnpm build` ✓ succeeds  
+**GitHub:** mergeable: MERGEABLE, mergeStateStatus: CLEAN ✓
+
+### Files Changed
+
+**Core validation:**
+- `scripts/preflight-models.mjs` (NEW)
+- `src/app/api/preflight/models/route.ts` (NEW)
+- `src/components/sheet-studio/preflight-banner.tsx` (NEW)
+- `src/components/sheet-studio/studio.tsx` (wired banner)
+
+**Tests:**
+- `tests/setup.ts` (NEW - deletes provider keys)
+- `tests/preflight-validation.test.ts` (NEW - 17 tests)
+- `tests/sound-concept-driven.test.ts` (updated + 2 new tests)
+
+**Documentation:**
+- `docs/PLAYBOOK.md` (this file)
+- `TEST_CHANGES.md` (NEW)
+- `SFX_CODE_PATH.md` (NEW)
