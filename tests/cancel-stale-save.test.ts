@@ -105,7 +105,7 @@ describe("Cancel and stale save protection", () => {
     const staleJobRun = { ...jobRun };
     staleJobRun.updatedAt = jobLoadedAt; // Restore old timestamp
     staleJobRun.gateOverride = null; // Job doesn't have the override
-    staleJobRun.status = "rendering";
+    staleJobRun.status = "working";
     
     await saveProgress(staleJobRun);
     

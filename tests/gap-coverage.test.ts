@@ -4,13 +4,14 @@ import { STAGE_DEFAULTS } from "@/lib/registry";
 import type { ShotSheet } from "@/lib/shot-sheet";
 
 describe("Character reference generation", () => {
-  it("uses image model (not text model) for character reference generation", () => {
+  it("uses image model (not script/text model) for character reference generation", () => {
     // Character reference uses STAGE_DEFAULTS.image model
     // Implementation in src/lib/sheet/flow.ts:281-283
     const imageModel = STAGE_DEFAULTS.image;
+    const scriptModel = STAGE_DEFAULTS.script;
     
     expect(imageModel).toBeTruthy();
-    expect(imageModel).not.toBe(STAGE_DEFAULTS.text);
+    expect(imageModel).not.toBe(scriptModel);
     
     // Verified in flow.ts:281:
     // const imageModel = run.versions.find((v) => v.stack?.models?.image)?.stack.models.image || STAGE_DEFAULTS.image;
@@ -44,13 +45,17 @@ describe("Character reference generation", () => {
 describe("Cost estimation with minSeconds", () => {
   it("applies catalog minSeconds per model for accurate billing", () => {
     const mockSheet: ShotSheet = {
+      version: 1,
       targetSec: 12,
+      aspect: "9:16",
+      fps: 24,
       audioMode: "vo",
       bed: "",
       palette: "#FF0000",
       patternId: "auto",
-      character: null,
-      endCard: { title: "Brand", line: null, footer: null },
+      rules: [],
+      character: undefined,
+      endCard: { title: "Brand", line: "", footer: "" },
       shots: [
         {
           id: "1",
@@ -64,13 +69,14 @@ describe("Cost estimation with minSeconds", () => {
           action: "spinning",
           lighting: "soft",
           text: null,
-          audio: { vo: null, sfx: null, music: null },
+          audio: { vo: "", sfx: "", music: "" },
           transition: "cut",
           engine: "ai_video",
-          blender: null,
+          engineLocked: false,
+          blender: undefined,
           prompt: "Product spinning",
-          editorNote: null,
-          beat: null,
+          editorNote: "",
+          beat: undefined,
         },
         {
           id: "2",
@@ -84,13 +90,14 @@ describe("Cost estimation with minSeconds", () => {
           action: "reveal",
           lighting: "dramatic",
           text: null,
-          audio: { vo: null, sfx: null, music: null },
+          audio: { vo: "", sfx: "", music: "" },
           transition: "cut",
           engine: "ai_video",
-          blender: null,
+          engineLocked: false,
+          blender: undefined,
           prompt: "Label detail",
-          editorNote: null,
-          beat: null,
+          editorNote: "",
+          beat: undefined,
         },
       ],
     };
