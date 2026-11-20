@@ -49,7 +49,8 @@ describe("planAudio", () => {
     expect(p.voice).toBe(true);
     expect(p.duck).toBe(false);
     expect(p.bedGain).toBe(0.18);
-    expect(new Set(p.sfx.map((c) => c.kind))).toEqual(new Set(["pop", "pour", "fizz", "whoosh"]));
+    // No more automatic whoosh on cuts, and all SFX kinds are allowed (not just legacy cola sounds)
+    expect(new Set(p.sfx.map((c) => c.kind))).toEqual(new Set(["pop", "pour", "fizz", "click", "slide"]));
   });
   it("derives actions from the picture when a row has no sound line", () => {
     expect(foleyActions({ seconds: 3, visual: "a hand cracks the can open, foam rises" })).toEqual(["pop", "fizz"]);
