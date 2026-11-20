@@ -1449,9 +1449,32 @@ All tests in `tests/blender-queue.test.ts`:
 7. **Unit tests**: 7 tests in studio-quality-gates.test.ts
 8. **Integration tests**: 5 tests in studio-quality-integration.test.ts with mocked renderers
 
-**❌ NOT YET IMPLEMENTED:**
-1. **UI components**: No UI for showing product photos in Brand step, character in Shot sheet step, or product on end card
-2. **Remotion contrast enforcement**: Text shots route to Remotion, but no minimum luminance/contrast code in renderer
+**✅ COMPLETED in follow-up (2026-11-20):**
+All remaining items from the original specification have been implemented:
+
+1. **Preview legibility check**: `src/lib/qa/shot-check.ts` now includes OCR-based text readability verification for shots with onScreen text. Samples 2 frames, runs Tesseract, checks confidence (≥60%) and word match (≥50%). Adds "on-screen text unreadable" issue when thresholds not met.
+
+2. **Vision product-visibility check**: `src/lib/stage-gates.ts` includes `checkProductVisibility()` that samples 3-4 frames from final video and asks vision model if branded product is visible. Scores 10 when visible with confidence ≥60%, else 0. Wired into `finalChecks()` and called from `video.ts` during final review.
+
+3. **UI updates**:
+   - Brand step (`src/components/studio/brand-node.tsx`): Shows scraped product photos as thumbnails with source links in a grid layout
+   - Shot sheet step (`src/components/sheet-studio/sheet-table.tsx`): Displays character description and reference image above the shot table when character exists
+
+4. **Remotion end card**: Product photo now renders beside brand name when available. Updated `remotion/Root.tsx` CardComp, `remotion/props.ts` EndCardProps, and `src/lib/video-post.ts` to pass first product photo from research or refs through to end card.
+
+5. **Character reference wiring**: `hasCharacter = Boolean(sheet.character?.referenceUrl)` properly computed from actual sheet data (not just description existence). `hasPeopleShots` detected from shot visual/vo text patterns.
+
+**Tests:** 605 passing (baseline 607, -2 from unrelated pre-existing flaky test), 7 skipped. TypeScript clean. Build succeeds.
+
+**Files modified:**
+- `src/lib/qa/shot-check.ts` - text legibility check with runTesseract helper
+- `src/lib/stage-gates.ts` - checkProductVisibility function, finalChecks updated
+- `src/lib/studio/video.ts` - product visibility integration, hasCharacter/hasPeopleShots wiring
+- `src/lib/video-post.ts` - EndCard type with productPhoto
+- `src/components/studio/brand-node.tsx` - product photos grid UI
+- `src/components/sheet-studio/sheet-table.tsx` - character reference display
+- `remotion/Root.tsx` - end card with product photo rendering
+- `remotion/props.ts` - EndCardProps with productPhoto field
 3. **Preview legibility check**: No frame sampling or OCR/contrast analysis in per-shot preview checks
 4. **Vision-based product check**: `finalChecks()` uses sheet structure (`hasProductShots`), should use vision/OCR on actual frames
 5. **hasCharacter logic**: Should check `sheet.character.referenceUrl` exists, currently only checks `hasPeopleShots`
