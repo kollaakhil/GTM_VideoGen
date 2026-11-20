@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 /**
  * Preflight model validation: verifies EVERY model ID referenced in the codebase.
  * 
@@ -10,21 +10,14 @@
  * 
  * Sources: versions.ts presets, registry/catalog.ts, registry/index.ts STAGE_DEFAULTS, render-deps.ts fallbacks
  * 
- * Usage: node scripts/preflight-models.mjs
+ * Usage: tsx scripts/preflight-models.ts
  * Exit 0 if all checks pass, nonzero on any failure.
  * Generates no media (metadata checks only).
- * 
- * Requires Node 22.18+ to import TypeScript directly.
  */
 
-import { fileURLToPath } from "node:url";
-
-const root = new URL("../src/lib/", import.meta.url);
-
-// Dynamically import TypeScript modules
-const { PRESET_STACKS } = await import(new URL("versions.ts", root));
-const { CATALOG } = await import(new URL("registry/catalog.ts", root));
-const { STAGE_DEFAULTS } = await import(new URL("registry/index.ts", root));
+import { PRESET_STACKS } from "../src/lib/versions";
+import { CATALOG } from "../src/lib/registry/catalog";
+import { STAGE_DEFAULTS } from "../src/lib/registry/index";
 
 // Fallback models from render-deps.ts (hardcoded since they're inline)
 const RENDER_DEPS_FALLBACKS = [
@@ -52,6 +45,18 @@ const STAGE_MODALITIES = {
   qa: ["text"],
   asset3d: ["3d", "model"],
 };
+
+// Check for required API keys
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const FAL_KEY = process.env.FAL_KEY;
+
+if (!OPENROUTER_API_KEY || !FAL_KEY) {
+  console.log("⚠️  Skipping preflight validation: missing provider API keys");
+  console.log("   OPENROUTER_API_KEY:", OPENROUTER_API_KEY ? "✓" : "✗");
+  console.log("   FAL_KEY:", FAL_KEY ? "✓" : "✗");
+  console.log("\n✅ Preflight validation skipped (no network calls made)");
+  process.exit(0);
+}
 
 /**
  * Fetch with timeout and retries

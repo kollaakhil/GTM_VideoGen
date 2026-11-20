@@ -10,7 +10,7 @@
     "test": "vitest run",
     "eval:scripts": "vitest run tests/script-benchmark.test.ts",
     "typecheck": "tsc --noEmit",
-    "preflight:models": "node scripts/preflight-models.mjs"
+    "preflight:models": "tsx scripts/preflight-models.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -43,6 +43,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.29",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5",
     "vitest": "2"
   },
