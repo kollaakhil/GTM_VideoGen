@@ -33,14 +33,26 @@ export interface AudioGenerationResult {
 
 /** Check if an error indicates a deprecated or unavailable model */
 function isModelUnavailable(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes("deprecated") ||
-    message.includes("no longer available") ||
-    message.includes("404") ||
-    message.includes("410") ||
-    message.includes("not found")
-  );
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return msg.includes("deprecated") || msg.includes("no longer available") || msg.includes("not found");
+  }
+  
+  // Check error object properties
+  if (typeof error === "object" && error !== null) {
+    const err = error as { status?: number; message?: string };
+    if (err.status === 404 || err.status === 410) {
+      return true;
+    }
+    if (err.message) {
+      const msg = err.message.toLowerCase();
+      return msg.includes("deprecated") || msg.includes("no longer available") || msg.includes("not found");
+    }
+  }
+  
+  // Check stringified error
+  const message = String(error).toLowerCase();
+  return message.includes("deprecated") || message.includes("no longer available") || message.includes("not found");
 }
 
 /**
@@ -51,12 +63,16 @@ export async function generateSfxWithFallback(
   durationSeconds: number,
   primaryModel?: string,
 ): Promise<AudioGenerationResult> {
-  // Try primary model first if specified
+  // Build the fallback chain
+  let triedPrimaryOutsideChain = false;
+  
+  // Try primary model first if it's not in the fallback chain
   if (primaryModel && !SFX_FALLBACK_CHAIN.includes(primaryModel as never)) {
     try {
       const result = await generateTextToAudioSfx(textPrompt, durationSeconds, primaryModel);
       return result;
     } catch (error) {
+      triedPrimaryOutsideChain = true;
       if (isModelUnavailable(error)) {
         console.warn(`[audio-fallback] Primary SFX model ${primaryModel} unavailable, trying fallback chain`);
       } else {
@@ -65,10 +81,11 @@ export async function generateSfxWithFallback(
     }
   }
 
-  // Try each model in the fallback chain
-  const chain = primaryModel && SFX_FALLBACK_CHAIN.includes(primaryModel as never)
-    ? SFX_FALLBACK_CHAIN
-    : [primaryModel, ...SFX_FALLBACK_CHAIN].filter((m): m is string => !!m);
+  // Build chain: if we already tried primary, use just the fallback chain
+  const chain = triedPrimaryOutsideChain ? [...SFX_FALLBACK_CHAIN] : 
+    (primaryModel && SFX_FALLBACK_CHAIN.includes(primaryModel as never)
+      ? SFX_FALLBACK_CHAIN
+      : [primaryModel, ...SFX_FALLBACK_CHAIN].filter((m): m is string => !!m));
 
   let lastError: unknown;
   for (const model of chain) {
@@ -126,13 +143,17 @@ export async function generateMusicWithFallback(
   durationSeconds: number,
   primaryModel?: string,
 ): Promise<AudioGenerationResult> {
-  // Try primary model first if specified
+  // Build the fallback chain
+  let triedPrimaryOutsideChain = false;
+  
+  // Try primary model first if it's not in the fallback chain
   if (primaryModel && !MUSIC_FALLBACK_CHAIN.includes(primaryModel as never)) {
     try {
       const result = await musicBed(prompt, durationSeconds, primaryModel);
       const url = typeof result === "string" ? result : result.url;
       return { url, usage: { costUsd: 0.6 } }; // Rough estimate
     } catch (error) {
+      triedPrimaryOutsideChain = true;
       if (isModelUnavailable(error)) {
         console.warn(`[audio-fallback] Primary music model ${primaryModel} unavailable, trying fallback chain`);
       } else {
@@ -141,10 +162,11 @@ export async function generateMusicWithFallback(
     }
   }
 
-  // Try each model in the fallback chain
-  const chain = primaryModel && MUSIC_FALLBACK_CHAIN.includes(primaryModel as never)
-    ? MUSIC_FALLBACK_CHAIN
-    : [primaryModel, ...MUSIC_FALLBACK_CHAIN].filter((m): m is string => !!m);
+  // Build chain: if we already tried primary, use just the fallback chain
+  const chain = triedPrimaryOutsideChain ? [...MUSIC_FALLBACK_CHAIN] : 
+    (primaryModel && MUSIC_FALLBACK_CHAIN.includes(primaryModel as never)
+      ? MUSIC_FALLBACK_CHAIN
+      : [primaryModel, ...MUSIC_FALLBACK_CHAIN].filter((m): m is string => !!m));
 
   let lastError: unknown;
   for (const model of chain) {
