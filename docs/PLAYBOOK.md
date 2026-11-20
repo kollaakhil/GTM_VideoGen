@@ -1417,13 +1417,43 @@ All tests in `tests/blender-queue.test.ts`:
   - Warning when people shots exist but no character defined
   - Warning per people shot that doesn't reference the character
 
-**Tests:** Added `tests/studio-quality-gates.test.ts` with 7 unit tests for new gate checks. All existing tests pass (586 passing, 8 skipped, baseline was 580).
+**Tests:** 
+- Added `tests/studio-quality-gates.test.ts` with 7 unit tests for new gate checks
+- Added `tests/studio-quality-integration.test.ts` with 5 integration tests (mocked renderers)
+- Final: 591 passing (+11 new), 8 skipped (pre-existing)
+- Baseline was 580 passing
 
 **Related files:**
 - `src/lib/types.ts`: added `Research.productPhotos`
 - `src/lib/shot-sheet.ts`: added `ShotSheet.character`
 - `src/lib/pipeline.ts`: added `scrapeProductImages()`, integrated into `research()`
+- `src/lib/studio/actions/research.ts`: store scraped photos, merge into `run.storyboardPhotos`
 - `src/lib/sheet/writer.ts`: added character definition, performance tone, updated `normaliseSheet()`
+- `src/lib/sheet/flow.ts`: generate character reference image after sheet creation
+- `src/lib/sheet/render.ts`: pass character reference as `firstFrame` in `ctxFor()`
+- `src/lib/render/router.ts`: added text-only shot detection and Remotion routing
 - `src/lib/sheet/gate.ts`: added product visibility and character consistency checks
 - `src/lib/stage-gates.ts`: added product visibility and face consistency to `finalChecks()`
+
+---
+
+### Implementation Status (PR #76)
+
+**✅ COMPLETED:**
+1. **Product scraping & storage**: Multi-source scraping implemented, photos stored in `run.storyboardPhotos`, available to renderers via `deps.refs`
+2. **Character reference generation**: Image generated in `flow.ts`, stored in `sheet.character.referenceUrl`
+3. **Character to renderers**: Passed as `firstFrame` to people shots in `render.ts` `ctxFor()`
+4. **Text-only routing**: Router detects text-only shots (explicit text action + no filmed subject), routes to Remotion
+5. **Gate checks**: Product visibility and character consistency checks in gate.ts
+6. **Final review**: Weighted penalties for missing product and inconsistent faces
+7. **Unit tests**: 7 tests in studio-quality-gates.test.ts
+8. **Integration tests**: 5 tests in studio-quality-integration.test.ts with mocked renderers
+
+**❌ NOT YET IMPLEMENTED:**
+1. **UI components**: No UI for showing product photos in Brand step, character in Shot sheet step, or product on end card
+2. **Remotion contrast enforcement**: Text shots route to Remotion, but no minimum luminance/contrast code in renderer
+3. **Preview legibility check**: No frame sampling or OCR/contrast analysis in per-shot preview checks
+4. **Vision-based product check**: `finalChecks()` uses sheet structure (`hasProductShots`), should use vision/OCR on actual frames
+5. **hasCharacter logic**: Should check `sheet.character.referenceUrl` exists, currently only checks `hasPeopleShots`
+6. **Test fix**: `tests/fix-gaps-api.test.ts` "calls the LLM with gate errors" remains skipped (mock concurrency issue)
 
