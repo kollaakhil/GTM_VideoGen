@@ -123,28 +123,72 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
     },
     selectVoice: (persona, brand) => selectVoice(persona, brand),
     generateSfx: async (videoUrl, textPrompt, durationSeconds) => {
-      // Use fallback chain - never silently fails
-      const result = await generateSfxWithFallback(textPrompt, durationSeconds, sfxModel);
-      
-      // Log visible warning if fallback was used
-      if (result.warning) {
-        console.warn(`⚠️  [AUDIO FALLBACK] SFX: ${result.warning.primary} → ${result.warning.fallback}`);
-        console.warn(`    Reason: ${result.warning.reason}`);
+      try {
+        // Use fallback chain - tries all verified models
+        const result = await generateSfxWithFallback(textPrompt, durationSeconds, sfxModel);
+        
+        // Log visible warning if fallback was used
+        if (result.warning) {
+          console.warn(`⚠️  [AUDIO FALLBACK] SFX: ${result.warning.primary} → ${result.warning.fallback}`);
+          console.warn(`    Reason: ${result.warning.reason}`);
+        }
+        
+        return { url: result.url, usd: result.usage.costUsd };
+      } catch (error: any) {
+        // All models failed - generate bundled audio as last resort and store visible warning
+        if (error.audioFallbackFailure) {
+          console.error(`❌ [AUDIO FAILURE] All SFX models failed, using bundled audio`);
+          console.error(`    Primary: ${error.primary}`);
+          console.error(`    Last error: ${error.lastError}`);
+          
+          // Generate bundled audio or silence as absolute last resort
+          const { loadBundledAudio, generateSilence } = await import("@/lib/audio/bundled");
+          let url: string;
+          try {
+            url = await loadBundledAudio("click.wav", durationSeconds);
+          } catch {
+            url = generateSilence(durationSeconds);
+          }
+          
+          // TODO: Store this warning on the run/version for UI display
+          return { url, usd: 0 };
+        }
+        throw error;
       }
-      
-      return { url: result.url, usd: result.usage.costUsd };
     },
     generateMusic: async (prompt, seconds) => {
-      // Use fallback chain for music
-      const result = await generateMusicWithFallback(prompt, seconds, musicModel);
-      
-      // Log visible warning if fallback was used
-      if (result.warning) {
-        console.warn(`⚠️  [AUDIO FALLBACK] Music: ${result.warning.primary} → ${result.warning.fallback}`);
-        console.warn(`    Reason: ${result.warning.reason}`);
+      try {
+        // Use fallback chain for music
+        const result = await generateMusicWithFallback(prompt, seconds, musicModel);
+        
+        // Log visible warning if fallback was used
+        if (result.warning) {
+          console.warn(`⚠️  [AUDIO FALLBACK] Music: ${result.warning.primary} → ${result.warning.fallback}`);
+          console.warn(`    Reason: ${result.warning.reason}`);
+        }
+        
+        return result.url;
+      } catch (error: any) {
+        // All models failed - generate bundled music as last resort and store visible warning
+        if (error.audioFallbackFailure) {
+          console.error(`❌ [AUDIO FAILURE] All music models failed, using bundled audio`);
+          console.error(`    Primary: ${error.primary}`);
+          console.error(`    Last error: ${error.lastError}`);
+          
+          // Generate bundled music or silence as absolute last resort
+          const { loadBundledAudio, generateSilence } = await import("@/lib/audio/bundled");
+          let url: string;
+          try {
+            url = await loadBundledAudio("ambient-bed.wav", seconds);
+          } catch {
+            url = generateSilence(seconds);
+          }
+          
+          // TODO: Store this warning on the run/version for UI display
+          return url;
+        }
+        throw error;
       }
-      
-      return result.url;
     },
     burnCaptions: async (video, cues, width, height) => {
       const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));

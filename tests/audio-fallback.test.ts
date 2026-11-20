@@ -1,7 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Must mock before importing to intercept module-level calls
+vi.mock("@/lib/audio/generate", () => ({
+  generateTextToAudioSfx: vi.fn(),
+}));
+
+vi.mock("@/lib/ai", () => ({
+  musicBed: vi.fn(),
+}));
+
 import { generateSfxWithFallback, generateMusicWithFallback } from "@/lib/audio/fallback";
-import * as generate from "@/lib/audio/generate";
-import * as ai from "@/lib/ai";
+import { generateTextToAudioSfx } from "@/lib/audio/generate";
+import { musicBed } from "@/lib/ai";
 
 /**
  * Audio fallback tests: ensures audio generation never silently fails.
@@ -21,7 +31,7 @@ describe("Audio Fallback Chain", () => {
         usage: { costUsd: 0.02 },
       };
       
-      vi.spyOn(generate, "generateTextToAudioSfx").mockResolvedValueOnce(mockResult);
+      vi.mocked(generateTextToAudioSfx).mockResolvedValueOnce(mockResult);
 
       const result = await generateSfxWithFallback("whoosh", 2, "mirelo-ai/sfx2.0/text-to-audio");
 
@@ -39,7 +49,7 @@ describe("Audio Fallback Chain", () => {
         usage: { costUsd: 0.002 },
       };
 
-      const mock = vi.spyOn(generate, "generateTextToAudioSfx");
+      const mock = vi.mocked(generateTextToAudioSfx);
       // First call (deprecated model) fails
       mock.mockRejectedValueOnce(deprecatedError);
       // Second call (fallback) succeeds
@@ -54,72 +64,79 @@ describe("Audio Fallback Chain", () => {
       expect(result.warning?.fallback).toContain("mirelo");
     });
 
-    it("falls back to bundled audio when all models fail", async () => {
+    it("throws audioFallbackFailure when all models fail", async () => {
       const unavailableError = {
         status: 410,
         message: "Deprecated",
       };
 
       // Mock all calls to fail with deprecation error
-      const mock = vi.spyOn(generate, "generateTextToAudioSfx");
+      const mock = vi.mocked(generateTextToAudioSfx);
       mock.mockRejectedValue(unavailableError);
 
-      const result = await generateSfxWithFallback("whoosh", 2);
-
-      expect(result.url).toBeDefined();
-      expect(result.url).toContain("data:audio/wav;base64");
-      expect(result.warning).toBeDefined();
-      expect(result.warning?.fallback).toBe("bundled");
-      expect(result.usage.costUsd).toBe(0);
+      try {
+        await generateSfxWithFallback("whoosh", 2);
+        expect.fail("Should have thrown an error");
+      } catch (error: any) {
+        expect(error.audioFallbackFailure).toBe(true);
+        expect(error.stage).toBe("sfx");
+        expect(error.primary).toBe("mirelo-ai/sfx2.0/text-to-audio");
+        expect(error.message).toContain("All SFX models failed");
+      }
       
-      // Should have tried multiple models before falling back
-      expect(mock.mock.calls.length).toBeGreaterThan(1);
+      // Should have tried all models in the chain
+      expect(mock.mock.calls.length).toBe(2); // mirelo + elevenlabs
     });
 
-    it("generates silence as last resort", async () => {
+    it("throws error instead of generating silence", async () => {
       const error = { status: 410, message: "All models failed" };
       
-      const mock = vi.spyOn(generate, "generateTextToAudioSfx");
+      const mock = vi.mocked(generateTextToAudioSfx);
       mock.mockRejectedValue(error);
 
-      const result = await generateSfxWithFallback("whoosh", 2);
-
-      // Should return valid audio data URL (silence)
-      expect(result.url).toContain("data:audio/wav;base64");
-      expect(result.warning).toBeDefined();
+      try {
+        await generateSfxWithFallback("whoosh", 2);
+        expect.fail("Should have thrown an error");
+      } catch (thrown: any) {
+        expect(thrown.audioFallbackFailure).toBe(true);
+        expect(thrown.message).toContain("All SFX models failed");
+      }
     });
 
     it("throws non-availability errors without fallback", async () => {
       const authError = new Error("Unauthorized");
       
-      vi.spyOn(generate, "generateTextToAudioSfx").mockRejectedValueOnce(authError);
+      vi.mocked(generateTextToAudioSfx).mockRejectedValueOnce(authError);
 
       await expect(generateSfxWithFallback("whoosh", 2)).rejects.toThrow("Unauthorized");
     });
 
-    it("logs visible warnings on fallback", async () => {
-      const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    it("logs visible console errors when all models fail", async () => {
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const deprecatedError = { status: 404, message: "Deprecated" };
       
-      const mock = vi.spyOn(generate, "generateTextToAudioSfx");
-      mock.mockRejectedValueOnce(deprecatedError);
-      mock.mockResolvedValueOnce({ url: "data:audio", usage: { costUsd: 0 } });
+      const mock = vi.mocked(generateTextToAudioSfx);
+      mock.mockRejectedValue(deprecatedError);
 
-      await generateSfxWithFallback("whoosh", 2, "fal-ai/mmaudio-v2");
+      try {
+        await generateSfxWithFallback("whoosh", 2);
+        expect.fail("Should have thrown");
+      } catch {
+        // Expected
+      }
 
-      expect(consoleWarnSpy).toHaveBeenCalled();
-      expect(consoleWarnSpy.mock.calls.some(call => 
-        call[0] && call[0].toString().includes("unavailable") || 
-        (call[0] && call[0].toString().includes("fallback"))
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      expect(consoleErrorSpy.mock.calls.some(call => 
+        call[0] && call[0].toString().includes("All SFX models failed")
       )).toBe(true);
 
-      consoleWarnSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
     });
   });
 
   describe("Music Fallback", () => {
     it("returns primary model result when available", async () => {
-      vi.spyOn(ai, "musicBed").mockResolvedValueOnce({ 
+      vi.mocked(musicBed).mockResolvedValueOnce({ 
         url: "data:audio/wav;base64,music", 
         usage: { costUsd: 0.6 } 
       } as never);
@@ -133,7 +150,7 @@ describe("Audio Fallback Chain", () => {
     it("falls back to next model when primary fails", async () => {
       const deprecatedError = { status: 410, message: "Deprecated" };
       
-      const mock = vi.spyOn(ai, "musicBed");
+      const mock = vi.mocked(musicBed);
       mock.mockRejectedValueOnce(deprecatedError);
       mock.mockResolvedValueOnce({ 
         url: "data:audio/wav;base64,fallback-music", 
@@ -147,22 +164,27 @@ describe("Audio Fallback Chain", () => {
       expect(result.warning?.stage).toBe("music");
     });
 
-    it("falls back to bundled music when all models fail", async () => {
-      const mock = vi.spyOn(ai, "musicBed");
+    it("throws audioFallbackFailure when all models fail", async () => {
+      const mock = vi.mocked(musicBed);
       mock.mockRejectedValue({ status: 404, message: "Not found" });
 
-      const result = await generateMusicWithFallback("upbeat", 10);
-
-      expect(result.url).toBeDefined();
-      expect(result.url).toContain("data:audio/wav;base64");
-      expect(result.warning?.fallback).toBe("bundled");
-      expect(result.usage.costUsd).toBe(0);
+      try {
+        await generateMusicWithFallback("upbeat", 10);
+        expect.fail("Should have thrown an error");
+      } catch (error: any) {
+        expect(error.audioFallbackFailure).toBe(true);
+        expect(error.stage).toBe("music");
+        expect(error.message).toContain("All music models failed");
+      }
+      
+      // Should have tried all models in the chain
+      expect(mock.mock.calls.length).toBe(2); // elevenlabs + stable-audio-3/medium
     });
   });
 
   describe("Offline Operation", () => {
     it("generates audio without real API calls", async () => {
-      vi.spyOn(generate, "generateTextToAudioSfx").mockResolvedValueOnce({
+      vi.mocked(generateTextToAudioSfx).mockResolvedValueOnce({
         url: "data:audio/wav;base64,mock",
         usage: { costUsd: 0 },
       });
@@ -181,41 +203,45 @@ describe("Audio Fallback Chain", () => {
     });
   });
 
-  describe("Audio Stems", () => {
-    it("generates valid WAV audio data", async () => {
-      const mockAudio = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
-      
-      vi.spyOn(generate, "generateTextToAudioSfx").mockResolvedValueOnce({
-        url: mockAudio,
-        usage: { costUsd: 0 },
+  describe("Verified Model Chain", () => {
+    it("only includes verified working models in SFX chain", async () => {
+      // Test that we're only using verified models
+      const mock = vi.mocked(generateTextToAudioSfx);
+      // Mock all calls to fail
+      mock.mockImplementation(async () => {
+        throw { status: 410, message: "Deprecated" };
       });
 
-      const result = await generateSfxWithFallback("test", 1);
+      try {
+        await generateSfxWithFallback("test", 1);
+      } catch {
+        // Expected to throw after trying all models
+      }
 
-      expect(result.url).toMatch(/^data:audio\/wav;base64,/);
-      // Verify it's base64 encoded
-      const base64Part = result.url.split(",")[1];
-      expect(base64Part).toBeTruthy();
-      expect(() => Buffer.from(base64Part, "base64")).not.toThrow();
+      // Should have tried exactly 2 models: mirelo and elevenlabs
+      expect(mock.mock.calls.length).toBe(2);
+      expect(mock.mock.calls[0][2]).toBe("mirelo-ai/sfx2.0/text-to-audio");
+      expect(mock.mock.calls[1][2]).toBe("elevenlabs/sound-effects/v3");
     });
 
-    it("generates audio with nonzero duration", async () => {
-      const mockAudio = "data:audio/wav;base64,test";
-      
-      vi.spyOn(generate, "generateTextToAudioSfx").mockResolvedValueOnce({
-        url: mockAudio,
-        usage: { costUsd: 0 },
+    it("only includes verified working models in music chain", async () => {
+      const mock = vi.mocked(musicBed);
+      // Mock to fail for all calls
+      mock.mockImplementation(async () => {
+        throw { status: 410, message: "Deprecated" };
       });
 
-      const durationSeconds = 3;
-      const result = await generateSfxWithFallback("test", durationSeconds);
+      try {
+        await generateMusicWithFallback("test", 10);
+      } catch {
+        // Expected to throw after trying all models
+      }
 
-      // The fallback should have requested the specified duration
-      expect(generate.generateTextToAudioSfx).toHaveBeenCalledWith(
-        expect.any(String),
-        durationSeconds,
-        expect.any(String)
-      );
+      // Should have tried exactly 2 models: elevenlabs and stable-audio-3/medium
+      expect(mock.mock.calls.length).toBe(2);
+      expect(mock.mock.calls[0][1]).toBe(10); // duration
+      expect(mock.mock.calls[0][2]).toBe("elevenlabs/music/v2.5");
+      expect(mock.mock.calls[1][2]).toBe("fal-ai/stable-audio-3/medium/text-to-audio");
     });
   });
 });
