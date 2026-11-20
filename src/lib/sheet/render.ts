@@ -214,21 +214,8 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
     return { version: v, stitched: null };
   }
 
-  // Check 2: one cheap look per preview shot (never on a final: its check is the strict review below).
-  if (mode === "preview" && qaGates().mode === "consolidated") {
-    const t1 = Date.now();
-    const verdicts = await withMeter(meter, () => checkPreviewShots(rows.map(({ s }, i) => ({ id: s.id, expected: `${s.subject}. ${s.action}`, clip: v.shots[i].url!, seconds: dur(s) })), deps.shotCheck, { cache: deps.judgeCache, model: run.input.visionModel, limit: deps.concurrency ?? concurrencyFromEnv() }));
-    v.shots.forEach((r) => { const c = verdicts[r.shotId]; if (c) r.check = { score: c.score, note: c.note }; });
-    const scores = v.shots.flatMap((r) => (r.check ? [r.check.score] : []));
-    v.score = scores.length ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)) : null;
-    addTiming(run, "shot checks", Date.now() - t1);
-  }
-
-  // Audio: sound design, then generation and mixing.
-  const t2 = Date.now();
-  
-  // Step 1: Design sound (cheap text LLM call)
-  const soundDesign = await (async () => {
+  // Start sound design in parallel with shot checks (both are cheap LLM calls)
+  const soundDesignPromise = (async () => {
     if (deps.soundDesign) {
       try {
         return await withMeter(meter, () => deps.soundDesign!(run));
@@ -239,37 +226,91 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
     }
     return null;
   })();
+
+  // Check 2: one cheap look per preview shot (never on a final: its check is the strict review below).
+  if (mode === "preview" && qaGates().mode === "consolidated") {
+    const t1 = Date.now();
+    const verdicts = await withMeter(meter, () => checkPreviewShots(rows.map(({ s }, i) => ({ id: s.id, expected: `${s.subject}. ${s.action}`, clip: v.shots[i].url!, seconds: dur(s) })), deps.shotCheck, { cache: deps.judgeCache, model: run.input.visionModel, limit: deps.concurrency ?? concurrencyFromEnv() }));
+    v.shots.forEach((r) => { const c = verdicts[r.shotId]; if (c) r.check = { score: c.score, note: c.note }; });
+    const scores = v.shots.flatMap((r) => (r.check ? [r.check.score] : []));
+    v.score = scores.length ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)) : null;
+    addTiming(run, "shot checks", Date.now() - t1);
+  }
+
+  // Audio: wait for sound design, then generation and mixing with bounded concurrency.
+  const t2 = Date.now();
+  const soundDesign = await soundDesignPromise;
   
   // Fallback to old behavior if sound design unavailable
   const plan = planAudio(run.input.audioMode, audioShots({ ...sheet, shots }));
   const voices: { url: string; start: number }[] = [];
   
-  // Step 2: Generate voiceovers with selected voice
+  // Step 2: Generate voiceovers with selected voice - parallel with bounded concurrency
   if (plan.voice && deps.voice) {
     const brandName = run.brief?.objective || "Brand";
     const voiceName = soundDesign?.voice ? deps.selectVoice?.(soundDesign.voice, brandName) : undefined;
-    for (const [i, s] of shots.entries()) {
-      if (!s.audio.vo) continue;
-      const line = await withMeter(meter, () => deps.voice!(s.audio.vo!, run, voiceName));
-      voices.push({ url: line.url, start: sheet.shots.slice(0, i).reduce((a, x) => a + dur(x), 0) + 0.15 });
+    
+    // Collect voice tasks
+    const voiceTasks = shots
+      .map((s, i) => ({ s, i }))
+      .filter(({ s }) => s.audio.vo)
+      .map(({ s, i }) => async () => {
+        const line = await withMeter(meter, () => deps.voice!(s.audio.vo!, run, voiceName));
+        return { url: line.url, start: sheet.shots.slice(0, i).reduce((a, x) => a + dur(x), 0) + 0.15 };
+      });
+    
+    // Run with bounded concurrency (4 at a time)
+    const concurrency = 4;
+    for (let i = 0; i < voiceTasks.length; i += concurrency) {
+      const batch = voiceTasks.slice(i, i + concurrency);
+      const results = await Promise.all(batch.map(task => task()));
+      voices.push(...results);
     }
   }
   
-  // Step 3: Generate SFX from video clips (video-to-audio)
+  // Step 3: Generate SFX from video clips - parallel with bounded concurrency
   const generatedSfx: { url: string; shot: number; offset: number; gain: number }[] = [];
+  const sfxFailures: string[] = [];
   if (soundDesign?.sfx && deps.generateSfx) {
-    for (const cue of soundDesign.sfx) {
-      if (cue.shot >= v.shots.length) continue;
-      const shotRender = v.shots[cue.shot];
-      if (!shotRender.url) continue;
-      try {
-        const result = await withMeter(meter, () => 
-          deps.generateSfx!(shotRender.url!, cue.description, Math.min(5, cue.offset + 3))
-        );
-        generatedSfx.push({ url: result.url, shot: cue.shot, offset: cue.offset, gain: cue.gain });
-      } catch (e) {
-        console.warn(`[audio] SFX generation failed for shot ${cue.shot}: ${(e as Error).message}`);
+    // Collect SFX tasks
+    const sfxTasks = soundDesign.sfx
+      .filter(cue => cue.shot < v.shots.length && v.shots[cue.shot].url)
+      .map(cue => async () => {
+        const shotRender = v.shots[cue.shot];
+        try {
+          const result = await withMeter(meter, () => 
+            deps.generateSfx!(shotRender.url!, cue.description, Math.min(5, cue.offset + 3))
+          );
+          return { success: true as const, url: result.url, shot: cue.shot, offset: cue.offset, gain: cue.gain, description: cue.description };
+        } catch (e) {
+          const errorMsg = `SFX generation failed for shot ${cue.shot + 1} ("${cue.description}"): ${(e as Error).message}`;
+          console.error(`[audio] ${errorMsg}`);
+          return { success: false as const, shot: cue.shot, description: cue.description, error: errorMsg };
+        }
+      });
+    
+    // Run with bounded concurrency (4 at a time)
+    const concurrency = 4;
+    for (let i = 0; i < sfxTasks.length; i += concurrency) {
+      const batch = sfxTasks.slice(i, i + concurrency);
+      const results = await Promise.all(batch.map(task => task()));
+      for (const result of results) {
+        if (result.success) {
+          generatedSfx.push({ url: result.url, shot: result.shot, offset: result.offset, gain: result.gain });
+        } else {
+          sfxFailures.push(result.error);
+        }
       }
+    }
+  }
+  
+  // Log SFX failures loudly in run activity/notes so operator sees them
+  if (sfxFailures.length > 0) {
+    const failureNote = `⚠️ ${sfxFailures.length} SFX generation failure(s): ${sfxFailures.join("; ")}`;
+    console.warn(`[audio] ${failureNote}`);
+    // Add to run's editor notes or a failure log field
+    if (!v.error) {
+      v.error = failureNote;
     }
   }
   

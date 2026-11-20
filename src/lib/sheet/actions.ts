@@ -127,7 +127,8 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
         await saveProgress(r);
         const version = r.versions.find((v) => v.id === id);
         try {
-          await runPreviews(r, deps(version?.stack.models), { versionId: id });
+          const jobContext = { runId: r.id, versionId: id, priority: "normal" as const };
+          await runPreviews(r, deps(version?.stack.models, jobContext), { versionId: id });
         } catch (e) {
           if (version) Object.assign(version, { status: "failed", error: (e as Error).message.slice(0, 400) });
           await saveProgress(r);
@@ -147,141 +148,154 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
     if (!run.sheet) return NextResponse.json({ error: "No sheet to fix" }, { status: 400 });
     if (!run.gate) return NextResponse.json({ error: "No gate result" }, { status: 400 });
     
-    // Check if a render is running
+    // Check if a render is running or fix_gaps is already working
     const hasActiveRender = run.versions.some((v) => v.status === "rendering" || v.status === "queued");
     if (hasActiveRender) return NextResponse.json({ error: "Cannot fix gaps while a render is running" }, { status: 409 });
+    if (run.status === "working") return NextResponse.json({ error: "A job is already running on this run" }, { status: 409 });
     
-    const meter = meterFor(run);
-    const chatWithRetry: Chat = async <T,>(system: string, userPrompt: string) => {
-      const TEXT_ESTIMATE = 0.02;
-      const result = await meter.run({ stage: "fix_gaps", what: "fix gate failures", model: run.input.textModel, estimate: TEXT_ESTIMATE }, async () => {
-        const { chatJSON } = await import("@/lib/ai");
-        let lastError: Error | null = null;
-        
-        // Retry on network errors
-        for (let retry = 0; retry < 2; retry++) {
-          try {
-            const { data, usage } = await chatJSON<T>(run.input.textModel, system, userPrompt);
-            return { value: { data, usd: usage.costUsd }, usd: usage.costUsd };
-          } catch (e) {
-            const err = e as Error;
-            const isNetworkError = /fetch failed|ConnectTimeoutError|UND_ERR_CONNECT_TIMEOUT|5\d{2}/i.test(err.message);
-            lastError = err;
-            
-            if (isNetworkError && retry < 1) {
-              console.warn(`[fix_gaps] Network error on attempt ${retry + 1}, retrying after backoff...`);
-              await new Promise(resolve => setTimeout(resolve, (retry + 1) * 2000));
-              continue;
-            }
-            throw err;
-          }
-        }
-        throw lastError!;
-      });
-      return result;
-    };
-    
-    const input = {
-      brand: run.input.brand,
-      goal: run.input.goal,
-      offer: run.input.offer,
-      facts: run.input.facts,
-      brief: run.brief,
-      research: run.research,
-      rules: run.rules,
-      targetSec: run.input.targetSec,
-      aspect: run.input.aspect,
-      audioMode: run.input.audioMode,
-      hasPhotos: run.input.photos.length > 0,
-      patternId: run.input.patternId,
-    };
-    
-    const oldSheet = run.sheet;
-    const oldVersion = oldSheet.version;
-    const oldGate = run.gate;
-    
-    // Score: blocking errors * 10 + warnings
-    const scoreGate = (gate: GateResult) => {
-      const blocking = gate.issues.filter((i: GateIssue) => i.level === "error").length;
-      const warnings = gate.issues.filter((i: GateIssue) => i.level === "warn").length;
-      return blocking * 10 + warnings;
-    };
-    
-    let bestSheet = oldSheet;
-    let bestGate = oldGate;
-    let bestScore = scoreGate(oldGate);
-    const changes: string[] = [];
-    const MAX_ATTEMPTS = 2;
-    
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        // Target both errors and warnings
-        const fixes = bestGate.issues;
-        const result = await writeSheet(input, chatWithRetry, fixes, oldVersion + attempt);
-        const currentSheet = result.sheet;
-        const currentGate = sheetGate(currentSheet, { facts: factBase(run), rules: run.rules });
-        const currentScore = scoreGate(currentGate);
-        
-        // Keep only if strictly better
-        if (currentScore < bestScore) {
-          // Track what changed
-          changes.length = 0;
-          for (let i = 0; i < Math.min(currentSheet.shots.length, oldSheet.shots.length); i++) {
-            const oldShot = oldSheet.shots[i];
-            const newShot = currentSheet.shots[i];
-            const durationChanged = Math.abs((newShot.end - newShot.start) - (oldShot.end - oldShot.start)) > 0.1;
-            const framingChanged = oldShot.shotType !== newShot.shotType || oldShot.framing !== newShot.framing;
-            
-            if (durationChanged || framingChanged) {
-              const oldDur = (oldShot.end - oldShot.start).toFixed(1);
-              const newDur = (newShot.end - newShot.start).toFixed(1);
-              const parts: string[] = [];
-              if (durationChanged) parts.push(`${oldDur}s → ${newDur}s`);
-              if (framingChanged) parts.push(`framing now ${newShot.shotType}`);
-              changes.push(`Shot ${i + 1}: ${parts.join(", ")}`);
-            }
-          }
+    // Start background job
+    await startSheetJob(run, "Fixing gaps...", async (r) => {
+      const meter = meterFor(r);
+      const chatWithRetry: Chat = async <T,>(system: string, userPrompt: string) => {
+        const TEXT_ESTIMATE = 0.02;
+        const result = await meter.run({ stage: "fix_gaps", what: "fix gate failures", model: r.input.textModel, estimate: TEXT_ESTIMATE }, async () => {
+          const { chatJSON } = await import("@/lib/ai");
+          let lastError: Error | null = null;
           
-          bestSheet = currentSheet;
-          bestGate = currentGate;
-          bestScore = currentScore;
-        }
-      } catch (e) {
-        const errMsg = (e as Error).message;
-        console.error(`[fix_gaps] Attempt ${attempt} failed:`, e);
-        // If it's a cap error, return immediately
-        if (errMsg.includes("cap reached")) {
-          return NextResponse.json({ error: errMsg }, { status: 400 });
-        }
-        // Continue to next attempt on other errors
-      }
-    }
-    
-    const originalErrors = oldGate.issues.filter((i) => i.level === "error").length;
-    const bestErrors = bestGate.issues.filter((i) => i.level === "error").length;
-    const improved = bestScore < scoreGate(oldGate);
-    
-    if (improved) {
-      run.sheet = bestSheet;
-      run.gate = bestGate;
-      await saveProgress(run);
+          // Retry on network errors
+          for (let retry = 0; retry < 2; retry++) {
+            try {
+              const { data, usage } = await chatJSON<T>(r.input.textModel, system, userPrompt);
+              return { value: { data, usd: usage.costUsd }, usd: usage.costUsd };
+            } catch (e) {
+              const err = e as Error;
+              const isNetworkError = /fetch failed|ConnectTimeoutError|UND_ERR_CONNECT_TIMEOUT|5\d{2}/i.test(err.message);
+              lastError = err;
+              
+              if (isNetworkError && retry < 1) {
+                console.warn(`[fix_gaps] Network error on attempt ${retry + 1}, retrying after backoff...`);
+                await new Promise(resolve => setTimeout(resolve, (retry + 1) * 2000));
+                continue;
+              }
+              throw err;
+            }
+          }
+          throw lastError!;
+        });
+        return result;
+      };
       
-      return NextResponse.json({
-        run,
+      const input = {
+        brand: r.input.brand,
+        goal: r.input.goal,
+        offer: r.input.offer,
+        facts: r.input.facts,
+        brief: r.brief,
+        research: r.research,
+        rules: r.rules,
+        targetSec: r.input.targetSec,
+        aspect: r.input.aspect,
+        audioMode: r.input.audioMode,
+        hasPhotos: r.input.photos.length > 0,
+        patternId: r.input.patternId,
+      };
+      
+      const oldSheet = r.sheet!;
+      const oldVersion = oldSheet.version;
+      const oldGate = r.gate!;
+      
+      // Score: blocking errors * 10 + warnings
+      const scoreGate = (gate: GateResult) => {
+        const blocking = gate.issues.filter((i: GateIssue) => i.level === "error").length;
+        const warnings = gate.issues.filter((i: GateIssue) => i.level === "warn").length;
+        return blocking * 10 + warnings;
+      };
+      
+      const bestScore = scoreGate(oldGate);
+      const MAX_ATTEMPTS = 2;
+      
+      // Run attempts concurrently with Promise.all
+      const attemptPromises = Array.from({ length: MAX_ATTEMPTS }, (_, i) => {
+        const attempt = i + 1;
+        return (async () => {
+          try {
+            // Target both errors and warnings
+            const fixes = oldGate.issues;
+            const result = await writeSheet(input, chatWithRetry, fixes, oldVersion + attempt);
+            const currentSheet = result.sheet;
+            const currentGate = sheetGate(currentSheet, { facts: factBase(r), rules: r.rules });
+            const currentScore = scoreGate(currentGate);
+            return { sheet: currentSheet, gate: currentGate, score: currentScore, attempt };
+          } catch (e) {
+            const errMsg = (e as Error).message;
+            console.error(`[fix_gaps] Attempt ${attempt} failed:`, e);
+            // If it's a cap error, throw it to stop all attempts
+            if (errMsg.includes("cap reached")) {
+              throw e;
+            }
+            // Return null for other errors so we can continue with other attempts
+            return null;
+          }
+        })();
+      });
+      
+      const results = await Promise.all(attemptPromises);
+      
+      // Filter out failed attempts and find the best result
+      const validResults = results.filter((r): r is NonNullable<typeof r> => r !== null);
+      
+      let bestSheet = oldSheet;
+      let bestGate = oldGate;
+      let newBestScore = bestScore;
+      
+      for (const result of validResults) {
+        if (result.score < newBestScore) {
+          bestSheet = result.sheet;
+          bestGate = result.gate;
+          newBestScore = result.score;
+        }
+      }
+      
+      // Track what changed if we found a better sheet
+      const changes: string[] = [];
+      if (newBestScore < bestScore) {
+        for (let i = 0; i < Math.min(bestSheet.shots.length, oldSheet.shots.length); i++) {
+          const oldShot = oldSheet.shots[i];
+          const newShot = bestSheet.shots[i];
+          const durationChanged = Math.abs((newShot.end - newShot.start) - (oldShot.end - oldShot.start)) > 0.1;
+          const framingChanged = oldShot.shotType !== newShot.shotType || oldShot.framing !== newShot.framing;
+          
+          if (durationChanged || framingChanged) {
+            const oldDur = (oldShot.end - oldShot.start).toFixed(1);
+            const newDur = (newShot.end - newShot.start).toFixed(1);
+            const parts: string[] = [];
+            if (durationChanged) parts.push(`${oldDur}s → ${newDur}s`);
+            if (framingChanged) parts.push(`framing now ${newShot.shotType}`);
+            changes.push(`Shot ${i + 1}: ${parts.join(", ")}`);
+          }
+        }
+        
+        r.sheet = bestSheet;
+        r.gate = bestGate;
+      }
+      
+      // Save fix_gaps result in a field the UI can poll
+      const originalErrors = oldGate.issues.filter((i) => i.level === "error").length;
+      const bestErrors = bestGate.issues.filter((i) => i.level === "error").length;
+      const improved = newBestScore < bestScore;
+      
+      // Store result in run for UI to poll (add to run-types.ts)
+      (r as { fixGapsResult?: unknown }).fixGapsResult = {
         changes,
-        fixed: originalErrors - bestErrors,
+        fixed: improved ? originalErrors - bestErrors : 0,
         remaining: bestErrors + bestGate.issues.filter((i) => i.level === "warn").length,
-      });
-    } else {
-      // Keep original sheet unchanged
-      return NextResponse.json({
-        run,
-        changes: [],
-        fixed: 0,
-        remaining: oldGate.issues.length,
-        message: `Couldn't improve automatically; ${oldGate.issues.length} issue(s) remain`,
-      });
-    }
+        message: improved ? undefined : `Couldn't improve automatically; ${oldGate.issues.length} issue(s) remain`,
+      };
+      
+      await saveProgress(r);
+    });
+    
+    return NextResponse.json({ run, status: "working" });
   }
   
   if (a === "override_gate") {

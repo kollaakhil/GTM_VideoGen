@@ -77,15 +77,41 @@ function mem(): Mem {
   return g.__gtmMem!;
 }
 
+let pendingPersist: NodeJS.Timeout | null = null;
+let persistInProgress = false;
+
 function persist() {
   if (!canPersist || !g.__gtmMem) return;
-  const m = g.__gtmMem;
-  const out: Record<string, unknown> = { metrics: m.metrics };
-  for (const t of TABLES) out[t] = [...m[t].values()];
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = `${DB_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(out));
-  fs.renameSync(tmp, DB_FILE);
+  
+  // Debounce: coalesce rapid writes into one persist call after 100ms of quiet
+  if (pendingPersist) {
+    clearTimeout(pendingPersist);
+  }
+  
+  pendingPersist = setTimeout(() => {
+    pendingPersist = null;
+    
+    // Skip if already persisting (another persist will be queued after this one completes)
+    if (persistInProgress) {
+      persist(); // Re-queue
+      return;
+    }
+    
+    persistInProgress = true;
+    try {
+      const m = g.__gtmMem!;
+      const out: Record<string, unknown> = { metrics: m.metrics };
+      for (const t of TABLES) out[t] = [...m[t].values()];
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      
+      // Atomic write: temp file + rename
+      const tmp = `${DB_FILE}.${Date.now()}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(out));
+      fs.renameSync(tmp, DB_FILE);
+    } finally {
+      persistInProgress = false;
+    }
+  }, 100);
 }
 
 function mediaPath(rel: string) {

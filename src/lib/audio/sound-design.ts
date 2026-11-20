@@ -69,13 +69,26 @@ const SoundPlanSchema = z.object({
 });
 
 function soundPrompt(sheet: ShotSheet, brief: Brief | null, patternName?: string): string {
-  const shots = sheet.shots.map((s, i) => 
-    `Shot ${i + 1} (${(s.end - s.start).toFixed(1)}s): ${s.subject}. ${s.action}. ` +
-    `VO: ${s.audio.vo ?? "(none)"}. Sheet SFX: ${s.audio.sfx ?? "(none)"}. Transition: ${s.transition}.`
-  ).join("\n");
+  const shots = sheet.shots.map((s, i) => {
+    const beat = s.beat ? ` Beat: ${s.beat}.` : "";
+    const sheetSfx = s.audio.sfx ? ` Sheet SFX: "${s.audio.sfx}".` : "";
+    return `Shot ${i + 1} (${(s.end - s.start).toFixed(1)}s): ${s.subject}. ${s.action}.` +
+      ` VO: ${s.audio.vo ?? "(none)"}.${sheetSfx}${beat} Transition: ${s.transition}.`;
+  }).join("\n");
 
   const brandInfo = brief ? `Objective: ${brief.objective}. Audience: ${brief.audience}. Insight: ${brief.insight}.` : "";
   const patternInfo = patternName ? `Story pattern: ${patternName}.` : "";
+  
+  // Find special beats for stings
+  const butSilenceIdx = sheet.shots.findIndex((s) => s.beat === "but_silence");
+  const endCardIdx = sheet.shots.findIndex((s) => s.shotType === "end card");
+  let stingInstructions = "";
+  if (butSilenceIdx >= 0) {
+    stingInstructions += `\n- Add a short sting or impact sound at shot ${butSilenceIdx + 1} (the "but" turn) with offset around when the turn happens.`;
+  }
+  if (endCardIdx >= 0) {
+    stingInstructions += `\n- Add a short sting or impact at shot ${endCardIdx + 1} (end card) with offset 0.0 for impact.`;
+  }
 
   return `You are a sound designer. From this ad's shot sheet, product and story pattern, design unique audio that matches the content.
 
@@ -89,13 +102,17 @@ PATTERN RULES:
 ${sheet.rules.map((r) => `- [${r.id}] ${r.text}`).join("\n") || "(none)"}
 
 INSTRUCTIONS:
-1. SFX: 0-3 per shot, each with an exact description tied to what's on screen (e.g. "glass bottle placed on marble counter" not "thud"), offset in seconds within that shot, and gain 0-1.
+1. SFX: For each shot, create 0-3 cues. Each cue MUST:
+   - Use the exact sheet SFX field when present (e.g. "glass bottle set down on marble" from sheet becomes your description)
+   - If sheet SFX is missing, derive from the shot's visible action and subject (e.g. for "can opens" action → "aluminum can crack and fizz")
+   - Set offset in seconds to when the action happens within that shot (e.g. if action is "pours at 0.8s", offset should be around 0.8)
+   - Use gain 0.2-0.5 for subtle ambience, 0.6-0.8 for main action sounds${stingInstructions}
 2. Music: Check the pattern rules. If any rule says to leave out music, omit background music, or pause music, then music MUST be { type: "none" }. Otherwise, provide a cue with a prompt describing genre, tempo, instruments and mood derived from THIS script's content (each run gets different music).
 3. Voice: Choose gender, age, energy and pace from the brand and script.
 
 Return JSON:
 {
-  "sfx": [{"description": "exact sound", "shot": 0, "offset": 0.5, "gain": 0.3}],
+  "sfx": [{"description": "exact sound tied to visible action", "shot": 0, "offset": 0.5, "gain": 0.3}],
   "music": {"type": "none"} OR {"type": "cue", "prompt": "genre, tempo, instruments, mood"},
   "voice": {"gender": "female", "age": "30s", "energy": "warm", "pace": "steady"}
 }`;
