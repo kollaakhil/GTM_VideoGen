@@ -134,12 +134,13 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
         }
         
         return { url: result.url, usd: result.usage.costUsd };
-      } catch (error: any) {
+      } catch (error: unknown) {
         // All models failed - generate bundled audio as last resort and store visible warning
-        if (error.audioFallbackFailure) {
+        const err = error as { audioFallbackFailure?: boolean; primary?: string; lastError?: unknown };
+        if (err.audioFallbackFailure) {
           console.error(`❌ [AUDIO FAILURE] All SFX models failed, using bundled audio`);
-          console.error(`    Primary: ${error.primary}`);
-          console.error(`    Last error: ${error.lastError}`);
+          console.error(`    Primary: ${err.primary}`);
+          console.error(`    Last error: ${err.lastError}`);
           
           // Generate bundled audio or silence as absolute last resort
           const { loadBundledAudio, generateSilence } = await import("@/lib/audio/bundled");
@@ -168,12 +169,13 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
         }
         
         return result.url;
-      } catch (error: any) {
+      } catch (error: unknown) {
         // All models failed - generate bundled music as last resort and store visible warning
-        if (error.audioFallbackFailure) {
+        const err = error as { audioFallbackFailure?: boolean; primary?: string; lastError?: unknown };
+        if (err.audioFallbackFailure) {
           console.error(`❌ [AUDIO FAILURE] All music models failed, using bundled audio`);
-          console.error(`    Primary: ${error.primary}`);
-          console.error(`    Last error: ${error.lastError}`);
+          console.error(`    Primary: ${err.primary}`);
+          console.error(`    Last error: ${err.lastError}`);
           
           // Generate bundled music or silence as absolute last resort
           const { loadBundledAudio, generateSilence } = await import("@/lib/audio/bundled");
