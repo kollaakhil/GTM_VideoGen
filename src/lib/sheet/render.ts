@@ -62,7 +62,7 @@ export interface RenderDeps {
   /** Persists a data URL and returns a stable URL. */
   store(data: string, key: string): Promise<string>;
   shotCheck: ShotCheckDeps;
-  stitch(clips: string[], audio: { voices: { url: string; start: number }[]; sfx: (SfxCue | GeneratedSfxCue)[]; duck: boolean; bedGain: number; music: string | null; shotSeconds: number[]; width: number; height?: number; silenceGaps?: { start: number; end: number }[] }): Promise<Stitched>;
+  stitch(clips: string[], audio: { voices: { url: string; start: number }[]; sfx: (SfxCue | GeneratedSfxCue)[]; duck: boolean; bedGain: number; music: string | null; shotSeconds: number[]; width: number; height?: number; silenceGaps?: { start: number; end: number }[]; transitions?: string[] }): Promise<Stitched>;
   /** A free synthesised bed (drone) for the sheet's "bed" line, as a data URL; null for none. */
   bed?(description: string, seconds: number): Promise<string | null>;
   /** Voiceover for a line (vo mode only). Gated by the meter like every paid call. */
@@ -490,7 +490,8 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
     shotSeconds: sheet.shots.map(dur), 
     width, 
     height,
-    silenceGaps
+    silenceGaps,
+    transitions: shots.map((s) => s.transition),
   });
   
   // Burn chunked captions for pattern-aware sheets, but not over the end card

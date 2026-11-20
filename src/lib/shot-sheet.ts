@@ -26,6 +26,17 @@ const Str = (n: number, min = 0) =>
     min > 0 ? z.string().min(min) : z.string()
   );
 
+/** Visual look schema: brand-driven colors, grade, rim, materials, fonts, textures. */
+export const LookSchema = z.object({
+  background: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  palette: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).max(5).optional(),
+  grade: Str(60).optional(),
+  rimColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  font: Str(120).optional(),
+  texture: Str(80).optional(),
+}).optional();
+export type Look = z.infer<typeof LookSchema>;
+
 export const ShotSchema = z.object({
   id: Str(24, 1),
   n: z.number().int().min(1).max(60),
@@ -54,6 +65,8 @@ export const ShotSchema = z.object({
   editorNote: Str(400).default(""),
   /** Story pattern beat/role (optional, so existing sheets still parse). */
   beat: Str(40).optional(),
+  /** Per-shot look override (optional, falls back to sheet.look). */
+  look: LookSchema,
 });
 export type SheetShot = z.infer<typeof ShotSchema>;
 
@@ -80,7 +93,7 @@ export const SheetSchema = z.object({
   palette: Str(120).default(""),
   rules: z.array(RuleSchema).max(30),
   shots: z.array(ShotSchema).min(1).max(40),
-  endCard: z.object({ title: Str(60, 1), line: Str(120).default(""), footer: Str(120).default("") }),
+  endCard: z.object({ title: Str(60, 1), line: Str(120).default(""), footer: Str(120).default(""), layout: Str(40).optional() }),
   /** Story pattern ID (optional, defaults to confession_loop). */
   patternId: Str(40).optional(),
   /** Recurring character definition (look, wardrobe, age, setting) for people shots. */
@@ -104,6 +117,8 @@ export const SheetSchema = z.object({
     accent: Str(60).optional(),
     pronunciation: Str(200).optional(),
   }).nullable().optional(),
+  /** Global look defaults: brand-derived background, palette, grade, rim, font. */
+  look: LookSchema,
 });
 export type ShotSheet = z.infer<typeof SheetSchema>;
 

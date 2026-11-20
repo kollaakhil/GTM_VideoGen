@@ -50,7 +50,7 @@ export interface RenderContext {
   /** AI video: resolution tier ("480p"). */
   resolution?: string;
   /** Remotion card props, when the row is a card. */
-  card?: { brand: string; line?: string; cta?: string; footer?: string; bg?: string; ink?: "black" | "white"; accent?: string };
+  card?: { brand: string; line?: string; cta?: string; footer?: string; bg?: string; ink?: "black" | "white"; accent?: string; logo?: string | null; productPhoto?: string | null; layout?: string };
   signal?: AbortSignal;
 }
 

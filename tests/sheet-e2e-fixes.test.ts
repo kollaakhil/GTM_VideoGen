@@ -49,7 +49,7 @@ describe("the shot sheet decides the renderer", () => {
     expect(lab.spec).toMatchObject({ camera: { preset: "macro_contact", push: 0.1, lens: 100 }, toggle: { close: expect.any(Number) }, labels: [{ text: "HIGH THINKING" }] });
     expect((lab.spec.traces as { color: string; ignite: number }[])[0]).toMatchObject({ color: "#ff5e00", ignite: 0.6 });
     const macro = kitJob({ ...sheet.shots[0], blender: { template: "macro_label", label: "#1 INDEX" } } as SheetShot, sheet, { width: 1920, height: 1080, mode: "final" });
-    expect(macro).toMatchObject({ script: "shot_kit.py", spec: { template: "macro_label", label: "#1 INDEX", camera: { move: "push", amount: 0.1, angle: "low" }, samples: 16, width: 1280, height: 720 } });
+    expect(macro).toMatchObject({ script: "shot_kit.py", spec: { template: "macro_label", label: "#1 INDEX", camera: { move: "slow push-in 10%", amount: 0.1, angle: "low" }, samples: 16, width: 1280, height: 720 } });
   });
 });
 
