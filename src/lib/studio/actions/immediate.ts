@@ -124,7 +124,7 @@ export async function removeProductPhoto(run: StudioRun, body: Body<"remove_prod
   const after = run.research.productPhotos.length;
   
   if (after < before) {
-    say(run, "info", `Removed product photo from research (${after} remaining).`);
+    say(run, "agent", `Removed product photo from research (${after} remaining).`);
   }
   
   run.updatedAt = now();
