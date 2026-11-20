@@ -1,12 +1,17 @@
 import fs from "node:fs";
 import { after } from "next/server";
 import { get, put } from "@/lib/store";
-import type { CostEntry, SheetRun } from "./run-types";
+import type { CostEntry, SheetRun, Version } from "./run-types";
 
 /** Background jobs for sheet runs: one at a time per run, in this server process. */
 const live: Set<string> = ((globalThis as { __sheetJobs?: Set<string> }).__sheetJobs ??= new Set());
 
 export const nowIso = () => new Date().toISOString();
+
+/** Removes a run from the live job set (used by cancel to prevent stale job re-entry). */
+export function deleteLive(runId: string) {
+  live.delete(runId);
+}
 
 /** Appends every paid call to SPEND_LEDGER (a markdown table) when set, so the operator's ledger stays complete. */
 export function ledger(run: SheetRun, e: CostEntry) {
@@ -95,7 +100,38 @@ export async function startSheetJob(run: SheetRun, activity: string, work: (run:
 }
 
 export async function saveProgress(run: SheetRun) {
-  run.updatedAt = nowIso();
+  const now = nowIso();
+  const oldUpdatedAt = run.updatedAt;
+  run.updatedAt = now;
+  
+  // Version check: reject stale writes from cancelled jobs
+  // Load the current version and only save if we're newer or it's our own write
+  const currentDoc = await get("sheet_runs", run.id);
+  const current = currentDoc ? (currentDoc as SheetRun) : null;
+  if (current && current.updatedAt > oldUpdatedAt) {
+    // Another process has updated since we last read - this is a stale write
+    // Merge critical fields (cost, versions status) but preserve newer edits (cap, override)
+    console.warn(`[sheet] Stale save detected for ${run.id}: current ${current.updatedAt} > old ${oldUpdatedAt}. Merging.`);
+    
+    // Merge: keep their cap/override, add our cost entries and version updates
+    run.cost.capUsd = current.cost.capUsd; // Preserve user's cap edits
+    run.gateOverride = current.gateOverride; // Preserve user's override edits
+    
+    // Append our new cost entries to theirs
+    const ourNewEntries = run.cost.entries.filter(e => e.at > oldUpdatedAt);
+    run.cost.entries = [...current.cost.entries, ...ourNewEntries];
+    
+    // Merge version updates: keep the most recent status per version
+    const versionMap = new Map<string, Version>(current.versions.map(v => [v.id, v] as [string, Version]));
+    for (const v of run.versions) {
+      const existing = versionMap.get(v.id);
+      if (!existing || v.usd > existing.usd || v.status !== existing.status) {
+        versionMap.set(v.id, v);
+      }
+    }
+    run.versions = Array.from(versionMap.values());
+  }
+  
   await put("sheet_runs", run);
 }
 

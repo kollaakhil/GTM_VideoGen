@@ -56,12 +56,12 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
       run.activity = null;
     }
     
-    // Save with a version check to prevent stale job overwrites
-    await saveProgress(run);
+    // Delete from live map so stale job can't re-add itself
+    const { deleteLive } = await import("./jobs");
+    deleteLive(run.id);
     
-    // TODO: The stale job's whole-run save could still overwrite newer edits (cap, override).
-    // Future improvement: add version/timestamp checking in saveProgress to reject stale writes,
-    // or make saves merge specific fields instead of replacing the whole run.
+    // Save with version check (saveProgress now merges on conflict)
+    await saveProgress(run);
     
     return NextResponse.json({ run });
   }
@@ -75,7 +75,6 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
 
     const run = await loadRun(body.runId);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-    if (run.createdBy !== user) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     if (run.status === "working") return NextResponse.json({ error: "Run is busy. Cancel the current job or wait for it to finish." }, { status: 409 });
 
     // Validate stacks

@@ -170,7 +170,20 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
   const videoModel = v.stack?.models?.video && v.stack.models.video !== "auto" ? v.stack.models.video : "";
   const rows = shots.map((s) => ({ s, row: rowFromSheetShot(s, {}, sheet.palette) as ShotRow }));
   const accent = sheet.palette.match(/#[0-9a-fA-F]{6}/)?.[0];
-  const card = { brand: sheet.endCard.title, line: sheet.endCard.line || undefined, footer: sheet.endCard.footer || undefined, ...(accent ? { accent } : {}) };
+  
+  // Select end-card layout based on concept
+  const { selectEndCardLayout } = await import("@/../remotion/EndCardLayouts");
+  const chosenConcept = run.concepts?.concepts.find((c) => c.id === run.concepts?.chosenId);
+  const cardLayout = selectEndCardLayout(chosenConcept, refs.length > 0);
+  
+  const card = { 
+    brand: sheet.endCard.title, 
+    line: sheet.endCard.line || undefined, 
+    footer: sheet.endCard.footer || undefined, 
+    layout: cardLayout,
+    ...(accent ? { accent } : {}),
+    ...(refs.length > 0 ? { productPhoto: refs[0] } : {}),
+  };
   const ctxFor = (s: SheetShot): RenderContext => {
     const jobId = deps.jobContext ? `${deps.jobContext.jobId}-${s.id}` : undefined;
     const signal = jobId ? blenderQueue.getSignal(jobId) : undefined;
