@@ -3,6 +3,7 @@ import { AbsoluteFill, Composition, Img, interpolate, spring, staticFile, useCur
 import type { CaptionLine, CardProps, OverlayLine, OverlayProps, TextCardProps, LowerThirdProps } from "./props";
 import { TextCard } from "./TextCard";
 import { LowerThird } from "./LowerThird";
+import { EndCardLayouts } from "./EndCardLayouts";
 
 const FONT = `@font-face { font-family: "DejaVu Sans"; font-weight: 700; src: url("${staticFile("DejaVuSans-Bold.ttf")}") format("truetype"); }`;
 const fontFamily = "'DejaVu Sans', sans-serif";
@@ -64,42 +65,12 @@ export const OverlayComp: React.FC<OverlayProps> = (p) => (
   </AbsoluteFill>
 );
 
-/** End card: logo, wordmark, offer tag, CTA and footer stagger in and settle by 0.9 s, at the OCR layout's fixed heights. */
+/** End card: uses layout-specific rendering based on concept */
 export const CardComp: React.FC<CardProps> = ({ width: w, height: h, card }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const ink = card.ink === "white" ? "#fff" : "#000";
-  const pop = (delay: number) => spring({ frame: frame - Math.round(delay * fps), fps, config: { damping: 16, stiffness: 170 }, durationInFrames: 12 });
-  // One line each (OCR reads fixed bands): DejaVu Sans Bold averages ~0.63 em per character.
-  const fit = (n: number, len: number) => Math.round(Math.min(n, (w * 0.86) / (Math.max(len, 1) * 0.63)));
-  const row = (y: number, delay: number, child: React.ReactNode) => {
-    const s = pop(delay);
-    return <div style={{ position: "absolute", left: 0, width: w, top: y * h, transform: `translateY(calc(-50% + ${(1 - s) * 18}px))`, opacity: s, display: "flex", justifyContent: "center" }}>{child}</div>;
-  };
-  const text = (size: number): React.CSSProperties => ({ fontFamily, fontWeight: 700, fontSize: size, color: ink, textAlign: "center", lineHeight: 1.1, whiteSpace: "nowrap" });
-  const inverse = card.ink === "white" ? "#000" : "#fff";
-  const lineSize = fit(h / 28, card.line?.length ?? 1);
+  const layout = card.layout || "classic";
+  const LayoutComponent = EndCardLayouts[layout];
   
-  // When product photo is available, show it beside the brand name
-  const brandWithPhoto = card.productPhoto ? (
-    <div style={{ display: "flex", alignItems: "center", gap: w * 0.04, justifyContent: "center" }}>
-      <Img src={card.productPhoto} style={{ width: w * 0.18, height: w * 0.18, objectFit: "cover", borderRadius: w * 0.02 }} />
-      <div style={text(fit(h / 11, card.brand.length))}>{card.brand}</div>
-    </div>
-  ) : (
-    <div style={text(fit(h / 11, card.brand.length))}>{card.brand}</div>
-  );
-  
-  return (
-    <AbsoluteFill style={{ backgroundColor: card.bg }}>
-      <style>{FONT}</style>
-      {card.logo ? row(0.24, 0, <Img src={card.logo} style={{ width: w * 0.42 }} />) : null}
-      {row(0.4, 0.05, brandWithPhoto)}
-      {card.line ? row(0.52, 0.25, <div style={{ ...text(Math.round(lineSize * 0.9)), color: card.bg === inverse ? ink : card.bg, background: ink, borderRadius: lineSize * 0.4, padding: `${lineSize * 0.16}px ${lineSize * 0.45}px` }}>{card.line}</div>) : null}
-      {card.cta ? row(0.64, 0.45, <div style={text(fit(h / 18, card.cta.length))}>{card.cta}</div>) : null}
-      {card.footer ? row(0.76, 0.65, <div style={{ ...text(fit(h / 34, card.footer.length)), opacity: 0.92 }}>{card.footer}</div>) : null}
-    </AbsoluteFill>
-  );
+  return <LayoutComponent width={w} height={h} card={card} />;
 };
 
 const fps = 30;

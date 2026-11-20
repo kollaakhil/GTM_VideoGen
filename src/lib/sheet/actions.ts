@@ -50,13 +50,19 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
       });
     }
     
-    // Release the 409 guard
+    // Release the 409 guard and delete from live to prevent stale overwrites
     if (run.status === "working") {
       run.status = "idle";
       run.activity = null;
     }
     
+    // Delete from live map so stale job can't re-add itself
+    const { deleteLive } = await import("./jobs");
+    deleteLive(run.id);
+    
+    // Save with version check (saveProgress now merges on conflict)
     await saveProgress(run);
+    
     return NextResponse.json({ run });
   }
   
@@ -69,7 +75,7 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
 
     const run = await loadRun(body.runId);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-    if (run.status === "working") return NextResponse.json({ error: "Run is busy" }, { status: 409 });
+    if (run.status === "working") return NextResponse.json({ error: "Run is busy. Cancel the current job or wait for it to finish." }, { status: 409 });
 
     // Validate stacks
     const stacks: VersionStack[] = [];

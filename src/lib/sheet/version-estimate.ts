@@ -40,10 +40,29 @@ export const SHOT_CHECK_USD = 0.003;
 /**
  * What one version of this sheet will cost, from the sheet itself (not a whole-video guess): AI-video seconds at the
  * stack's model price, plus one cheap check per shot. Blender and Remotion shots are free.
+ * Applies catalog per-clip minimum duration (e.g., Kling bills a 3s minimum).
  */
 export function estimateSheetVersion(sheet: ShotSheet, stack: Pick<VersionStack, "models">, defaultVideoModel: string = DEFAULT_VIDEO_MODEL, tier: Version["tier"] = "preview") {
   const model = stack.models.video && stack.models.video !== "auto" ? stack.models.video : defaultVideoModel;
-  const lines = shotsForStack(sheet, stack).flatMap((s) => (s.engine === "blender" || s.engine === "remotion" ? [] : [{ what: `shot ${s.n} (${dur(s).toFixed(1)}s)`, model, usd: Number((videoPricePerSec(model) * dur(s)).toFixed(4)) }]));
+  const modelEntry = getModel(model);
+  const minSeconds = modelEntry?.caps?.minSeconds ?? 0;
+  
+  const lines = shotsForStack(sheet, stack).flatMap((s) => {
+    if (s.engine === "blender" || s.engine === "remotion") return [];
+    
+    const actualDur = dur(s);
+    const billableDur = Math.max(actualDur, minSeconds);
+    const cost = videoPricePerSec(model) * billableDur;
+    
+    return [{
+      what: minSeconds > 0 && billableDur > actualDur 
+        ? `shot ${s.n} (${actualDur.toFixed(1)}s, billed ${billableDur}s min)` 
+        : `shot ${s.n} (${actualDur.toFixed(1)}s)`,
+      model,
+      usd: Number(cost.toFixed(4))
+    }];
+  });
+  
   const checks = tier === "preview" ? sheet.shots.length * SHOT_CHECK_USD : 0.01;
   lines.push({ what: tier === "preview" ? `${sheet.shots.length} shot checks` : "final review (3 looks)", model: "qa", usd: Number(checks.toFixed(4)) });
   return { usd: Number(lines.reduce((a, l) => a + l.usd, 0).toFixed(4)), lines, blocked: [] as string[] };

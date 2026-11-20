@@ -18,6 +18,7 @@ const TEXT_ESTIMATE = 0.02;
 export type NewRunInput = {
   brandUrl: string; brand?: string; goal: string; offer?: string | null; facts?: string; inspirationUrl?: string | null; photos?: string[];
   targetSec?: number; aspect?: ShotSheet["aspect"]; audioMode?: ShotSheet["audioMode"]; patternId?: string; capUsd?: number; textModel?: string; visionModel?: string;
+  reRenderAllForFinal?: boolean;
 };
 
 const nameOf = (url: string) => {
@@ -34,10 +35,11 @@ export function newSheetRun(i: NewRunInput, user: string): SheetRun {
     id: newId("sr"), createdBy: user, createdAt: nowIso(), updatedAt: nowIso(), status: "idle", activity: null, error: null, step: "brand",
     input: {
       brandUrl: i.brandUrl, brand: i.brand?.trim() || nameOf(i.brandUrl), goal: i.goal, offer: i.offer ?? null, facts: i.facts ?? "", inspirationUrl: i.inspirationUrl || null,
-      photos: i.photos ?? [], targetSec: i.targetSec ?? 20, aspect: i.aspect ?? "16:9", audioMode: i.audioMode ?? "foley", patternId: i.patternId ?? "confession_loop",
+      photos: i.photos ?? [], targetSec: i.targetSec ?? 20, aspect: i.aspect ?? "16:9", audioMode: i.audioMode ?? "foley", patternId: i.patternId ?? "auto",
       textModel: i.textModel || CHEAP_TEXT, visionModel: i.visionModel || CHEAP_VISION,
+      reRenderAllForFinal: i.reRenderAllForFinal ?? false,
     },
-    research: null, brief: null, rules: [], ruleSource: null, script: null, sheet: null, gate: null, gateOverride: null, versions: [],
+    research: null, brief: null, concepts: null, rules: [], ruleSource: null, script: null, sheet: null, gate: null, gateOverride: null, versions: [],
     picks: { mode: "video", video: null, shots: {} }, final: null, timings: [],
     cost: { capUsd: i.capUsd ?? (Number(process.env.RUN_CAP_USD) || 2), spentUsd: 0, entries: [] },
   };
@@ -67,8 +69,51 @@ export async function runBrief(run: SheetRun) {
       return { value: b.data, usd: b.cost };
     }));
   await timed(run, "style rules", () => loadRules(run));
+  
+  // Wire product photos into run.input.photos so shots can use them
+  if (run.research?.productPhotos && run.research.productPhotos.length > 0 && run.input.photos.length === 0) {
+    run.input.photos = run.research.productPhotos.map((p) => p.url);
+  }
+  
+  // Generate story concepts (only if pattern is "auto", not a specific pattern)
+  if (run.input.patternId === "auto") {
+    await timed(run, "concepts", () => generateStoryConcepts(run, chatFor(run, "concepts")));
+  }
+  
   run.step = "brief";
   await saveProgress(run);
+}
+
+/** Step 2b: Generate 3 story concepts and pick the strongest (or let user pick in UI). */
+async function generateStoryConcepts(run: SheetRun, chat: Chat) {
+  const { generateConcepts, pickStrongestConcept, checkNovelty, recordConcept } = await import("./concepts");
+  
+  const concepts = await generateConcepts(chat, {
+    brand: run.input.brand,
+    goal: run.input.goal,
+    brief: run.brief,
+    research: run.research,
+    targetSec: run.input.targetSec,
+  });
+  
+  const chosenId = pickStrongestConcept(concepts);
+  const chosenConcept = concepts.find((c) => c.id === chosenId)!;
+  
+  // Check novelty and record (warnings are stored but don't block)
+  const noveltyCheck = checkNovelty(chosenConcept);
+  recordConcept(chosenConcept);
+  
+  run.concepts = {
+    concepts,
+    chosenId,
+    chosenAt: nowIso(),
+  };
+  
+  // Store novelty warnings in run.error for UI visibility (non-blocking)
+  if (noveltyCheck.warnings.length > 0) {
+    const warningText = `\nConcept novelty notes: ${noveltyCheck.warnings.join("; ")}`;
+    run.error = (run.error || "") + warningText;
+  }
 }
 
 export async function loadRules(run: SheetRun) {
@@ -101,9 +146,13 @@ export async function loadRules(run: SheetRun) {
 
 /** Step 3: script + shot sheet, then check 1 (the gate). One repair pass with the gate's errors if it fails. */
 export async function runSheet(run: SheetRun, chat: Chat = chatFor(run, "sheet")) {
+  // Get the chosen concept if available
+  const chosenConcept = run.concepts?.concepts.find((c) => c.id === run.concepts?.chosenId);
+  
   const input = {
     brand: run.input.brand, goal: run.input.goal, offer: run.input.offer, facts: run.input.facts, brief: run.brief, research: run.research,
     rules: run.rules, targetSec: run.input.targetSec, aspect: run.input.aspect, audioMode: run.input.audioMode, patternId: run.input.patternId, hasPhotos: run.input.photos.length > 0,
+    concept: chosenConcept ? { logline: chosenConcept.logline, premise: chosenConcept.premise, structure: chosenConcept.structure, setting: chosenConcept.setting, character: chosenConcept.character, visualWorld: chosenConcept.visualWorld, tone: chosenConcept.tone, openingShot: chosenConcept.openingShot } : null,
   };
   const version = (run.sheet?.version ?? 0) + 1;
   let out = await timed(run, "shot sheet", () => writeSheet(input, chat, [], version));
@@ -120,12 +169,22 @@ export async function runSheet(run: SheetRun, chat: Chat = chatFor(run, "sheet")
       try {
         const meter = meterFor(run);
         const { generateImage, aiConfigured } = await import("@/lib/ai");
+        const { STAGE_DEFAULTS } = await import("@/lib/registry");
         if (aiConfigured()) {
           const charImg = await timed(run, "character reference", async () => {
+            // Use the version stack image model, or the verified default image model
+            const imageModel = run.versions.find((v) => v.stack?.models?.image)?.stack.models.image || STAGE_DEFAULTS.image;
+            
+            // Pass the first product photo as reference context if available
+            const productPhotoRefs = run.input.photos.slice(0, 1);
+            const contextPrompt = productPhotoRefs.length > 0 
+              ? `The attached reference shows the product they will hold. Portrait reference: ${out.sheet.character!.description}. Professional headshot style, neutral expression, well-lit, clear details. The character should be compatible with holding the product shown in the reference. No text, logos or graphics.`
+              : `Portrait reference image: ${out.sheet.character!.description}. Professional headshot style, neutral expression, well-lit, clear details. No text, logos or graphics.`;
+            
             const result = await generateImage(
-              run.input.visionModel,
-              `Portrait reference image: ${out.sheet.character!.description}. Professional headshot style, neutral expression, well-lit, clear details. No text, logos or graphics.`,
-              []
+              imageModel,
+              contextPrompt,
+              productPhotoRefs
             );
             const stored = await storeMedia(result.url, `${run.id}/character-${Date.now()}`);
             return stored;
@@ -133,7 +192,10 @@ export async function runSheet(run: SheetRun, chat: Chat = chatFor(run, "sheet")
           out.sheet.character.referenceUrl = charImg;
         }
       } catch (e) {
-        console.warn("Failed to generate character reference:", e);
+        console.error("Failed to generate character reference:", e);
+        // Surface the failure in run notes
+        if (!run.error) run.error = "";
+        run.error += `\nWarning: Character reference generation failed: ${(e as Error).message.slice(0, 200)}`;
       }
     }
   }

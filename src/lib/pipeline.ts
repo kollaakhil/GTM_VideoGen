@@ -48,24 +48,60 @@ async function fetchSite(url: string): Promise<Site> {
   }
 }
 
+/** Upgrades http URLs to https and handles protocol-relative URLs. */
+function normalizeImageUrl(urlString: string, base: string): string | null {
+  try {
+    let normalized = urlString;
+    // Handle protocol-relative URLs (//example.com/image.jpg)
+    if (normalized.startsWith("//")) {
+      normalized = "https:" + normalized;
+    }
+    // Upgrade http to https
+    if (normalized.startsWith("http://")) {
+      normalized = "https://" + normalized.slice(7);
+    }
+    const parsed = new URL(normalized, base);
+    // Only accept https URLs
+    if (parsed.protocol === "https:") {
+      return parsed.toString();
+    }
+  } catch {}
+  return null;
+}
+
+/** Checks if a URL path ends with an image extension (ignoring query params). */
+function hasImageExtension(url: URL): boolean {
+  return /\.(jpg|jpeg|png|webp)$/i.test(url.pathname);
+}
+
 /** Scrape product images from the brand site (og:image, product pages, JSON-LD, Shopify /products.json). */
 export async function scrapeProductImages(brandUrl: string): Promise<{ url: string; sourceUrl: string }[]> {
   const images: { url: string; sourceUrl: string }[] = [];
   const seen = new Set<string>();
   
   try {
-    // 1. Try homepage og:image
+    // 1. Try homepage og:image and og:image:secure_url
     const html = await safeFetchText(brandUrl);
     const ogImage = html.match(/<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)["']/i) ?? 
                     html.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
-    if (ogImage) {
+    const ogSecure = html.match(/<meta[^>]+property=["']og:image:secure_url["'][^>]*content=["']([^"']+)["']/i) ??
+                     html.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image:secure_url["']/i);
+    
+    // Prefer og:image:secure_url over og:image
+    const ogCandidates = [ogSecure?.[1], ogImage?.[1]].filter(Boolean);
+    
+    for (const candidate of ogCandidates) {
       try {
-        const imageUrl = new URL(ogImage[1].replace(/&amp;/g, "&"), brandUrl);
-        if (imageUrl.protocol === "https:" && imageUrl.pathname.match(/\.(jpg|jpeg|png|webp)$/i)) {
+        const normalized = normalizeImageUrl(candidate!.replace(/&amp;/g, "&"), brandUrl);
+        if (!normalized) continue;
+        
+        const imageUrl = new URL(normalized);
+        if (hasImageExtension(imageUrl)) {
           const url = imageUrl.toString();
           if (!seen.has(url)) {
             images.push({ url, sourceUrl: brandUrl });
             seen.add(url);
+            break; // Only take first valid og:image
           }
         }
       } catch {}
@@ -84,10 +120,13 @@ export async function scrapeProductImages(brandUrl: string): Promise<{ url: stri
               const imageUrl = typeof img === "string" ? img : img?.url;
               if (imageUrl && typeof imageUrl === "string") {
                 try {
-                  const url = new URL(imageUrl, brandUrl).toString();
-                  if (!seen.has(url) && url.match(/\.(jpg|jpeg|png|webp)$/i)) {
-                    images.push({ url, sourceUrl: brandUrl });
-                    seen.add(url);
+                  const normalized = normalizeImageUrl(imageUrl, brandUrl);
+                  if (!normalized) continue;
+                  
+                  const parsedUrl = new URL(normalized);
+                  if (hasImageExtension(parsedUrl) && !seen.has(normalized)) {
+                    images.push({ url: normalized, sourceUrl: brandUrl });
+                    seen.add(normalized);
                     if (images.length >= 3) return images; // Enough
                   }
                 } catch {}
@@ -111,10 +150,13 @@ export async function scrapeProductImages(brandUrl: string): Promise<{ url: stri
               for (const img of product.images.slice(0, 2)) {
                 if (img.src && typeof img.src === "string") {
                   try {
-                    const url = new URL(img.src, brandUrl).toString();
-                    if (!seen.has(url) && url.match(/\.(jpg|jpeg|png|webp)$/i)) {
-                      images.push({ url, sourceUrl: productsUrl });
-                      seen.add(url);
+                    const normalized = normalizeImageUrl(img.src, brandUrl);
+                    if (!normalized) continue;
+                    
+                    const parsedUrl = new URL(normalized);
+                    if (hasImageExtension(parsedUrl) && !seen.has(normalized)) {
+                      images.push({ url: normalized, sourceUrl: productsUrl });
+                      seen.add(normalized);
                       if (images.length >= 3) return images;
                     }
                   } catch {}
@@ -149,15 +191,22 @@ export async function scrapeProductImages(brandUrl: string): Promise<{ url: stri
           const pageHtml = await safeFetchText(pageUrl);
           const pageOgImage = pageHtml.match(/<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)["']/i) ?? 
                               pageHtml.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
-          if (pageOgImage) {
+          const pageOgSecure = pageHtml.match(/<meta[^>]+property=["']og:image:secure_url["'][^>]*content=["']([^"']+)["']/i) ??
+                               pageHtml.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image:secure_url["']/i);
+          
+          // Prefer og:image:secure_url over og:image
+          const pageCandidates = [pageOgSecure?.[1], pageOgImage?.[1]].filter(Boolean);
+          
+          for (const candidate of pageCandidates) {
             try {
-              const imageUrl = new URL(pageOgImage[1].replace(/&amp;/g, "&"), pageUrl);
-              if (imageUrl.protocol === "https:" && imageUrl.pathname.match(/\.(jpg|jpeg|png|webp)$/i)) {
-                const url = imageUrl.toString();
-                if (!seen.has(url)) {
-                  images.push({ url, sourceUrl: pageUrl });
-                  seen.add(url);
-                }
+              const normalized = normalizeImageUrl(candidate!.replace(/&amp;/g, "&"), pageUrl);
+              if (!normalized) continue;
+              
+              const imageUrl = new URL(normalized);
+              if (hasImageExtension(imageUrl) && !seen.has(normalized)) {
+                images.push({ url: normalized, sourceUrl: pageUrl });
+                seen.add(normalized);
+                break; // Only take first valid image per page
               }
             } catch {}
           }
