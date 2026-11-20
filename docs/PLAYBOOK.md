@@ -1227,3 +1227,74 @@ All tests in `tests/blender-queue.test.ts`:
 **Result:** Users can now render videos with style warnings. The Previews button is enabled when only warnings remain. If there ARE blocking errors (clock, missing fields), users can override non-claim errors with "Continue anyway" or use "Fix the gaps" (which now never makes things worse). Claim/safety errors still block and cannot be overridden.
 
 **Related:** See §14.3 (shot sheet gate), §23 (Fix the gaps button), §6 (stage gates).
+
+## 25. Audio and Blender parallelism fixes (2026-11-20)
+
+**Problem:** End-to-end test showed audio generation was slow and sequential, Blender renders bypassed the queue limiter and swapped an 8GB Mac heavily, and SFX models were deprecated causing all generated audio to fail silently.
+
+**Root causes:**
+1. **SFX generation broken**: `fal-ai/mmaudio-v2` and `fal-ai/stable-audio-3/small/sfx/text-to-audio` returned `{"detail":"This endpoint is deprecated"}`. `elevenlabs/sound-effects/v3` wanted `text` key not `prompt` (422). `mirelo-ai/sfx2.0/text-to-audio` returned `audio` as an array but code read `result.audio?.url`. `falRun` never checked `detail` field or HTTP errors properly.
+2. **Sequential audio**: SFX cues ran sequentially at render.ts ~260-273, voice lines at ~251-255. Sound-design LLM call started after shot checks instead of in parallel.
+3. **Blender queue bypassed**: `start_versions` called `deps(version?.stack.models)` without `jobContext` (actions.ts ~125), so the BLENDER_PARALLEL=1 limiter was skipped and runParallel started 4 Blenders. No RAM-aware defaults.
+4. **fix_gaps slow and synchronous**: Made 2 sequential ~49s LLM attempts inside HTTP request with no in-progress guard, risking 300s maxDuration timeout.
+5. **store.ts unsafe writes**: Rewrote whole db.json synchronously on every put (~79-88) with no atomic rename or debouncing, risking data loss on crash.
+6. **SFX didn't match picture**: Sound design prompt didn't emphasize using sheet SFX fields directly or timing cues to visible actions. Failed SFX fell back silently to generic lavfi foley.
+
+**Fix:**
+1. **SFX model fixes** (`src/lib/ai.ts`, `src/lib/audio/generate.ts`):
+   - `falRun` now checks `detail` field in both initial response and completed result, throws on error
+   - Switched default SFX model to `mirelo-ai/sfx2.0/text-to-audio` (working as of 2026-11-20)
+   - Handle array output from mirelo: `result.audio` can be array or single object
+   - Use per-model input keys from `FAL_KNOBS` snapshot: `elevenlabs/sound-effects/v3` uses `text` key
+   - Removed deprecated models from defaults (mmaudio-v2, stable-audio-3/small/sfx)
+   - Verified music model (`elevenlabs/music/v2.5`) and voice model (`fal-ai/elevenlabs/tts/eleven-v3`) still work
+
+2. **Parallel audio** (`src/lib/sheet/render.ts`):
+   - Sound-design LLM call now starts in parallel with shot checks instead of after
+   - SFX cues run with bounded concurrency (4 at a time) instead of sequentially
+   - Voice lines run with bounded concurrency (4 at a time)
+   - Timing: sound design + shot checks now overlap, audio generation batched
+
+3. **Blender queue fixed** (`src/lib/sheet/actions.ts`, `src/lib/render/blender-queue.ts`):
+   - Pass `jobContext` to `deps()` in start_versions so all Blender renders share one limiter
+   - Default concurrency: 2 on machines with ≤16GB RAM (os.totalmem), 4 otherwise, overridable via BLENDER_PARALLEL env var
+   - Prevents memory thrashing on low-RAM machines
+
+4. **fix_gaps async** (`src/lib/sheet/actions.ts`, tests updated):
+   - Runs as background job via `startSheetJob`, returns "working" status immediately
+   - UI polls run status until complete
+   - LLM attempts run concurrently with `Promise.all` instead of sequentially
+   - Keeps best result including original (never makes it worse)
+   - Result stored in run's `fixGapsResult` field for UI to display
+   - Tests updated to handle async behavior with polling
+
+5. **Atomic writes** (`src/lib/store.ts`):
+   - Writes debounced to 100ms (coalesces rapid writes)
+   - Atomic: temp file with timestamp+PID, then rename to final path
+   - In-progress flag prevents concurrent writes
+
+6. **SFX tied to picture** (`src/lib/audio/sound-design.ts`, `src/lib/sheet/render.ts`):
+   - Sound design prompt now emphasizes using exact sheet SFX field when present
+   - Instructions to derive from visible action and subject when sheet SFX missing
+   - Time each cue offset to when action happens within shot
+   - Add short sting/impact at "but" turn (but_silence beat) and end card
+   - Failed SFX logged loudly in version error field with ⚠️ prefix, never silent fallback
+   - Error includes shot number and exact description that failed
+
+**Before/after timing estimates (8GB M1 Mac):**
+- Shot sheet: 49s (unchanged, Gemini 3.8 Flash)
+- fix_gaps: ~99s sequential → ~50s concurrent (2 attempts in parallel)
+- Previews audio: ~3min sequential → ~1.5min with 4-concurrent batches
+- Final audio: ~70s sequential "edit and mix" → ~35s parallel
+- Blender: 4 concurrent (thrashing) → 2 concurrent (smooth on ≤16GB RAM)
+
+**Models verified live (2026-11-20):**
+- SFX: `mirelo-ai/sfx2.0/text-to-audio` (primary), `elevenlabs/sound-effects/v3` (fallback with `text` key)
+- Music: `elevenlabs/music/v2.5`
+- Voice: `fal-ai/elevenlabs/tts/eleven-v3` (via VOICE_MODEL default)
+
+**Tests:** All 568 passing (baseline maintained). TypeScript clean. Build succeeds.
+
+**Known limitation:** Final renders still re-render every Blender shot at 1080p instead of upscaling/reusing preview clips. Safe fix (upscale or reduced samples) deferred to avoid conflicts with parallel PR on render.ts. Would save ~2-3min on finals with unchanged shots.
+
+**Related:** See §14 (sheet flow), §15 (render pipeline), cost metering.

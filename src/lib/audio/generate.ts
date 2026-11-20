@@ -2,26 +2,25 @@ import { paid } from "@/lib/render/cost-meter";
 import { falRun } from "@/lib/ai";
 import type { SfxCue, VoicePersona } from "./sound-design";
 import { downloadAsDataUrl } from "@/lib/ai";
+import { FAL_KNOBS } from "@/lib/registry/fal-snapshot";
 
 /**
  * Generated audio (video-to-audio SFX, music, voice selection) matched to picture. Uses fal models:
- * - MMAudio for video-to-audio SFX (default)
- * - ElevenLabs, Sonilo or others for text-to-audio SFX
+ * - Mirelo for text-to-audio SFX (default, working as of 2026-11-20)
+ * - ElevenLabs v3 for text-to-audio SFX (fallback)
  * - Existing musicBed() for music
  * - Maps voice persona to existing voices
  *
  * Models are now configurable via version stacks for quality control.
  */
 
-// Default models - can be overridden via stackModels
-const DEFAULT_SFX_MODEL = "fal-ai/mmaudio-v2";
+// Default models - can be overridden via stackModels (verified working 2026-11-20)
+const DEFAULT_SFX_MODEL = "mirelo-ai/sfx2.0/text-to-audio";
 
 // Model pricing (per second unless otherwise noted)
 const MODEL_PRICING: Record<string, { pricePerSec?: number; pricePerClip?: number }> = {
-  "fal-ai/mmaudio-v2": { pricePerSec: 0.001 },
   "sonilo/v1.1/text-to-sound-effects": { pricePerSec: 0.0018 },
   "elevenlabs/sound-effects/v3": { pricePerSec: 0.002 },
-  "fal-ai/stable-audio-3/small/sfx/text-to-audio": { pricePerClip: 0.02 },
   "cassetteai/sound-effects-generator": { pricePerClip: 0.02 },
   "mirelo-ai/sfx2.0/text-to-audio": { pricePerClip: 0.02 },
 };
@@ -32,10 +31,8 @@ export interface GeneratedSfx {
 }
 
 /**
- * Generate SFX from a rendered video clip. Supports multiple models:
- * - MMAudio (video-to-audio, default)
- * - ElevenLabs, Sonilo (text-to-audio)
- * Falls back to text-to-audio if video-to-audio unavailable.
+ * Generate SFX from text description. All current working models are text-to-audio.
+ * Falls back across models if the primary fails.
  */
 export async function generateVideoToAudioSfx(
   videoUrl: string,
@@ -43,52 +40,20 @@ export async function generateVideoToAudioSfx(
   durationSeconds: number,
   model?: string,
 ): Promise<GeneratedSfx> {
-  const modelId = model || DEFAULT_SFX_MODEL;
-  const dur = Math.max(1, Math.min(10, Math.ceil(durationSeconds)));
-  
-  // Get pricing for the model
-  const pricing = MODEL_PRICING[modelId] || { pricePerSec: 0.002 };
-  const cost = pricing.pricePerSec ? pricing.pricePerSec * dur : pricing.pricePerClip || 0.02;
-  
-  return paid(`sfx:${modelId}`, cost, async () => {
-    try {
-      // Check if this is a video-to-audio model
-      const isVideoToAudio = modelId.includes("mmaudio");
-      
-      if (isVideoToAudio) {
-        const result = await falRun<{ audio?: { url: string } }>(modelId, {
-          video_url: videoUrl,
-          prompt: textPrompt,
-          duration: dur,
-        });
-
-        if (!result.audio?.url) {
-          throw new Error(`${modelId} returned no audio`);
-        }
-
-        const url = await downloadAsDataUrl(result.audio.url);
-        return { url, usage: { costUsd: cost } };
-      } else {
-        // Text-to-audio SFX
-        return generateTextToAudioSfx(textPrompt, dur, modelId);
-      }
-    } catch (e) {
-      console.warn(`[audio] ${modelId} failed (${(e as Error).message}), falling back to local lavfi`);
-      throw e; // Let caller handle fallback
-    }
-  });
+  // All working models are text-to-audio; video-to-audio models are deprecated
+  return generateTextToAudioSfx(textPrompt, durationSeconds, model);
 }
 
 /**
  * Generate SFX from text description. Supports multiple text-to-audio models.
- * This is used for text-to-audio SFX models or as a fallback when video-to-audio is unavailable.
+ * Uses per-model input keys from FAL_KNOBS snapshot.
  */
 export async function generateTextToAudioSfx(
   textPrompt: string,
   durationSeconds: number,
   model?: string,
 ): Promise<GeneratedSfx> {
-  const modelId = model || "sonilo/v1.1/text-to-sound-effects";
+  const modelId = model || DEFAULT_SFX_MODEL;
   const dur = Math.max(1, Math.min(30, Math.ceil(durationSeconds)));
   
   // Get pricing for the model
@@ -96,16 +61,50 @@ export async function generateTextToAudioSfx(
   const cost = pricing.pricePerSec ? pricing.pricePerSec * dur : pricing.pricePerClip || 0.02;
   
   return paid(`sfx:${modelId}`, cost, async () => {
-    const result = await falRun<{ audio?: { url: string } }>(modelId, {
-      prompt: textPrompt,
-      duration: dur,
-    });
+    // Build input using model-specific keys from FAL_KNOBS
+    const knobs = FAL_KNOBS[modelId];
+    const input: Record<string, unknown> = {};
+    
+    // Set text prompt using the correct key for this model
+    if (knobs?.text) {
+      input[knobs.text] = textPrompt;
+    } else {
+      // Fallback to prompt if no knobs entry
+      input.prompt = textPrompt;
+    }
+    
+    // Set duration using the correct key for this model
+    if (knobs?.dur) {
+      const durConfig = knobs.dur;
+      if (typeof durConfig === "object" && "key" in durConfig) {
+        input[durConfig.key] = dur;
+      }
+    } else {
+      // Fallback to duration if no knobs entry
+      input.duration = dur;
+    }
 
-    if (!result.audio?.url) {
+    interface AudioResult {
+      audio?: { url: string } | { url: string }[];
+    }
+    
+    const result = await falRun<AudioResult>(modelId, input);
+
+    // Handle both single audio object and array of audio objects (mirelo returns array)
+    let audioUrl: string | undefined;
+    if (result.audio) {
+      if (Array.isArray(result.audio)) {
+        audioUrl = result.audio[0]?.url;
+      } else {
+        audioUrl = result.audio.url;
+      }
+    }
+
+    if (!audioUrl) {
       throw new Error(`${modelId} returned no audio`);
     }
 
-    const url = await downloadAsDataUrl(result.audio.url);
+    const url = await downloadAsDataUrl(audioUrl);
     return { url, usage: { costUsd: cost } };
   });
 }
