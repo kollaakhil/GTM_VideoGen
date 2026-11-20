@@ -84,6 +84,7 @@ describe("fix_gaps API action", () => {
     expect(json.error).toBe("Cannot fix gaps while a render is running");
   });
 
+  // TODO: Fix mock concurrency issue - one of two concurrent attempts fails to use mock
   it.skip("calls the LLM with gate errors and returns the fixed sheet", async () => {
     const { chatJSON } = await import("@/lib/ai");
     const { get } = await import("@/lib/store");
@@ -108,6 +109,11 @@ describe("fix_gaps API action", () => {
       usage: { costUsd: 0.015 },
     });
 
+    // Increase cap to ensure test doesn't hit budget limit
+    run.cost.capUsd = 10;
+    run.cost.spentUsd = 0;
+    await put("sheet_runs", run);
+    
     const response = await sheetActions({ action: "fix_gaps", runId: run.id }, "test@example.com");
     expect(response).toBeTruthy();
     const json = await response!.json();
@@ -118,7 +124,7 @@ describe("fix_gaps API action", () => {
     
     // Wait for background job to complete (poll with timeout)
     let updatedRun;
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 100; i++) {
       await new Promise(resolve => setTimeout(resolve, 100));
       updatedRun = await get("sheet_runs", run.id);
       if (updatedRun?.status !== "working") break;

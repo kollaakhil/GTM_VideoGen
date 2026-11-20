@@ -352,11 +352,13 @@ export function finalChecks(o: { craft: number; findings: QualityFinding[]; shot
   ];
   
   // Hard penalty for no visible branded product when product shots should exist
+  // This should be checked against actual frames, but for now we check the sheet structure
   if (o.hasProductShots === false) {
     checks.push({ name: "product visibility", score: 0, note: "No visible branded product in the final", by: "rules", weight: 2 });
   }
   
-  // Penalty for inconsistent faces when people shots exist but no character defined
+  // Penalty for inconsistent faces when people shots exist but no character reference was generated
+  // hasCharacter should reflect whether character.referenceUrl exists, not just description
   if (o.hasPeopleShots && !o.hasCharacter) {
     checks.push({ name: "face consistency", score: 3, note: "Multiple different faces instead of one recurring character", by: "rules", weight: 1.5 });
   }

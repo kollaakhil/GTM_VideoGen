@@ -1,7 +1,7 @@
 import { chatJSON } from "@/lib/ai";
 import { brief as writeBrief, research as doResearch } from "@/lib/pipeline";
 import { breakdownInspiration } from "@/lib/inspiration";
-import { newId } from "@/lib/store";
+import { newId, storeMedia } from "@/lib/store";
 import { sheetGate } from "./gate";
 import { BASE_RULES, RULES_PROMPT, cleanRules, knownRules } from "./rules";
 import { parseSheet, type ShotSheet } from "@/lib/shot-sheet";
@@ -112,6 +112,32 @@ export async function runSheet(run: SheetRun, chat: Chat = chatFor(run, "sheet")
     out = await timed(run, "shot sheet repair", () => writeSheet(input, chat, gate.issues.filter((i) => i.level === "error"), version));
     gate = sheetGate(out.sheet, { facts: factBase(run), rules: run.rules, afterRepair: true });
   }
+  
+  // Generate character reference if character is defined and there are people shots
+  if (out.sheet.character && out.sheet.character.description) {
+    const peopleShots = out.sheet.shots.filter((s) => s.engine === "ai_video" && /\b(person|people|man|woman|actor|hand)\b/i.test(`${s.subject} ${s.prompt ?? ""}`));
+    if (peopleShots.length > 0) {
+      try {
+        const meter = meterFor(run);
+        const { generateImage, aiConfigured } = await import("@/lib/ai");
+        if (aiConfigured()) {
+          const charImg = await timed(run, "character reference", async () => {
+            const result = await generateImage(
+              run.input.visionModel,
+              `Portrait reference image: ${out.sheet.character!.description}. Professional headshot style, neutral expression, well-lit, clear details. No text, logos or graphics.`,
+              []
+            );
+            const stored = await storeMedia(result.url, `${run.id}/character-${Date.now()}`);
+            return stored;
+          });
+          out.sheet.character.referenceUrl = charImg;
+        }
+      } catch (e) {
+        console.warn("Failed to generate character reference:", e);
+      }
+    }
+  }
+  
   run.script = out.script;
   run.sheet = out.sheet;
   run.gate = gate;
