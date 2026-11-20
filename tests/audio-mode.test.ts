@@ -20,15 +20,16 @@ describe("planAudio", () => {
     const p = planAudio("foley", sheet);
     expect(p.voice).toBe(false);
     expect(p.duck).toBe(true);
-    const kinds = (n: number) => p.sfx.filter((c) => c.shot === n && c.kind !== "whoosh").map((c) => c.kind);
+    const kinds = (n: number) => p.sfx.filter((c) => c.shot === n).map((c) => c.kind);
     expect(kinds(0)).toEqual(["click", "slide"]);
     expect(kinds(1)).toEqual(["pop", "pour", "fizz"]);
-    expect(p.sfx.filter((c) => c.kind === "whoosh")).toHaveLength(2);
+    // No automatic whoosh on cuts
+    expect(p.sfx.filter((c) => c.kind === "whoosh")).toHaveLength(0);
   });
   it("times the effect to its beat when the sheet gives one, else spreads the actions across the shot", () => {
     const p = planAudio("foley", sheet);
     expect(p.sfx.find((c) => c.shot === 0 && c.kind === "click")!.offset).toBe(0.4);
-    const [pop, pour, fizz] = p.sfx.filter((c) => c.shot === 1 && c.kind !== "whoosh");
+    const [pop, pour, fizz] = p.sfx.filter((c) => c.shot === 1);
     expect(pop.offset).toBeLessThan(pour.offset);
     expect(pour.offset).toBeLessThan(fizz.offset);
     expect(fizz.offset).toBeLessThan(4 - 0.2);
@@ -49,7 +50,8 @@ describe("planAudio", () => {
     expect(p.voice).toBe(true);
     expect(p.duck).toBe(false);
     expect(p.bedGain).toBe(0.18);
-    expect(new Set(p.sfx.map((c) => c.kind))).toEqual(new Set(["pop", "pour", "fizz", "whoosh"]));
+    // No more automatic whoosh on cuts, and all SFX kinds are allowed (not just legacy cola sounds)
+    expect(new Set(p.sfx.map((c) => c.kind))).toEqual(new Set(["pop", "pour", "fizz", "click", "slide"]));
   });
   it("derives actions from the picture when a row has no sound line", () => {
     expect(foleyActions({ seconds: 3, visual: "a hand cracks the can open, foam rises" })).toEqual(["pop", "fizz"]);

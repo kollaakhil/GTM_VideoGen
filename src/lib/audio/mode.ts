@@ -72,13 +72,12 @@ export function planAudio(mode: AudioMode, shots: AudioShot[]): AudioPlan {
   const unmapped: string[] = [];
   let actions = 0;
   const level = mode === "both" ? 0.7 : 1;
-  const legacy: SfxKind[] = ["pop", "pour", "fizz", "clink"];
   for (const [i, s] of shots.entries()) {
     const list = foleyActions(s).slice(0, 5);
     const usable = Math.max(0.2, s.seconds - LEAD - TAIL);
     let placed = 0;
     for (const [j, phrase] of list.entries()) {
-      const kind = kindOf(phrase, mode === "vo" ? legacy : undefined);
+      const kind = kindOf(phrase);
       if (mode !== "vo") actions++;
       if (!kind) { if (mode !== "vo") unmapped.push(`shot ${i + 1}: “${phrase}”`); continue; }
       const timed = beatStart(s.beats, phrase);
@@ -89,9 +88,8 @@ export function planAudio(mode: AudioMode, shots: AudioShot[]): AudioPlan {
       placed++;
     }
     void placed;
-    if (i > 0) cues.push({ kind: "whoosh", shot: i, offset: -0.22, gain: SFX_GAIN.whoosh });
   }
-  const covered = cues.filter((c) => c.kind !== "whoosh").length;
+  const covered = cues.length;
   return {
     mode,
     voice: mode !== "foley",

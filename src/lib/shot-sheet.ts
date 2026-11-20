@@ -89,6 +89,21 @@ export const SheetSchema = z.object({
     /** Generated reference image URL for character consistency. */
     referenceUrl: z.string().nullable(),
   }).optional(),
+  /** Music direction for concept-driven audio (from writer). */
+  music: z.object({
+    direction: Str(300, 1),
+    genre: Str(60).optional(),
+    tempoBpm: z.number().int().min(40).max(200).optional(),
+    instrumentation: Str(200).optional(),
+    arc: Str(200).optional(),
+  }).nullable().optional(),
+  /** Voice direction for concept-driven audio (from writer). */
+  voice: z.object({
+    tone: Str(100, 1),
+    gender: Str(20).optional(),
+    accent: Str(60).optional(),
+    pronunciation: Str(200).optional(),
+  }).nullable().optional(),
 });
 export type ShotSheet = z.infer<typeof SheetSchema>;
 

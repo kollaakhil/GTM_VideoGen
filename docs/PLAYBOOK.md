@@ -1786,3 +1786,103 @@ Tests cover:
 **Result:** Each run now gets a unique concept, structure, and visual world. No more identical confession_loop templates or garbled wall text.
 
 ---
+
+## Creativity: Sound (2026-11-20, PR #80)
+
+**Problem:** Every video's sound was the same. Music was forced to null for confession_loop. SFX were hardcoded cola sounds (pop/fizz/pour/clink) with automatic whoosh on every cut. Voice selection was gender + hash only. Captions were white-on-black for every brand.
+
+**Fixes (concept- and brand-driven audio):**
+
+### 1. Music from sheet.music
+- **Was:** `if (sheet.patternId === "confession_loop") music = null;` forced no music for confession_loop (render.ts:447-449)
+- **Now:** Only null music when `sheet.music` is explicitly `null`. When `sheet.music` exists, generate from genre, tempo, instrumentation, arc
+- **Schema:** Added optional `music?: { direction, genre?, tempoBpm?, instrumentation?, arc? } | null` to ShotSheet
+- **Test:** music generated with concept's genre/tempo; no music only when sheet.music is null
+
+### 2. Remove brand-specific defaults and automatic whoosh
+- **Was:** 
+  - `mode.ts:75` had `legacy: ["pop", "pour", "fizz", "clink"]` restricting SFX to cola sounds
+  - `mode.ts:92` added `whoosh` on every cut after shot 0
+  - `sfx.ts:17-56` had brand-specific recipes
+- **Now:** 
+  - Removed legacy restriction - all SFX kinds allowed (click, thud, slide, sizzle, etc.)
+  - Removed automatic whoosh on cuts
+  - Fallbacks go through neutral foley patterns (sfx.ts)
+- **Tests:** no whoosh on cuts; SFX not restricted to legacy sounds
+
+### 3. Neutral SFX prompt descriptions
+- **Was:** `sound-design.ts:106-107` had hardcoded examples: "glass bottle set down on marble", "aluminum can crack and fizz"
+- **Now:** Neutral field descriptions: "describe the actual sound, material, and motion"
+- **Test:** verified prompt change
+
+### 4. Voice selection from sheet.voice and brand tone
+- **Was:** `generate.ts:117-135` picked voice by gender + hash of objective from fixed pool
+- **Now:** 
+  - Voice catalog with tone descriptors (warm, professional, energetic, calm, friendly, etc.)
+  - Match by sheet.voice tone + brand tone characteristics
+  - Deterministic fallback based on brand hash
+- **Schema:** Added optional `voice?: { tone, gender?, accent?, pronunciation? } | null` to ShotSheet
+- **Tests:** voice varies with tone; warm persona selects Rachel/Jessica/Charlie; energetic selects Aria/Callum
+
+### 5. Pronunciation passed to TTS
+- **Was:** `render-deps.ts:112` called voiceover without pronunciation
+- **Now:** Pass `sheet.voice.pronunciation` or `research.pronunciation` to TTS sayAs parameter
+- **Example:** "Ollie-pop" for OLIPOP
+- **Test:** pronunciation available from sheet.voice or research and passed to voiceover
+
+### 6. Brand-driven caption colors
+- **Was:** `render-deps.ts:163` burned captions as white text on black box (DejaVu Sans, `&H00FFFFFF`, `&H00000000`)
+- **Now:** 
+  - Use `research.colors` for text and background
+  - Luminance check for legible contrast (lum > 0.5 → dark bg, else light bg)
+  - ASS color format: `&HAABBGGRR` (alpha, blue, green, red)
+  - Fallback to white-on-black when no brand colors
+- **Test:** brand colors used when available; validates hex format; luminance contrast
+
+### 7. Preflight script without @fal-ai/client
+- **Was:** Fix requirement: `scripts/preflight-models.mjs` crashed with ERR_MODULE_NOT_FOUND '@fal-ai/client'
+- **Now:** Created simple preflight using plain fetch (no dependencies)
+  - Checks OpenRouter models list, OpenRouter video models, fal models, Hugging Face router
+  - 10s timeout per endpoint, handles rate limits (429), exits 0 on success
+- **Test:** script loads, imports successfully, no @fal-ai/client import
+
+### 8. Offline test guarantee
+- **Problem:** 8 tests in fix-gaps-revisions, studio-script-flow, typeset-qa-claims made REAL API calls when provider keys (OPENROUTER_API_KEY, FAL_KEY, ELEVENLABS) were set in shell
+- **Fix:** 
+  - Created `tests/setup.ts` that deletes all provider keys before tests
+  - Keys: OPENROUTER_API_KEY, FAL_KEY, ELEVENLABS_API_KEY, HIGGSFIELD_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, HUGGINGFACE_API_KEY, REPLICATE_API_TOKEN, STABILITY_API_KEY
+  - Added `setupFiles: ["./tests/setup.ts"]` to vitest.config.ts
+  - Tests that need a key must set a fake one explicitly
+- **Result:** Zero-spend test suite even when keys are in environment
+
+**Tests:** `tests/sound-concept-driven.test.ts` (mocked, offline)
+- Music is requested with concept's genre and tempo
+- No music with confession_loop only when sheet.music is null
+- No whoosh on every cut
+- Voice selection varies with tone
+- Pronunciation is passed
+- Caption style uses brand colors
+- Preflight script loads
+
+**Modified files:**
+- `src/lib/shot-sheet.ts` - add optional music/voice fields to schema
+- `src/lib/sheet/render.ts` - music generation from sheet.music (lines 447-477)
+- `src/lib/sheet/render-deps.ts` - pronunciation (line 112-116), brand caption colors (lines 160-196)
+- `src/lib/audio/mode.ts` - remove legacy restriction, remove whoosh (lines 70-94)
+- `src/lib/audio/sound-design.ts` - neutral SFX descriptions (line 105-109)
+- `src/lib/audio/generate.ts` - voice selection by tone (lines 112-176)
+- `scripts/preflight-models.mjs` - plain fetch endpoint checks (new file)
+- `tests/setup.ts` - delete provider keys before tests (new file)
+- `tests/sound-concept-driven.test.ts` - comprehensive offline tests (new file)
+- `tests/audio-mode.test.ts` - remove whoosh expectations
+- `vitest.config.ts` - add setupFiles
+
+**Verification (merged into devin/1794972912-studio-quality-gates):**
+- TypeScript: `pnpm typecheck` clean
+- Tests: 723 passing (run twice), 7 skipped, 0 failures
+- Build: `pnpm build` succeeds
+- Zero spend: All tests mocked and offline (setup.ts deletes provider keys)
+
+**Result:** Sound is now concept- and brand-driven. Music matches the concept's genre/tempo. Voice matches the brand tone. SFX are neutral and context-driven. Captions use brand colors. Tests are guaranteed offline.
+
+---

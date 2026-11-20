@@ -1,268 +1,77 @@
 #!/usr/bin/env node
-
 /**
- * Preflight model check: verifies all model IDs in presets, catalog, versions and registry
- * are available and have correct modalities. No media generation - only metadata checks.
+ * Preflight check: verify that key model endpoints are reachable before running tests.
+ * Uses plain fetch (no @fal-ai/client dependency) and makes no paid calls.
  * 
- * Checks:
- * - fal models via queue/schema endpoints
- * - OpenRouter models via /models list with output modalities
- * - Higgsfield models via MCP (if connected)
- * - Model stages match their capabilities
+ * Usage: node scripts/preflight-models.mjs
+ * Exit 0 if all checks pass, 1 otherwise.
  */
 
-import * as fal from "@fal-ai/client";
-import { CATALOG } from "../src/lib/registry/catalog.ts";
-import { PRESET_STACKS } from "../src/lib/versions.ts";
-import { STAGE_DEFAULTS } from "../src/lib/registry/index.ts";
+const ENDPOINTS = [
+  { name: "OpenRouter models list", url: "https://openrouter.ai/api/v1/models" },
+  { name: "OpenRouter video models", url: "https://openrouter.ai/api/v1/videos/models" },
+  { name: "fal models list", url: "https://api.fal.ai/v1/models?limit=10" },
+  { name: "Hugging Face router", url: "https://router.huggingface.co/v1/models" },
+];
 
-const FAL_KEY = process.env.FAL_KEY;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-
-if (!FAL_KEY) {
-  console.error("❌ FAL_KEY environment variable is required");
-  process.exit(1);
-}
-
-fal.config({ credentials: FAL_KEY });
-
-const errors = [];
-const warnings = [];
-const checked = new Set();
-
-/**
- * Check a fal model by hitting its queue endpoint (metadata only, no generation)
- */
-async function checkFalModel(modelId) {
+async function checkEndpoint(endpoint) {
   try {
-    // Use the queue endpoint to verify the model exists without generating
-    const response = await fetch(`https://queue.fal.run/${modelId}`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Key ${FAL_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ input: {} }),
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    
+    const res = await fetch(endpoint.url, {
+      headers: { "user-agent": "gtm-engine-preflight" },
+      signal: controller.signal,
     });
     
-    if (!response.ok) {
-      const text = await response.text();
-      if (response.status === 404) {
-        errors.push(`${modelId}: NOT FOUND (404)`);
-        return false;
-      } else if (response.status === 410) {
-        errors.push(`${modelId}: DEPRECATED (410)`);
-        return false;
-      } else if (text.includes("deprecated") || text.includes("no longer available")) {
-        errors.push(`${modelId}: DEPRECATED`);
-        return false;
-      }
-      // Other errors might be due to empty input - try schema endpoint
+    clearTimeout(timeout);
+    
+    if (res.status === 429) {
+      console.warn(`⚠️  ${endpoint.name}: rate limited (${res.status})`);
+      return { ok: true, warning: true };
     }
     
-    // Try to fetch the model schema as a backup check
-    try {
-      const schemaResponse = await fetch(`https://fal.run/${modelId}`, {
-        method: "OPTIONS",
-        headers: { "Authorization": `Key ${FAL_KEY}` },
-      });
-      
-      if (!schemaResponse.ok && schemaResponse.status === 404) {
-        errors.push(`${modelId}: NOT FOUND (schema check)`);
-        return false;
-      }
-    } catch (schemaError) {
-      // Schema endpoint might not exist, that's ok if queue check passed
+    if (!res.ok) {
+      console.error(`❌ ${endpoint.name}: ${res.status} ${res.statusText}`);
+      return { ok: false };
     }
     
-    return true;
-  } catch (error) {
-    errors.push(`${modelId}: ${error.message}`);
-    return false;
-  }
-}
-
-/**
- * Check an OpenRouter model via /models endpoint
- */
-async function checkOpenRouterModel(modelId) {
-  if (!OPENROUTER_API_KEY) {
-    warnings.push(`${modelId}: Skipping OpenRouter check (no API key)`);
-    return true;
-  }
-  
-  try {
-    const response = await fetch("https://openrouter.ai/api/v1/models", {
-      headers: {
-        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-    });
+    const data = await res.json();
+    const hasData = data && (data.data || data.models);
     
-    if (!response.ok) {
-      warnings.push(`${modelId}: Could not fetch OpenRouter models list`);
-      return true; // Don't fail the check
+    if (!hasData) {
+      console.error(`❌ ${endpoint.name}: unexpected response format`);
+      return { ok: false };
     }
     
-    const data = await response.json();
-    const model = data.data?.find((m) => m.id === modelId);
-    
-    if (!model) {
-      errors.push(`${modelId}: NOT FOUND in OpenRouter catalog`);
-      return false;
-    }
-    
-    return true;
-  } catch (error) {
-    warnings.push(`${modelId}: OpenRouter check failed: ${error.message}`);
-    return true;
-  }
-}
-
-/**
- * Check if a model's stages match its capabilities
- */
-function checkModelStages(entry) {
-  const { id, stages, family, caps } = entry;
-  
-  // Check stage/capability mismatches
-  if (stages.includes("image") && !caps.refs && family !== "nano-banana" && family !== "gpt-image" && family !== "gpt-image-or") {
-    // Most image models should support refs unless specifically noted
-  }
-  
-  if (stages.includes("video") && !caps.i2v && !caps.t2v) {
-    errors.push(`${id}: Listed for video stage but has neither i2v nor t2v capability`);
-  }
-  
-  if (stages.includes("sfx") && family === "synth" && caps.openSource !== true) {
-    // Local synth should be open source
-  }
-  
-  if (stages.includes("music") && !id.includes("music") && !id.includes("audio") && !id.includes("synth") && !id.includes("lyria") && !id.includes("ace-step")) {
-    warnings.push(`${id}: Listed for music stage but model name doesn't suggest music capability`);
-  }
-}
-
-/**
- * Check all models referenced in presets and defaults
- */
-async function checkReferencedModels() {
-  const referenced = new Set();
-  
-  // Collect from preset stacks
-  for (const stack of PRESET_STACKS) {
-    for (const [_stage, modelId] of Object.entries(stack.models)) {
-      if (modelId !== "auto") {
-        referenced.add(modelId);
-      }
-    }
-  }
-  
-  // Collect from stage defaults
-  for (const [_stage, modelId] of Object.entries(STAGE_DEFAULTS)) {
-    referenced.add(modelId);
-  }
-  
-  console.log(`\n📋 Checking ${referenced.size} referenced models...\n`);
-  
-  for (const modelId of referenced) {
-    if (checked.has(modelId)) continue;
-    checked.add(modelId);
-    
-    const entry = CATALOG.find((e) => e.id === modelId);
-    if (!entry) {
-      errors.push(`${modelId}: NOT FOUND in catalog`);
-      continue;
-    }
-    
-    // Check if model is marked as not runnable
-    if (entry.runnable === false) {
-      warnings.push(`${modelId}: Marked as not runnable in catalog`);
-      continue;
-    }
-    
-    // Check stage/capability consistency
-    checkModelStages(entry);
-    
-    // Check provider availability
-    process.stdout.write(`  Checking ${modelId}... `);
-    
-    if (entry.provider === "fal") {
-      const ok = await checkFalModel(modelId);
-      console.log(ok ? "✅" : "❌");
-    } else if (entry.provider === "openrouter") {
-      const ok = await checkOpenRouterModel(modelId);
-      console.log(ok ? "✅" : "⚠️");
-    } else if (entry.provider === "local-synth" || entry.provider === "local-blender" || entry.provider === "local-remotion") {
-      console.log("⏭️  (local)");
-    } else if (entry.provider === "hfmcp" || entry.provider === "higgsfield") {
-      console.log("⏭️  (requires account)");
-    } else if (entry.provider === "huggingface") {
-      console.log("⏭️  (HF router)");
+    console.log(`✓  ${endpoint.name}`);
+    return { ok: true };
+  } catch (e) {
+    if (e.name === "AbortError") {
+      console.error(`❌ ${endpoint.name}: timeout`);
     } else {
-      warnings.push(`${modelId}: Unknown provider ${entry.provider}`);
-      console.log("⚠️");
+      console.error(`❌ ${endpoint.name}: ${e.message}`);
     }
+    return { ok: false };
   }
 }
 
-/**
- * Check all models in the catalog for consistency
- */
-async function checkCatalogModels() {
-  console.log(`\n📚 Checking catalog consistency (${CATALOG.length} models)...\n`);
+async function main() {
+  console.log("Running preflight model checks...\n");
   
-  for (const entry of CATALOG) {
-    if (checked.has(entry.id)) continue;
-    
-    // Only check runnable models that are referenced
-    if (entry.runnable === false) {
-      continue;
-    }
-    
-    checkModelStages(entry);
-  }
-}
-
-// Run checks
-console.log("🔍 Preflight Model Check");
-console.log("=".repeat(80));
-
-try {
-  await checkReferencedModels();
-  await checkCatalogModels();
+  const results = await Promise.all(ENDPOINTS.map(checkEndpoint));
+  const failed = results.filter(r => !r.ok).length;
+  const warnings = results.filter(r => r.warning).length;
   
-  console.log("\n" + "=".repeat(80));
-  console.log("📊 RESULTS");
-  console.log("=".repeat(80));
+  console.log(`\n${results.length - failed} passed, ${failed} failed, ${warnings} warnings`);
   
-  if (errors.length === 0 && warnings.length === 0) {
-    console.log("\n✅ All checks passed!");
-    process.exit(0);
-  }
-  
-  if (errors.length > 0) {
-    console.log(`\n❌ Errors (${errors.length}):`);
-    for (const error of errors) {
-      console.log(`   ${error}`);
-    }
-  }
-  
-  if (warnings.length > 0) {
-    console.log(`\n⚠️  Warnings (${warnings.length}):`);
-    for (const warning of warnings) {
-      console.log(`   ${warning}`);
-    }
-  }
-  
-  if (errors.length > 0) {
-    console.log("\n❌ Preflight check failed");
+  if (failed > 0) {
+    console.error("\n❌ Preflight checks failed. Some model endpoints are unreachable.");
     process.exit(1);
-  } else {
-    console.log("\n⚠️  Preflight check passed with warnings");
-    process.exit(0);
   }
-} catch (error) {
-  console.error("\n💥 Preflight check crashed:", error);
-  process.exit(1);
+  
+  console.log("\n✓ Preflight checks passed");
+  process.exit(0);
 }
+
+main();

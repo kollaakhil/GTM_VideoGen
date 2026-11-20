@@ -103,9 +103,9 @@ ${sheet.rules.map((r) => `- [${r.id}] ${r.text}`).join("\n") || "(none)"}
 
 INSTRUCTIONS:
 1. SFX: For each shot, create 0-3 cues. Each cue MUST:
-   - Use the exact sheet SFX field when present (e.g. "glass bottle set down on marble" from sheet becomes your description)
-   - If sheet SFX is missing, derive from the shot's visible action and subject (e.g. for "can opens" action → "aluminum can crack and fizz")
-   - Set offset in seconds to when the action happens within that shot (e.g. if action is "pours at 0.8s", offset should be around 0.8)
+   - Use the exact sheet SFX field when present
+   - If sheet SFX is missing, derive from the shot's visible action and subject (describe the actual sound, material, and motion)
+   - Set offset in seconds to when the action happens within that shot
    - Use gain 0.2-0.5 for subtle ambience, 0.6-0.8 for main action sounds${stingInstructions}
 2. Music: Check the pattern rules. If any rule says to leave out music, omit background music, or pause music, then music MUST be { type: "none" }. Otherwise, provide a cue with a prompt describing genre, tempo, instruments and mood derived from THIS script's content (each run gets different music).
 3. Voice: Choose gender, age, energy and pace from the brand and script.

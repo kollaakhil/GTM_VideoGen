@@ -4,5 +4,9 @@ import path from "node:path";
 export default defineConfig({
   css: { postcss: { plugins: [] } },
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
-  test: { environment: "node", include: ["tests/**/*.test.ts"] },
+  test: { 
+    environment: "node", 
+    include: ["tests/**/*.test.ts"],
+    setupFiles: ["./tests/setup.ts"],
+  },
 });
