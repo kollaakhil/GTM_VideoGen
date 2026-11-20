@@ -44,23 +44,55 @@ export interface KitJob { script: "shot_kit.py" | "scene_kit.py"; spec: Record<s
 
 const ACCENT = /#[0-9a-fA-F]{6}/;
 
-
-
-const moveOf = (m: string) => (/orbit|arc|turntable/i.test(m) ? "orbit" : /pull|dolly out|pull-out/i.test(m) ? "pull" : /static|locked/i.test(m) ? "static" : "push");
+/** Normalizes camera move string (passes unknown moves through). */
+const moveOf = (m: string) => m.toLowerCase();
 const amountOf = (m: string) => Math.min(0.35, Math.max(0.06, Number(m.match(/(\d+)\s*%/)?.[1] ?? 12) / 100));
 const angleOf = (a: string) => (/low/i.test(a) ? "low" : /high/i.test(a) ? "high" : /top|overhead/i.test(a) ? "top" : "eye");
 
+/** Resolves font name to portable bundled font path. Falls back to macOS system fonts when name is not recognized. */
+function resolveFontPath(name: string): string {
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const bundled = path.join(process.cwd(), "assets", "fonts");
+  
+  // Common bundled fonts
+  if (/^dejavu|sans/.test(normalized)) return path.join(bundled, "DejaVuSans-Bold.ttf");
+  if (/^arial/.test(normalized)) return path.join(bundled, "Arial.ttf");
+  if (/^courier/.test(normalized)) return path.join(bundled, "CourierNew.ttf");
+  if (/^helvetica/.test(normalized)) return path.join(bundled, "Helvetica.ttf");
+  
+  // If it looks like an absolute path, use it
+  if (path.isAbsolute(name)) return name;
+  
+  // macOS fallback for legacy compatibility
+  if (process.platform === "darwin") {
+    if (/arial.*round/i.test(name)) return "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf";
+    if (/courier/i.test(name)) return "/System/Library/Fonts/Supplemental/Courier New Bold.ttf";
+    if (/helvetica/i.test(name)) return "/System/Library/Fonts/Helvetica.ttc";
+  }
+  
+  // Default to bundled sans
+  return path.join(bundled, "DejaVuSans-Bold.ttf");
+}
+
 /** One sheet row to a kit job. Size is the render size; preview renders EEVEE at fewer samples. */
-export function kitJob(s: SheetShot, sheet: Pick<ShotSheet, "palette">, o: { width: number; height: number; mode: RenderMode; blender?: SheetShot["blender"] }): KitJob {
+export function kitJob(s: SheetShot, sheet: Pick<ShotSheet, "palette" | "look">, o: { width: number; height: number; mode: RenderMode; blender?: SheetShot["blender"] }): KitJob {
   const b = o.blender ?? s.blender ?? kitFallback(s);
   const seconds = Math.max(0.5, dur(s));
-  const color = b.color ?? sheet.palette.match(ACCENT)?.[0] ?? "#ff3b1a";
+  
+  // Look: per-shot override, then sheet, then brand palette, then no fallback
+  const look = s.look ?? sheet.look;
+  const brandAccent = sheet.palette.match(ACCENT)?.[0];
+  const color = b.color ?? look?.palette?.[0] ?? brandAccent;
+  
   // Measured on the 8 GB M-series Mac (EEVEE, GPU bound): the lab scene takes ~95 s per clip second at 720p/16 samples.
   // So previews render at 360p (for picking a version) and finals at 720p; the edit scales them to the delivery size.
   const k = (o.mode === "final" ? 720 : 360) / Math.min(o.width, o.height);
   const even = (n: number) => Math.max(2, Math.round((n * Math.min(1, k)) / 2) * 2);
   const samples = o.mode === "final" ? 16 : 8;
   const base = { mode: o.mode, seconds, fps: FPS, width: even(o.width), height: even(o.height), samples };
+  // Font resolver: bundled fonts or user-provided path
+  const fontPath = look?.font ? resolveFontPath(look.font) : undefined;
+  
   if (b.template === "lab") {
     const t = `${s.subject} ${s.action}`.toLowerCase();
     const preset = /toggle|switch|relay|contact/.test(t) ? "macro_contact" : /tube|gas|trace|electrode|discharge/.test(t) && /macro|ecu|cu/i.test(`${s.shotType} ${s.framing}`) ? "macro_trace" : b.label && /macro|ecu/i.test(`${s.shotType} ${s.framing}`) ? "macro_text" : "wide";
@@ -73,6 +105,10 @@ export function kitJob(s: SheetShot, sheet: Pick<ShotSheet, "palette">, o: { wid
         labels: b.label ? [{ text: b.label.slice(0, 40), x: -0.3, z: 0.38, size: 0.06 }] : [],
         traces: [{ preset: "speed", color, ignite }, { preset: "depth", color, ignite: ignite < 0 ? -1 : ignite + 0.15, fill: 0.8 }],
         ...(/toggle|switch|relay|snap/.test(t) ? { toggle: { close: Math.min(seconds * 0.4, 0.8) } } : {}),
+        ...(fontPath ? { fontPath } : {}),
+        ...(look?.background ? { background: look.background } : {}),
+        ...(look?.grade ? { grade: look.grade } : {}),
+        ...(look?.rimColor ? { rimColor: look.rimColor } : {}),
       },
     };
   }
@@ -81,6 +117,11 @@ export function kitJob(s: SheetShot, sheet: Pick<ShotSheet, "palette">, o: { wid
     spec: {
       ...base, template: b.template, word: b.word, label: b.label, color, ignite: b.ignite ?? -1,
       camera: { move: moveOf(s.camera.move), amount: amountOf(s.camera.move), lens: s.camera.lensMm, angle: angleOf(s.camera.angle) },
+      ...(fontPath ? { fontPath } : {}),
+      ...(look?.background ? { background: look.background } : {}),
+      ...(look?.grade ? { grade: look.grade } : {}),
+      ...(look?.rimColor ? { rimColor: look.rimColor } : {}),
+      ...(look?.palette?.[0] && b.template === "macro_label" ? { materialColor: look.palette[0] } : {}),
     },
   };
 }

@@ -153,7 +153,23 @@ export function remotionRenderer(deps: RemotionDeps = {}): Renderer {
         const c = ctx.card ?? { brand: row.onScreen ?? "" };
         const file = deps.card
           ? await deps.card(row, ctx, out)
-          : await renderEndCard({ width: ctx.width, height: ctx.height, seconds: row.seconds, card: { brand: c.brand, line: c.line, cta: c.cta, footer: c.footer, bg: c.bg ?? "#0b0b0f", ink: c.ink ?? "white", logo: null, accent: c.accent ?? "#ffffff" } }, out);
+          : await renderEndCard({ 
+              width: ctx.width, 
+              height: ctx.height, 
+              seconds: row.seconds, 
+              card: { 
+                brand: c.brand, 
+                line: c.line, 
+                cta: c.cta, 
+                footer: c.footer, 
+                bg: c.bg ?? "#0b0b0f", 
+                ink: c.ink ?? "white", 
+                logo: c.logo ?? null, 
+                accent: c.accent ?? "#ffffff",
+                productPhoto: c.productPhoto ?? null,
+                layout: c.layout,
+              } 
+            }, out);
         const data = await fs.readFile(file);
         return { url: `data:video/mp4;base64,${data.toString("base64")}`, costUsd: 0 };
       } finally {

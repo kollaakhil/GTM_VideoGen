@@ -475,7 +475,8 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
     shotSeconds: sheet.shots.map(dur), 
     width, 
     height,
-    silenceGaps
+    silenceGaps,
+    transitions: shots.map((s) => s.transition),
   });
   
   // Burn chunked captions for pattern-aware sheets, but not over the end card

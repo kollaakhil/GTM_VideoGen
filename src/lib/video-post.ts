@@ -198,9 +198,9 @@ const toFile = async (dir: string, name: string, media: string) => {
 
 /**
  * Joins shot clips into one 720x1280 30fps video. With a voiceover and/or music bed the model audio is replaced
- * by a mix (voice on top, music ducked under it); otherwise each clip's own audio is kept.
+ * by a mix (voice on top, music ducked under it); otherwise each clip's own audio is kept. Supports transitions.
  */
-export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; /** Output height; default is 9:16 for the width. */ height?: number; beatSync?: boolean; sfx?: SfxCue[]; /** Sidechain-duck the music bed under voice and sound effects. */ duck?: boolean; /** Bed level before ducking (default 0.18 under other audio, 0.6 alone). */ bedGain?: number; /** Time ranges where no voice or SFX should play (for pattern silence gaps). */ silenceGaps?: { start: number; end: number }[] } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number; voiceStarts?: number[] }> {
+export async function stitchShots(clips: string[], audio: { voices?: { url: string; start: number; tempo?: number }[]; music?: string | null; shotSeconds?: number[]; width?: number; /** Output height; default is 9:16 for the width. */ height?: number; beatSync?: boolean; sfx?: SfxCue[]; /** Sidechain-duck the music bed under voice and sound effects. */ duck?: boolean; /** Bed level before ducking (default 0.18 under other audio, 0.6 alone). */ bedGain?: number; /** Time ranges where no voice or SFX should play (for pattern silence gaps). */ silenceGaps?: { start: number; end: number }[]; /** Per-shot transitions: cut, fade_black, crossfade, whip. */ transitions?: string[] } = {}): Promise<{ url: string; starts: number[]; duration: number; beats?: number[]; snapped?: number; voiceStarts?: number[] }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-stitch-"));
   try {
     const norm: string[] = [];
@@ -267,7 +267,47 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
     }
     const joined = path.join(dir, "joined.mp4");
     const inputs = norm.flatMap((f) => ["-i", f]);
-    const fc = norm.map((_, i) => `[${i}:v][${i}:a]`).join("") + `concat=n=${norm.length}:v=1:a=1[v][a]`;
+    
+    // Build transition filter chain
+    const transitions = audio.transitions ?? [];
+    const hasTransitions = transitions.some((t) => t && t !== "cut");
+    
+    let fc: string;
+    if (!hasTransitions || norm.length === 1) {
+      // Simple concat for all cuts or single clip
+      fc = norm.map((_, i) => `[${i}:v][${i}:a]`).join("") + `concat=n=${norm.length}:v=1:a=1[v][a]`;
+    } else {
+      // Build xfade chain for transitions (simplified: fade_black = fade, crossfade = fade, whip = wiperight)
+      const parts: string[] = [];
+      let vLabel = "0:v";
+      let offset = 0;
+      
+      for (let i = 0; i < norm.length - 1; i++) {
+        const nextIdx = i + 1;
+        const trans = transitions[i] || "cut";
+        const dur = infos[i].duration;
+        
+        if (trans !== "cut") {
+          const fadeDur = Math.min(0.4, Math.max(0.2, dur * 0.15)); // 15% of clip, 0.2-0.4s range
+          const xfadeType = trans === "whip" ? "wiperight" : "fade";
+          const nextV = `${nextIdx}:v`;
+          const outLabel = i === norm.length - 2 ? "v" : `v${nextIdx}`;
+          
+          // Video xfade
+          parts.push(`[${vLabel}][${nextV}]xfade=transition=${xfadeType}:duration=${fadeDur.toFixed(3)}:offset=${offset.toFixed(3)}[${outLabel}]`);
+          vLabel = outLabel;
+          offset += dur - fadeDur;
+        } else {
+          offset += dur;
+        }
+      }
+      
+      // Audio: simple concat (xfade handles video timing, audio follows)
+      parts.push(norm.map((_, i) => `[${i}:a]`).join("") + `concat=n=${norm.length}:v=0:a=1[a]`);
+      
+      fc = parts.join(";");
+    }
+    
     await run(FFMPEG, ["-hide_banner", "-loglevel", "error", ...inputs, "-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-y", joined], { timeout: 240_000 });
     let final = joined;
     if (audio.voices?.length || audio.music || audio.sfx?.length) {
