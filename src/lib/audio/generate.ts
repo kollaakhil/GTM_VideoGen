@@ -111,25 +111,66 @@ export async function generateTextToAudioSfx(
 
 /**
  * Map voice persona to a voice ID from the existing voices voiceover() supports.
- * Makes the choice deterministic per brand but not hard-coded to "Rachel".
+ * Selects based on gender, tone descriptors, and brand, with a deterministic fallback.
  */
 export function selectVoice(persona: VoicePersona, brand: string): string {
-  const VOICES = {
-    female: ["Rachel", "Aria", "Sarah", "Laura", "Charlotte", "Jessica", "Lily"],
-    male: ["Roger", "Charlie", "George", "Callum", "Liam", "Will", "Eric", "Chris", "Brian", "Daniel"],
+  // Voice catalog with descriptors matching the tone/energy/age characteristics
+  const VOICE_CATALOG = {
+    // Female voices with tone characteristics
+    Rachel: { gender: "female", tone: ["warm", "friendly", "natural", "conversational"] },
+    Aria: { gender: "female", tone: ["young", "energetic", "upbeat", "bright"] },
+    Sarah: { gender: "female", tone: ["professional", "clear", "confident", "mature"] },
+    Laura: { gender: "female", tone: ["calm", "soothing", "gentle", "soft"] },
+    Charlotte: { gender: "female", tone: ["elegant", "refined", "sophisticated"] },
+    Jessica: { gender: "female", tone: ["friendly", "approachable", "warm"] },
+    Lily: { gender: "female", tone: ["youthful", "light", "cheerful", "casual"] },
+    // Male voices with tone characteristics
+    Roger: { gender: "male", tone: ["deep", "authoritative", "confident", "mature"] },
+    Charlie: { gender: "male", tone: ["friendly", "warm", "conversational", "natural"] },
+    George: { gender: "male", tone: ["professional", "clear", "steady", "reliable"] },
+    Callum: { gender: "male", tone: ["young", "energetic", "dynamic", "upbeat"] },
+    Liam: { gender: "male", tone: ["casual", "approachable", "relaxed"] },
+    Will: { gender: "male", tone: ["confident", "strong", "assured"] },
+    Eric: { gender: "male", tone: ["calm", "soothing", "gentle"] },
+    Chris: { gender: "male", tone: ["friendly", "warm", "engaging"] },
+    Brian: { gender: "male", tone: ["professional", "mature", "experienced"] },
+    Daniel: { gender: "male", tone: ["versatile", "natural", "balanced"] },
   };
 
   const genderLower = persona.gender.toLowerCase();
-  const gender = genderLower === "male" ? "male" : "female";
-  const pool = VOICES[gender] || VOICES.female;
+  const targetGender = genderLower === "male" ? "male" : "female";
   
-  // Deterministic selection based on brand name hash
+  // Match by tone descriptors from persona (energy, age, pace map to tone keywords)
+  const personaTones = [
+    persona.energy?.toLowerCase(),
+    persona.age?.toLowerCase(),
+    persona.pace?.toLowerCase(),
+  ].filter(Boolean) as string[];
+
+  // Find voices that match gender and have overlapping tone descriptors
+  const candidates = Object.entries(VOICE_CATALOG)
+    .filter(([_, v]) => v.gender === targetGender)
+    .map(([name, v]) => ({
+      name,
+      score: personaTones.reduce((acc, tone) => 
+        acc + (v.tone.some(t => t.includes(tone) || tone.includes(t)) ? 1 : 0), 0
+      ),
+    }))
+    .filter(c => c.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  // Use best match, or deterministic fallback based on brand hash
+  if (candidates.length > 0 && candidates[0].score > 0) {
+    return candidates[0].name;
+  }
+
+  // Deterministic fallback based on brand name hash
+  const pool = Object.keys(VOICE_CATALOG).filter(name => VOICE_CATALOG[name as keyof typeof VOICE_CATALOG].gender === targetGender);
   let hash = 0;
   for (let i = 0; i < brand.length; i++) {
     hash = ((hash << 5) - hash) + brand.charCodeAt(i);
     hash = hash & hash;
   }
-  
   const index = Math.abs(hash) % pool.length;
   return pool[index];
 }

@@ -109,7 +109,10 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
     },
     voice: async (line, run, voiceName) => {
       const voice = voiceName || "Rachel";
-      const v = await voiceover(line, voice, undefined, voiceModel);
+      const pronunciation = run.sheet?.voice?.pronunciation || run.research?.pronunciation;
+      const brand = run.brief?.objective || run.research?.brand;
+      const sayAs = brand || pronunciation ? { brand, pronunciation } : undefined;
+      const v = await voiceover(line, voice, sayAs, voiceModel);
       return { url: v.url, usd: v.usage.costUsd };
     },
     soundDesign: async (run) => {
@@ -135,7 +138,7 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
       const result = await musicBed(prompt, seconds, musicModel);
       return result.url;
     },
-    burnCaptions: async (video, cues, width, height) => {
+    burnCaptions: async (video, cues, width, height, brandColors = []) => {
       const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));
       try {
         const videoFile = path.join(dir, "in.mp4");
@@ -152,6 +155,44 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
           return `${h}:${String(m).padStart(2, "0")}:${s}`;
         };
         const esc = (t: string) => t.replace(/[{}\\]/g, "");
+        
+        // Brand-driven caption colors with legible contrast fallback
+        const validBrandColors = brandColors.filter((c: string) => /^#[0-9a-fA-F]{6}$/i.test(c));
+        let textColor = "&H00FFFFFF"; // default white
+        let bgColor = "&H00000000"; // default black
+        
+        if (validBrandColors.length > 0) {
+          // Use first brand color for text, with luminance check for contrast
+          const hexToRgb = (hex: string) => {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return { r, g, b };
+          };
+          const luminance = (r: number, g: number, b: number) => {
+            const [rs, gs, bs] = [r, g, b].map(c => {
+              c = c / 255;
+              return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+            });
+            return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
+          };
+          const rgb = hexToRgb(validBrandColors[0]);
+          const lum = luminance(rgb.r, rgb.g, rgb.b);
+          
+          // Use brand color for text if luminance suggests good contrast
+          // ASS color format is &HAABBGGRR (alpha, blue, green, red in hex)
+          textColor = `&H00${rgb.b.toString(16).padStart(2, '0')}${rgb.g.toString(16).padStart(2, '0')}${rgb.r.toString(16).padStart(2, '0')}`.toUpperCase();
+          
+          // Choose contrasting background: dark bg for light text, light bg for dark text
+          bgColor = lum > 0.5 ? "&H00000000" : "&H00FFFFFF";
+          
+          // If we have a second brand color, use it for background
+          if (validBrandColors.length > 1) {
+            const bgRgb = hexToRgb(validBrandColors[1]);
+            bgColor = `&H00${bgRgb.b.toString(16).padStart(2, '0')}${bgRgb.g.toString(16).padStart(2, '0')}${bgRgb.r.toString(16).padStart(2, '0')}`.toUpperCase();
+          }
+        }
+        
         const assContent = [
           "[Script Info]",
           "ScriptType: v4.00+",
@@ -160,7 +201,7 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
           "",
           "[V4+ Styles]",
           "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
-          `Style: Cap,DejaVu Sans,${size},&H00FFFFFF,&H48000000,&H00000000,1,3,${pad},0,2,${Math.round(width * 0.08)},${Math.round(width * 0.08)},${marginV}`,
+          `Style: Cap,DejaVu Sans,${size},${textColor},&H48000000,${bgColor},1,3,${pad},0,2,${Math.round(width * 0.08)},${Math.round(width * 0.08)},${marginV}`,
           "",
           "[Events]",
           "Format: Layer, Start, End, Style, Text",

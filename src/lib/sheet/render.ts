@@ -76,7 +76,7 @@ export interface RenderDeps {
   /** Generate music from text prompt. */
   generateMusic?(prompt: string, seconds: number): Promise<string>;
   /** Burns chunked captions into a video for pattern-aware sheets. */
-  burnCaptions?(video: string, cues: { start: number; end: number; text: string }[], width: number, height: number): Promise<string>;
+  burnCaptions?(video: string, cues: { start: number; end: number; text: string }[], width: number, height: number, brandColors?: string[]): Promise<string>;
   /** Job context for queue management (optional, used when rendering through the queue). */
   jobContext?: { runId: string; versionId: string; jobId: string };
   final: (video: string, run: SheetRun, stitched: Stitched) => FinalDeps;
@@ -444,9 +444,24 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
   }
   
   let music: string | null = null;
-  // Confession_loop: no music (rule 14)
-  if (sheet.patternId === "confession_loop") {
+  // Generate music from sheet.music when provided, or from sound design, or null when explicitly null
+  if (sheet.music === null) {
+    // Explicitly no music
     music = null;
+  } else if (sheet.music) {
+    // Use sheet.music to generate music bed
+    try {
+      const prompt = [
+        sheet.music.direction,
+        sheet.music.genre ? `Genre: ${sheet.music.genre}` : "",
+        sheet.music.tempoBpm ? `${sheet.music.tempoBpm} BPM` : "",
+        sheet.music.instrumentation || "",
+        sheet.music.arc || "",
+      ].filter(Boolean).join(". ");
+      music = await withMeter(meter, () => deps.generateMusic!(prompt, total));
+    } catch (e) {
+      console.warn(`[audio] Music generation from sheet failed: ${(e as Error).message}`);
+    }
   } else if (soundDesign?.music && soundDesign.music.type === "cue" && deps.generateMusic) {
     try {
       const musicCue = soundDesign.music;
@@ -484,7 +499,8 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
     const endCardStart = endCardIndex >= 0 ? stitched.starts[endCardIndex] : Infinity;
     const captionCues = buildChunkedCaptions(sheet, stitched.starts).filter((c) => c.start < endCardStart);
     if (captionCues.length > 0) {
-      const captioned = await deps.burnCaptions(stitched.url, captionCues, width, height ?? Math.round(width * 16 / 9));
+      const brandColors = run.research?.colors || [];
+      const captioned = await deps.burnCaptions(stitched.url, captionCues, width, height ?? Math.round(width * 16 / 9), brandColors);
       stitched = { ...stitched, url: captioned };
     }
   }
