@@ -167,7 +167,7 @@ export function remotionRenderer(deps: RemotionDeps = {}): Renderer {
                 logo: c.logo ?? null, 
                 accent: c.accent ?? "#ffffff",
                 productPhoto: c.productPhoto ?? null,
-                layout: c.layout,
+                layout: (c.layout as "classic" | "split" | "minimal" | "hero" | undefined),
               } 
             }, out);
         const data = await fs.readFile(file);
