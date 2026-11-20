@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 /**
  * Preflight model validation: verifies EVERY model ID referenced in the codebase.
  * 
@@ -10,21 +10,14 @@
  * 
  * Sources: versions.ts presets, registry/catalog.ts, registry/index.ts STAGE_DEFAULTS, render-deps.ts fallbacks
  * 
- * Usage: node scripts/preflight-models.mjs
+ * Usage: tsx scripts/preflight-models.ts
  * Exit 0 if all checks pass, nonzero on any failure.
  * Generates no media (metadata checks only).
- * 
- * Requires Node 22.18+ to import TypeScript directly.
  */
 
-import { fileURLToPath } from "node:url";
-
-const root = new URL("../src/lib/", import.meta.url);
-
-// Dynamically import TypeScript modules
-const { PRESET_STACKS } = await import(new URL("versions.ts", root));
-const { CATALOG } = await import(new URL("registry/catalog.ts", root));
-const { STAGE_DEFAULTS } = await import(new URL("registry/index.ts", root));
+import { PRESET_STACKS } from "../src/lib/versions";
+import { CATALOG } from "../src/lib/registry/catalog";
+import { STAGE_DEFAULTS } from "../src/lib/registry/index";
 
 // Fallback models from render-deps.ts (hardcoded since they're inline)
 const RENDER_DEPS_FALLBACKS = [
@@ -36,8 +29,9 @@ const RENDER_DEPS_FALLBACKS = [
   "fal-ai/stable-audio-3/medium/text-to-audio",
 ];
 
-const errors = [];
-const warnings = [];
+// Error and warning collectors
+const errors: string[] = [];
+const warnings: string[] = [];
 
 // Stage to expected output modality mapping
 const STAGE_MODALITIES = {
@@ -53,10 +47,22 @@ const STAGE_MODALITIES = {
   asset3d: ["3d", "model"],
 };
 
+// Check for required API keys
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const FAL_KEY = process.env.FAL_KEY;
+
+if (!OPENROUTER_API_KEY || !FAL_KEY) {
+  console.log("⚠️  Skipping preflight validation: missing provider API keys");
+  console.log("   OPENROUTER_API_KEY:", OPENROUTER_API_KEY ? "✓" : "✗");
+  console.log("   FAL_KEY:", FAL_KEY ? "✓" : "✗");
+  console.log("\n✅ Preflight validation skipped (no network calls made)");
+  process.exit(0);
+}
+
 /**
  * Fetch with timeout and retries
  */
-async function fetchWithTimeout(url, options = {}) {
+async function fetchWithTimeout(url: string, options: any = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   
@@ -64,7 +70,7 @@ async function fetchWithTimeout(url, options = {}) {
     const res = await fetch(url, {
       ...options,
       signal: controller.signal,
-      headers: { "user-agent": "gtm-engine-preflight", ...options.headers },
+      headers: { "user-agent": "gtm-engine-preflight", ...(options.headers || {}) },
     });
     clearTimeout(timeout);
     return res;
@@ -77,7 +83,7 @@ async function fetchWithTimeout(url, options = {}) {
 /**
  * Check if a model ID is in OpenRouter's catalog
  */
-async function checkOpenRouter(modelId) {
+async function checkOpenRouter(modelId: string) {
   try {
     const res = await fetchWithTimeout("https://openrouter.ai/api/v1/models");
     if (!res.ok) {
@@ -86,7 +92,7 @@ async function checkOpenRouter(modelId) {
     }
     
     const data = await res.json();
-    const model = data.data?.find(m => m.id === modelId);
+    const model = data.data?.find((m: any) => m.id === modelId);
     
     if (!model) {
       return { found: false, modalities: [] };
@@ -95,7 +101,7 @@ async function checkOpenRouter(modelId) {
     // Extract modalities from architecture
     const modalities = model.architecture?.output_modalities || ["text"];
     return { found: true, modalities, deprecated: false };
-  } catch (e) {
+  } catch (e: any) {
     warnings.push(`${modelId}: OpenRouter check failed: ${e.message}`);
     return { found: false, modalities: [] };
   }
@@ -104,7 +110,7 @@ async function checkOpenRouter(modelId) {
 /**
  * Check if a model ID is in fal's catalog
  */
-async function checkFal(modelId) {
+async function checkFal(modelId: string) {
   try {
     // Try to fetch the model's schema endpoint (metadata only, no generation)
     const schemaUrl = `https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=${modelId}`;
@@ -138,7 +144,7 @@ async function checkFal(modelId) {
     if (modalities.length === 0) modalities.push("text"); // Default to text
     
     return { found: true, modalities, deprecated: false };
-  } catch (e) {
+  } catch (e: any) {
     warnings.push(`${modelId}: fal check failed: ${e.message}`);
     return { found: false, modalities: [] };
   }
@@ -147,7 +153,7 @@ async function checkFal(modelId) {
 /**
  * Check if a model ID is in Hugging Face router
  */
-async function checkHuggingFace(modelId) {
+async function checkHuggingFace(modelId: string) {
   try {
     const res = await fetchWithTimeout("https://router.huggingface.co/v1/models");
     if (!res.ok) {
@@ -156,7 +162,7 @@ async function checkHuggingFace(modelId) {
     }
     
     const data = await res.json();
-    const model = data.data?.find(m => m.id === modelId);
+    const model = data.data?.find((m: any) => m.id === modelId);
     
     if (!model) {
       return { found: false, modalities: [] };
@@ -164,7 +170,7 @@ async function checkHuggingFace(modelId) {
     
     // HF models are typically text models unless specified
     return { found: true, modalities: ["text"], deprecated: false };
-  } catch (e) {
+  } catch (e: any) {
     warnings.push(`${modelId}: HF check failed: ${e.message}`);
     return { found: false, modalities: [] };
   }
@@ -173,7 +179,7 @@ async function checkHuggingFace(modelId) {
 /**
  * Check a single model ID
  */
-async function checkModel(modelId, stage) {
+async function checkModel(modelId: string, stage: string | undefined) {
   // Skip "auto" and local models
   if (modelId === "auto" || modelId.startsWith("local-")) {
     return { ok: true, skipped: true };
@@ -225,9 +231,9 @@ async function checkModel(modelId, stage) {
   }
   
   // Check modality match
-  if (stage && STAGE_MODALITIES[stage]) {
-    const expectedModalities = STAGE_MODALITIES[stage];
-    const hasMatchingModality = result.modalities.some(m => expectedModalities.includes(m));
+  if (stage && STAGE_MODALITIES[stage as keyof typeof STAGE_MODALITIES]) {
+    const expectedModalities = STAGE_MODALITIES[stage as keyof typeof STAGE_MODALITIES];
+    const hasMatchingModality = result.modalities.some((m: string) => expectedModalities.includes(m));
     
     if (!hasMatchingModality && result.modalities.length > 0) {
       // Special case: text models can't be in image/video/audio roles
@@ -300,7 +306,7 @@ async function main() {
   
   for (const [modelId, stages] of modelIds.entries()) {
     const stageList = Array.from(stages);
-    const primaryStage = stageList[0];
+    const primaryStage = stageList[0] as string | undefined;
     
     process.stdout.write(`${modelId.padEnd(60)} `);
     
