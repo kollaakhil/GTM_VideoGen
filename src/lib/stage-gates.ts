@@ -336,7 +336,9 @@ export function voiceChecks(lines: VoiceLine[], music: { planned: boolean; ok: b
 
 // ---------- Final QA ----------
 
-/** Rubric for the finished export: craft review plus every hard finding, so one broken area can't hide. */
+/** Rubric for the finished export: craft review plus every hard finding, so one broken area can't hide. 
+ * hasCharacter should be Boolean(sheet.character?.referenceUrl), not just whether character description exists.
+ */
 export function finalChecks(o: { craft: number; findings: QualityFinding[]; shotScores: number[]; captionSync?: number | null; frameScores?: number[]; hasProductShots?: boolean; hasPeopleShots?: boolean; hasCharacter?: boolean }): Check[] {
   const count = (k: QualityFinding["kind"]) => o.findings.filter((f) => f.kind === k && f.status === "fail").length;
   const copy = count("copy"), speech = count("speech"), visual = o.findings.filter((f) => f.kind === "visual" && f.status === "fail" && f.shotId).length, tech = count("technical");
@@ -358,7 +360,8 @@ export function finalChecks(o: { craft: number; findings: QualityFinding[]; shot
   }
   
   // Penalty for inconsistent faces when people shots exist but no character reference was generated
-  // hasCharacter should reflect whether character.referenceUrl exists, not just description
+  // hasCharacter MUST be Boolean(sheet.character?.referenceUrl), not just whether description exists
+  // Callers must compute this from the actual sheet before calling finalChecks
   if (o.hasPeopleShots && !o.hasCharacter) {
     checks.push({ name: "face consistency", score: 3, note: "Multiple different faces instead of one recurring character", by: "rules", weight: 1.5 });
   }

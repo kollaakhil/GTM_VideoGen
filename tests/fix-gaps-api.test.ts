@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 vi.hoisted(() => {
   process.env.DATA_DIR = require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "fix-gaps-"));
+  process.env.OPENROUTER_API_KEY = "test-key-for-mocking";
 });
 
 import { sheetActions } from "@/lib/sheet/actions";
@@ -26,6 +27,7 @@ describe("fix_gaps API action", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     run = newSheetRun({ brandUrl: "https://blog.google", brand: "Gemini 4 Neon", goal: "Launch film", facts: FACTS, targetSec: 12, patternId: "no_pattern" as any }, "test@example.com");
     run.brief = { objective: "Launch Neon", audience: "Developers", insight: "Powerful", offer: "", mandatories: [], kpi: "Signups" };
     run.research = { summary: "Research", audience: "Devs", tone: "Confident", valueProps: ["Fast"], competitors: [], angles: [], sources: [] };
@@ -84,13 +86,17 @@ describe("fix_gaps API action", () => {
     expect(json.error).toBe("Cannot fix gaps while a render is running");
   });
 
-  // TODO: Fix mock concurrency issue - one of two concurrent attempts fails to use mock
-  it.skip("calls the LLM with gate errors and returns the fixed sheet", async () => {
+  it("calls the LLM with gate errors and returns the fixed sheet", async () => {
     const { chatJSON } = await import("@/lib/ai");
     const { get } = await import("@/lib/store");
     const mockChatJSON = chatJSON as ReturnType<typeof vi.fn>;
     
-    // Mock response: shots that satisfy the 4s threshold, stay under 8s max, and match targetSec
+    // Use mockResolvedValue (not Once) so ALL concurrent calls get the mock
+    // Fixed sheet must:
+    // 1. Satisfy the 4s reveal_holds rule (first shot >= 4s)
+    // 2. Have no character (run has no people shots, so character checks don't apply)
+    // 3. Have NO product shots (otherwise gate warns about missing photos)
+    // This fixed sheet should score strictly lower than the original (1 error → 0 errors, 0 warnings → 0 warnings)
     mockChatJSON.mockResolvedValue({
       data: {
         script: "Neon glows.",
@@ -99,10 +105,10 @@ describe("fix_gaps API action", () => {
           endCard: { title: "Gemini 4 Neon", line: "Available now", footer: "" },
           palette: "",
           patternId: undefined,
-          character: undefined,
+          character: null,
           shots: [
             { start: 0, end: 5, shotType: "WS", framing: "wide reveal", camera: { angle: "eye level", move: "slow push-in", lensMm: 50 }, subject: "neon sign", action: "glows for 4+ seconds", lighting: "soft glow", text: null, audio: { vo: null, sfx: "hum", music: null }, transition: "cut", engine: "blender", blender: { template: "glow_word", word: "NEON" } },
-            { start: 5, end: 12, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "product", action: "shows", lighting: "soft", text: null, audio: { vo: null, sfx: "whoosh", music: null }, transition: "cut", engine: "blender" },
+            { start: 5, end: 12, shotType: "MS", framing: "medium", camera: { angle: "eye level", move: "static", lensMm: 50 }, subject: "glowing text", action: "appears", lighting: "soft glow", text: null, audio: { vo: null, sfx: "whoosh", music: null }, transition: "cut", engine: "blender" },
           ],
         },
       },
@@ -146,6 +152,7 @@ describe("fix_gaps API action", () => {
     // Verify LLM was called with the error (calls[0]: [model, system, userPrompt])
     expect(mockChatJSON).toHaveBeenCalled();
     const calls = mockChatJSON.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
     const userPrompt = calls[0][2] as string;
     expect(userPrompt).toContain("FIX THESE PROBLEMS");
     expect(userPrompt).toContain("no wide reveal holds for 4 s or more");
