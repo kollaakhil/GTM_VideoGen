@@ -2332,3 +2332,80 @@ Comprehensive per-model validation checking EVERY model ID referenced in the cod
 - `docs/PLAYBOOK.md` (this file)
 - `TEST_CHANGES.md` (NEW)
 - `SFX_CODE_PATH.md` (NEW)
+
+---
+
+## Preflight Script Execution Fix
+
+**Branch:** `cursor/preflight-execution-fix-519b` → PR #84 (TBD)  
+**Status:** ✅ Fixed and tested
+
+### Problem
+
+PR #83 added comprehensive model validation (`scripts/preflight-models.mjs`), but the script never actually ran:
+- **Node 22/24 crash**: `ERR_UNSUPPORTED_DIR_IMPORT: Directory import '.../src/lib/registry' is not supported`
+- **Root cause**: Node's type stripping can't resolve extensionless and directory imports inside the .ts modules (`versions.ts`, `registry/index.ts`, `catalog.ts`)
+- **Test gap**: Tests only grepped the script's text - they never executed it as a child process
+
+A test that greps a script is not a test that runs it.
+
+### Solution
+
+**1. Use tsx for TypeScript execution:**
+- Installed `tsx` as devDependency
+- Converted `scripts/preflight-models.mjs` → `.ts`
+- Changed imports from dynamic URL imports to direct:
+  ```typescript
+  // Before (crashed):
+  const { PRESET_STACKS } = await import(new URL("versions.ts", root));
+  
+  // After (works):
+  import { PRESET_STACKS } from "../src/lib/versions";
+  ```
+- Updated package.json: `tsx scripts/preflight-models.ts`
+
+**2. Add key check (no network without keys):**
+```typescript
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const FAL_KEY = process.env.FAL_KEY;
+
+if (!OPENROUTER_API_KEY || !FAL_KEY) {
+  console.log("⚠️  Skipping preflight validation: missing provider API keys");
+  process.exit(0); // No network calls made
+}
+```
+
+**3. Real execution tests** (`tests/preflight-execution.test.ts`):
+- Spawns script as child process with keys unset
+- Asserts clean exit (0) with skip message
+- Verifies no import crashes
+- Imports model lists exactly as script does (catches import errors)
+- Conditional test with keys present (validates output format)
+
+### Verification
+
+**Script execution (no keys):**
+```bash
+$ pnpm preflight:models
+⚠️  Skipping preflight validation: missing provider API keys
+   OPENROUTER_API_KEY: ✗
+   FAL_KEY: ✗
+✅ Preflight validation skipped (no network calls made)
+```
+
+**Tests:**
+- 3 new tests in `preflight-execution.test.ts`
+- All pass on Node 22 and 24
+- Zero network calls when keys missing
+
+### Lesson
+
+**A test that greps a script is not a test that runs it.**
+
+When validating a script:
+1. Spawn it as a child process
+2. Test with realistic environment (keys set/unset)
+3. Assert exit codes and output
+4. Import its dependencies the same way it does
+
+Grepping for strings only validates syntax, not execution.
