@@ -384,7 +384,7 @@ export async function checkProductVisibility(
 /** Rubric for the finished export: craft review plus every hard finding, so one broken area can't hide. 
  * hasCharacter should be Boolean(sheet.character?.referenceUrl), not just whether character description exists.
  */
-export function finalChecks(o: { craft: number; findings: QualityFinding[]; shotScores: number[]; captionSync?: number | null; frameScores?: number[]; productVisibilityScore?: number | null; hasPeopleShots?: boolean; hasCharacter?: boolean }): Check[] {
+export function finalChecks(o: { craft: number; findings: QualityFinding[]; shotScores: number[]; captionSync?: number | null; frameScores?: number[]; productVisibilityScore?: number | null; hasPeopleShots?: boolean; hasCharacter?: boolean; audioScore?: number | null; hasCTA?: boolean }): Check[] {
   const count = (k: QualityFinding["kind"]) => o.findings.filter((f) => f.kind === k && f.status === "fail").length;
   const copy = count("copy"), speech = count("speech"), visual = o.findings.filter((f) => f.kind === "visual" && f.status === "fail" && f.shotId).length, tech = count("technical");
   const shots = o.shotScores.length ? Math.min(...o.shotScores) : 0;
@@ -397,6 +397,33 @@ export function finalChecks(o: { craft: number; findings: QualityFinding[]; shot
     { name: "visual findings", score: clamp(10 - visual * 2), note: visual ? `${visual} shot(s) with failing frames` : "No failing frames", by: "rules" },
     { name: "technical", score: clamp(10 - tech * 3), note: tech ? `${tech} technical problem(s)` : "Decodes cleanly, no black or frozen frames", by: "rules", weight: 0.5 },
   ];
+  
+  // Audio score: sync, mix, and fit (only when provided)
+  if (o.audioScore != null) {
+    checks.push({
+      name: "audio (sync, mix, fit)",
+      score: o.audioScore,
+      note: o.audioScore >= 8 ? "Audio well-synced and mixed" : "Audio sync or mix issues",
+      by: "judge",
+      weight: 1
+    });
+  }
+  
+  // CTA check: only when the concept requires a CTA
+  // For patterns like confession_loop that explicitly have no CTA, skip this check
+  if (o.hasCTA !== false) {
+    // Default to checking CTA unless explicitly told the concept has no CTA
+    const ctaFindings = o.findings.filter((f) => f.kind === "copy" && f.status === "fail" && /CTA|call.to.action/i.test(f.expected + " " + f.observed));
+    if (ctaFindings.length > 0) {
+      checks.push({
+        name: "CTA clarity",
+        score: clamp(10 - ctaFindings.length * 3),
+        note: `${ctaFindings.length} CTA issue(s)`,
+        by: "rules",
+        weight: 0.5
+      });
+    }
+  }
   
   // Vision-based product visibility check when score is provided
   if (o.productVisibilityScore != null) {

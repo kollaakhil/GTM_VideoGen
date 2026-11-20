@@ -247,8 +247,8 @@ describe("Creative variety system", () => {
       const prompt = sheetPrompt(input);
 
       expect(prompt).toContain("Free-form");
-      expect(prompt).toContain("NOT required to use the confession_loop beats");
-      expect(prompt).toContain("Text is OPTIONAL");
+      expect(prompt).toContain("NOT required to use confession_loop beats");
+      expect(prompt).toContain("Text can be overlaid");
     });
   });
 

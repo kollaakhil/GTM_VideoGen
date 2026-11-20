@@ -10,10 +10,26 @@ import { writeSheet, type Chat } from "./writer";
 import { meterFor, nowIso, saveProgress, timed } from "./jobs";
 import type { SheetRun } from "./run-types";
 
+import { STAGE_DEFAULTS } from "@/lib/registry";
+
 export const CHEAP_TEXT = process.env.SHEET_TEXT_MODEL || "google/gemini-3.8-flash";
 export const CHEAP_VISION = process.env.SHEET_VISION_MODEL || "google/gemini-3.8-flash";
 /** Per text call reservation; flash calls cost well under a cent, this only guards the cap. */
 const TEXT_ESTIMATE = 0.02;
+
+/** Get the model for a stage from the run's input, falling back to defaults. */
+function getStageModel(run: SheetRun, stage: "research" | "script" | "enhancer"): string {
+  // Check if there's a version stack with models
+  const stackModel = run.versions.find((v) => v.stack?.models?.[stage])?.stack.models[stage];
+  if (stackModel) return stackModel;
+  
+  // Fall back to input model or stage default
+  if (stage === "research" || stage === "script" || stage === "enhancer") {
+    return run.input.textModel || STAGE_DEFAULTS[stage] || CHEAP_TEXT;
+  }
+  
+  return CHEAP_TEXT;
+}
 
 export type NewRunInput = {
   brandUrl: string; brand?: string; goal: string; offer?: string | null; facts?: string; inspirationUrl?: string | null; photos?: string[];
@@ -45,11 +61,15 @@ export function newSheetRun(i: NewRunInput, user: string): SheetRun {
   };
 }
 
-export function chatFor(run: SheetRun, stage: string): Chat {
+export function chatFor(run: SheetRun, stage: string, temperature?: number): Chat {
   const meter = meterFor(run);
+  const stageModel = (stage === "research" || stage === "script" || stage === "enhancer" || stage === "concepts") 
+    ? getStageModel(run, stage === "concepts" ? "script" : stage as "research" | "script" | "enhancer")
+    : run.input.textModel;
+  
   return <T,>(system: string, user: string) =>
-    meter.run({ stage, what: `${stage} text call`, model: run.input.textModel, estimate: TEXT_ESTIMATE }, async () => {
-      const { data, usage } = await chatJSON<T>(run.input.textModel, system, user);
+    meter.run({ stage, what: `${stage} text call`, model: stageModel, estimate: TEXT_ESTIMATE }, async () => {
+      const { data, usage } = await chatJSON<T>(stageModel, system, user, temperature);
       return { value: { data, usd: usage.costUsd }, usd: usage.costUsd };
     });
 }
@@ -77,7 +97,7 @@ export async function runBrief(run: SheetRun) {
   
   // Generate story concepts (only if pattern is "auto", not a specific pattern)
   if (run.input.patternId === "auto") {
-    await timed(run, "concepts", () => generateStoryConcepts(run, chatFor(run, "concepts")));
+    await timed(run, "concepts", () => generateStoryConcepts(run));
   }
   
   run.step = "brief";
@@ -85,8 +105,11 @@ export async function runBrief(run: SheetRun) {
 }
 
 /** Step 2b: Generate 3 story concepts and pick the strongest (or let user pick in UI). */
-async function generateStoryConcepts(run: SheetRun, chat: Chat) {
+async function generateStoryConcepts(run: SheetRun) {
   const { generateConcepts, pickStrongestConcept, checkNovelty, recordConcept } = await import("./concepts");
+  
+  // Use higher temperature (~0.9) for creative concept generation
+  const chat = chatFor(run, "concepts", 0.9);
   
   const concepts = await generateConcepts(chat, {
     brand: run.input.brand,
@@ -145,7 +168,7 @@ export async function loadRules(run: SheetRun) {
 }
 
 /** Step 3: script + shot sheet, then check 1 (the gate). One repair pass with the gate's errors if it fails. */
-export async function runSheet(run: SheetRun, chat: Chat = chatFor(run, "sheet")) {
+export async function runSheet(run: SheetRun, chat: Chat = chatFor(run, "sheet", 0.7)) {
   // Get the chosen concept if available
   const chosenConcept = run.concepts?.concepts.find((c) => c.id === run.concepts?.chosenId);
   
