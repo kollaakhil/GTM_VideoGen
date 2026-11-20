@@ -354,10 +354,15 @@ describe("Sound concept-driven", () => {
       
       expect(content).toContain("#!/usr/bin/env node");
       expect(content).toContain("fetch");
-      // Check that it doesn't import @fal-ai/client (only mentions it in comments)
+      // Check that it doesn't import @fal-ai/client
       expect(content).not.toMatch(/^import.*@fal-ai\/client/m);
-      expect(content).toContain("OpenRouter");
-      expect(content).toContain("fal models");
+      // Should validate all model IDs from the codebase
+      expect(content).toContain("PRESET_STACKS");
+      expect(content).toContain("STAGE_DEFAULTS");
+      expect(content).toContain("CATALOG");
+      // Should check modalities
+      expect(content).toContain("modality");
+      expect(content).toContain("deprecated");
     });
 
     it("script has executable permissions", async () => {
