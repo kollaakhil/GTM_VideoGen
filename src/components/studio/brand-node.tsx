@@ -13,6 +13,25 @@ import { Shell, Label } from "./chrome";
 
 export function BrandNode() {
   const { run, form, start, sending, models } = useFlow();
+  const [removing, setRemoving] = useState<string | null>(null);
+  
+  const removePhoto = async (photoUrl: string) => {
+    if (!run) return;
+    setRemoving(photoUrl);
+    try {
+      const res = await fetch("/api/studio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove_product_photo", runId: run.id, photoUrl }),
+      });
+      if (!res.ok) throw new Error("Failed to remove photo");
+      window.location.reload();
+    } catch (e) {
+      console.error("Failed to remove photo:", e);
+      setRemoving(null);
+    }
+  };
+  
   if (run) {
     const host = hostName(run.brandUrl);
     const productPhotos = run.research?.productPhotos ?? [];
@@ -51,6 +70,15 @@ export function BrandNode() {
                     >
                       Source ↗
                     </a>
+                    <button
+                      onClick={() => removePhoto(photo.url)}
+                      disabled={removing === photo.url}
+                      className="absolute right-1 top-1 hidden rounded-full bg-black/70 p-1 hover:bg-black/90 disabled:opacity-50 group-hover:block"
+                      aria-label="Remove photo"
+                      title="Remove photo"
+                    >
+                      {removing === photo.url ? <Loader2 className="size-3 animate-spin" /> : <X className="size-3" />}
+                    </button>
                   </div>
                 ))}
               </div>

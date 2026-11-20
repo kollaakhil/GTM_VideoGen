@@ -77,6 +77,7 @@ export const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("cancel"), runId: z.string().max(64) }),
   z.object({ action: z.literal("storyboard"), runId: z.string().max(64), directionId: z.string().max(32).optional(), plan: Plan, refs: Refs }),
   z.object({ action: z.literal("save_storyboard_photos"), runId: z.string().max(64), refs: z.array(Ref).min(1).max(4) }),
+  z.object({ action: z.literal("remove_product_photo"), runId: z.string().max(64), photoUrl: z.string().max(2048) }),
   z.object({ action: z.literal("draft_hooks"), ...ScriptOptions, proof: z.object({
     tension: Field(400), claim: Field(800), action: Field(500), asset: z.string().trim().max(2048).or(Ref).optional(), offer: z.string().trim().max(400), cta: Field(40),
     quoteIndex: z.number().int().min(0).max(7).optional(),
