@@ -111,7 +111,7 @@ async function probe(file: string) {
 }
 
 /** Burns captions from the script into the video and renders 9:16, 4:5 and 1:1 cuts (center crop). */
-export type EndCard = { brand: string; line?: string; cta?: string; footer?: string; color?: string; logo?: string | null; fontFile?: string | null; fontFamily?: string | null };
+export type EndCard = { brand: string; line?: string; cta?: string; footer?: string; color?: string; logo?: string | null; fontFile?: string | null; fontFamily?: string | null; productPhoto?: string | null };
 
 const CTA_LABEL: Record<string, string> = { SHOP_NOW: "Shop now", LEARN_MORE: "Learn more", SIGN_UP: "Sign up", GET_OFFER: "Get offer", ORDER_NOW: "Order now" };
 const endCopy = (end: EndCard) => ({ brand: end.brand, line: end.line, cta: end.cta ? CTA_LABEL[end.cta] ?? end.cta : undefined, footer: end.footer });
@@ -632,7 +632,7 @@ async function motionLayers(dir: string, tag: string, o: { w: number; h: number;
   const copy = endCopy(o.end);
   const card = await renderEndCard({
     width: o.w, height: o.h, seconds: END_SECONDS,
-    card: { brand: copy.brand, line: copy.line, cta: copy.cta, footer: copy.footer, bg, ink: inkFor(bg), logo: o.end.logo ?? null, accent },
+    card: { brand: copy.brand, line: copy.line, cta: copy.cta, footer: copy.footer, bg, ink: inkFor(bg), logo: o.end.logo ?? null, accent, productPhoto: o.end.productPhoto ?? null },
   }, path.join(dir, `card-${tag}.mp4`));
   return { overlay, card };
 }
