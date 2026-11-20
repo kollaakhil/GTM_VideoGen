@@ -127,6 +127,47 @@ describe("Sound concept-driven", () => {
       expect(whooshCues.length).toBe(0);
     });
 
+    it("non-beverage brand (SaaS) gets no fizz/pour/clink", () => {
+      // SaaS product video: laptop, clicking, typing, no beverages
+      const shots = [
+        { seconds: 3.0, visual: "hand clicks mouse, cursor moves across screen" },
+        { seconds: 2.5, visual: "fingers tap keyboard, text appears" },
+        { seconds: 2.0, visual: "user smiles, laptop closes" },
+      ];
+
+      const plan = planAudio("foley", shots);
+
+      // Should have NO beverage-related sounds
+      const beverageSounds = plan.sfx.filter((c) => 
+        c.kind === "fizz" || c.kind === "pour" || c.kind === "clink" || c.kind === "pop"
+      );
+      expect(beverageSounds.length).toBe(0);
+
+      // Should have tech-related sounds instead
+      const kinds = new Set(plan.sfx.map((c) => c.kind));
+      expect(kinds.has("click")).toBe(true); // mouse click, laptop closes
+    });
+
+    it("non-beverage brand (footwear) gets no fizz/pour/clink", () => {
+      // Shoe brand video: unboxing, trying on, walking
+      const shots = [
+        { seconds: 3.0, visual: "person opens shoebox" },
+        { seconds: 2.5, visual: "shoe rests on pedestal" },
+        { seconds: 2.0, visual: "person wears shoes, stands up" },
+      ];
+
+      const plan = planAudio("foley", shots);
+
+      // Should have NO beverage-related sounds
+      const beverageSounds = plan.sfx.filter((c) => 
+        c.kind === "fizz" || c.kind === "pour" || c.kind === "clink" || c.kind === "pop"
+      );
+      expect(beverageSounds.length).toBe(0);
+
+      // May have other sounds (thud, slide) but that's fine
+      // The key test is NO beverage sounds
+    });
+
     it("does not restrict to legacy cola-specific sounds", () => {
       const shots = [
         { seconds: 2.5, visual: "button clicks", sfx: "button click" },
@@ -354,10 +395,15 @@ describe("Sound concept-driven", () => {
       
       expect(content).toContain("#!/usr/bin/env node");
       expect(content).toContain("fetch");
-      // Check that it doesn't import @fal-ai/client (only mentions it in comments)
+      // Check that it doesn't import @fal-ai/client
       expect(content).not.toMatch(/^import.*@fal-ai\/client/m);
-      expect(content).toContain("OpenRouter");
-      expect(content).toContain("fal models");
+      // Should validate all model IDs from the codebase
+      expect(content).toContain("PRESET_STACKS");
+      expect(content).toContain("STAGE_DEFAULTS");
+      expect(content).toContain("CATALOG");
+      // Should check modalities
+      expect(content).toContain("modality");
+      expect(content).toContain("deprecated");
     });
 
     it("script has executable permissions", async () => {

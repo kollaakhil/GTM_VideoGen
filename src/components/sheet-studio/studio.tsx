@@ -13,6 +13,7 @@ import { STEPS, type SheetRun, type Step } from "@/lib/sheet/run-types";
 import { call, getRun, secs, usd } from "./api";
 import { SheetTable } from "./sheet-table";
 import { RenderSteps } from "./render-steps";
+import { PreflightBanner } from "./preflight-banner";
 
 const LABEL: Record<Step, string> = { brand: "Brand & goal", brief: "Brief", sheet: "Shot sheet", previews: "Previews", final: "Final" };
 const ICON: Record<Step, React.ComponentType<{ className?: string }>> = { brand: Sparkles, brief: ScrollText, sheet: Table2, previews: Clapperboard, final: Film };
@@ -82,6 +83,8 @@ function Inner() {
           <Button size="sm" variant="outline" onClick={() => { router.push("/studio"); setRun(null); setView("brand"); }}><Plus /> New video</Button>
         </div>
       </header>
+
+      <PreflightBanner />
 
       <nav className="flex gap-1 border-b px-6 py-2" data-testid="steps">
         {STEPS.map((s, i) => {
