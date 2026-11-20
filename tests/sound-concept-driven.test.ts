@@ -385,15 +385,15 @@ describe("Sound concept-driven", () => {
     });
   });
 
-  describe("Fix 7: preflight-models.mjs loads without errors", () => {
+  describe("Fix 7: preflight-models.ts runs successfully", () => {
     it("imports the preflight script successfully", async () => {
       // Verify the script exists and has no syntax errors
       const { readFile } = await import("fs/promises");
-      const scriptPath = new URL("../scripts/preflight-models.mjs", import.meta.url);
+      const scriptPath = new URL("../scripts/preflight-models.ts", import.meta.url);
       
       const content = await readFile(scriptPath, "utf-8");
       
-      expect(content).toContain("#!/usr/bin/env node");
+      expect(content).toContain("#!/usr/bin/env tsx");
       expect(content).toContain("fetch");
       // Check that it doesn't import @fal-ai/client
       expect(content).not.toMatch(/^import.*@fal-ai\/client/m);
@@ -408,7 +408,7 @@ describe("Sound concept-driven", () => {
 
     it("script has executable permissions", async () => {
       const { stat } = await import("fs/promises");
-      const scriptPath = new URL("../scripts/preflight-models.mjs", import.meta.url);
+      const scriptPath = new URL("../scripts/preflight-models.ts", import.meta.url);
       
       const stats = await stat(scriptPath);
       // Check if file exists and is readable
