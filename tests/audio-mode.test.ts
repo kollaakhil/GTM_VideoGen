@@ -28,7 +28,7 @@ describe("planAudio", () => {
   it("times the effect to its beat when the sheet gives one, else spreads the actions across the shot", () => {
     const p = planAudio("foley", sheet);
     expect(p.sfx.find((c) => c.shot === 0 && c.kind === "click")!.offset).toBe(0.4);
-    const [pop, pour, fizz] = p.sfx.filter((c) => c.shot === 1 && c.kind !== "whoosh");
+    const [pop, pour, fizz] = p.sfx.filter((c) => c.shot === 1);
     expect(pop.offset).toBeLessThan(pour.offset);
     expect(pour.offset).toBeLessThan(fizz.offset);
     expect(fizz.offset).toBeLessThan(4 - 0.2);
