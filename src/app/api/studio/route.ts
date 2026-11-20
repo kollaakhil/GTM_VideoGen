@@ -6,7 +6,7 @@ import type { StudioRun } from "@/lib/types";
 import { Body } from "@/lib/studio/schema";
 import { healOrphan, startJob } from "@/lib/studio/run-state";
 import { newRun, runListResponse, runResponse } from "@/lib/studio/runs";
-import { approveTake, overrideStage, cancelRun, editBrief, pickConcepts, saveStoryboardPhotosAction, setCap, shotSettings } from "@/lib/studio/actions/immediate";
+import { approveTake, overrideStage, cancelRun, editBrief, pickConcepts, removeProductPhoto, saveStoryboardPhotosAction, setCap, shotSettings } from "@/lib/studio/actions/immediate";
 import { plan } from "@/lib/studio/actions";
 
 export const maxDuration = 300;
@@ -41,6 +41,7 @@ export async function POST(req: Request) {
   if (body.action === "set_cap") return setCap(run, body);
   if (run.status === "working") return NextResponse.json({ error: "This run is already working on a step" }, { status: 409 });
   if (body.action === "save_storyboard_photos") return saveStoryboardPhotosAction(run, body);
+  if (body.action === "remove_product_photo") return removeProductPhoto(run, body);
   if (body.action === "edit_brief") return editBrief(run, body);
   if (body.action === "pick_concepts") return pickConcepts(run, body);
   if (body.action === "shot_settings") return shotSettings(run, body);

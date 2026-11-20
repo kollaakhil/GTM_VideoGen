@@ -112,3 +112,22 @@ export async function setCap(run: StudioRun, body: Body<"set_cap">) {
   await put("studio_runs", run);
   return NextResponse.json({ run });
 }
+
+/** Remove a product photo from research by its URL. */
+export async function removeProductPhoto(run: StudioRun, body: Body<"remove_product_photo">) {
+  if (!run.research?.productPhotos) {
+    return NextResponse.json({ error: "No product photos to remove" }, { status: 400 });
+  }
+  
+  const before = run.research.productPhotos.length;
+  run.research.productPhotos = run.research.productPhotos.filter((p) => p.url !== body.photoUrl);
+  const after = run.research.productPhotos.length;
+  
+  if (after < before) {
+    say(run, "agent", `Removed product photo from research (${after} remaining).`);
+  }
+  
+  run.updatedAt = now();
+  await put("studio_runs", run);
+  return NextResponse.json({ run });
+}

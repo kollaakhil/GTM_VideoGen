@@ -37,7 +37,7 @@ import { aiVideoRenderer, blenderRenderer, remotionRenderer } from "@/lib/render
 import { rowFromShot } from "@/lib/render/types";
 import { saveCreative } from "./creatives";
 import { exportReviewCount, qaMode, shotCheckTimes } from "@/lib/studio/qa-mode";
-import { better, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
+import { better, checkProductVisibility, gateJudge, shotsGate, audioChecks, editChecks, finalChecks, judgeContinuity, videoChecks, voiceChecks, type VoiceLine } from "@/lib/stage-gates";
 import { saveStage, stageBlock, stageScore } from "@/lib/stage-policy";
 import { gateEnabled, qaGates } from "@/lib/qa/config";
 import { latestCalibration } from "@/lib/judge-calibration";
@@ -583,6 +583,10 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     }
   }
   const segments = shots.map((s, i) => ({ shotId: s.id, start: st.starts[i], end: st.starts[i] + lenOf(i), text: s.vo, onScreen: s.onScreen, speech: spans[i] }));
+  
+  // Get first product photo if available
+  const firstProductPhoto = run.research?.productPhotos?.[0]?.url ?? refs[0] ?? null;
+  
   const end = {
     brand: kit?.name && !kit.name.includes(".") ? kit.name : run.research?.brand || brandName(run.brandUrl),
     cta: d.approvedScript!.cta,
@@ -593,6 +597,7 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     logo: kit?.logo ? await mediaDataUrl(kit.logo).catch(() => null) : null,
     fontFile: kit?.font?.file ? await mediaFile(kit.font.file).catch(() => null) : null,
     fontFamily: kit?.font?.family ?? null,
+    productPhoto: firstProductPhoto,
   };
   await step(run, d, "QA: reading on-screen copy, checking speech and visuals", steps.qa, total, "qa");
   const capMode = captionMode(plan.captions);
@@ -693,8 +698,48 @@ async function assembleAndReview(run: StudioRun, d: Direction, a: Assembly) {
     const segment = segments[n - 1];
     findings.push({ kind: "preflight", at: segment.start, shotId: segment.shotId, expected: `Keyframe match and ${QA_PASS}/10 before HD`, observed: `Keyframe ${n} still needs review.`, status: "review" });
   }
-  const finalGate = stageScore("final", finalChecks({ craft: craft.score, findings, shotScores: evidence.map((e) => e.qa?.score ?? 0), captionSync: words.captionSync, frameScores: evidence.flatMap((e) => (e.qa?.frames ?? []).map((f) => (f.match === "pass" ? 10 : f.match === "review" ? 7 : 3))) }), run.models.vision, 1,
-    [...craft.notes, ...findings.filter((f) => f.status === "fail").map((f) => `${f.at.toFixed(1)}s ${f.kind}: ${f.observed}`)].slice(0, 6));
+
+  // Product visibility check: sample frames from final and ask vision model if branded product is visible
+  let productVisibilityScore: number | null = null;
+  if (tier === "final" && refs.length > 0) {
+    try {
+      const brand = await brandFor(run);
+      const brandN = brand?.name ?? run.research?.brand ?? run.brandUrl.replace(/^https?:\/\/(www\.)?/, "").split("/")[0];
+      
+      // Sample 3-4 frames evenly across the video
+      const sampleTimes = [0.25, 0.5, 0.75, 0.95].map((t) => Number((st.duration * t).toFixed(3)));
+      const productFrames = await evidenceFrames(main, sampleTimes);
+      
+      const visCheck = await checkProductVisibility(run.models.vision, productFrames, brandN);
+      charge(visCheck.cost);
+      productVisibilityScore = visCheck.score;
+    } catch (e) {
+      // Vision check failure doesn't block the export
+      productVisibilityScore = null;
+    }
+  }
+
+  // Detect people shots and check for character reference
+  // TODO: Wire hasCharacter from actual sheet.character?.referenceUrl when sheet is available in this context
+  const hasPeopleShots = shots.some((s) => /\b(person|people|man|woman|actor|hand|face)\b/i.test(`${s.visual} ${s.vo}`));
+  const hasCharacter = undefined; // Will be wired when sheet context is available
+
+  const finalGate = stageScore(
+    "final",
+    finalChecks({
+      craft: craft.score,
+      findings,
+      shotScores: evidence.map((e) => e.qa?.score ?? 0),
+      captionSync: words.captionSync,
+      frameScores: evidence.flatMap((e) => (e.qa?.frames ?? []).map((f) => (f.match === "pass" ? 10 : f.match === "review" ? 7 : 3))),
+      productVisibilityScore,
+      hasPeopleShots,
+      hasCharacter,
+    }),
+    run.models.vision,
+    1,
+    [...craft.notes, ...findings.filter((f) => f.status === "fail").map((f) => `${f.at.toFixed(1)}s ${f.kind}: ${f.observed}`)].slice(0, 6)
+  );
   const stages = await takeStages(run, main, { shots, st, evidence, craft: craft.score, words, music: a.music, speechFails: speech.findings.filter((f) => f.kind === "speech" && f.status === "fail").length, charge, beats: d.approvedScript?.beats.map((b) => b.seconds), musicBeats: st.beats });
   for (const g of stages) saveStage(run, g, d.id);
   saveStage(run, finalGate, d.id);

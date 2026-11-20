@@ -13,8 +13,29 @@ import { Shell, Label } from "./chrome";
 
 export function BrandNode() {
   const { run, form, start, sending, models } = useFlow();
+  const [removing, setRemoving] = useState<string | null>(null);
+  
+  const removePhoto = async (photoUrl: string) => {
+    if (!run) return;
+    setRemoving(photoUrl);
+    try {
+      const res = await fetch("/api/studio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove_product_photo", runId: run.id, photoUrl }),
+      });
+      if (!res.ok) throw new Error("Failed to remove photo");
+      window.location.reload();
+    } catch (e) {
+      console.error("Failed to remove photo:", e);
+      setRemoving(null);
+    }
+  };
+  
   if (run) {
     const host = hostName(run.brandUrl);
+    const productPhotos = run.research?.productPhotos ?? [];
+    
     return (
       <Shell step={1} label="Brand & goal" icon={Globe} state="done" width={360}>
         <div className="space-y-3">
@@ -31,6 +52,38 @@ export function BrandNode() {
           {run.inspirations?.length ? (
             <div className="text-[11px] text-fuchsia-300/90">Inspired by {run.inspirations.map((i) => i.source.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "").slice(0, 40)).join(", ")}</div>
           ) : run.referenceUrl && <div className="text-[11px] text-fuchsia-300/90">Inspired by {run.referenceUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</div>}
+          
+          {productPhotos.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Product Photos</div>
+              <div className="grid grid-cols-2 gap-2">
+                {productPhotos.map((photo, i) => (
+                  <div key={i} className="group relative overflow-hidden rounded-lg border border-white/10 bg-zinc-900/50">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={photo.url} alt="" className="aspect-square w-full object-cover" />
+                    <a
+                      href={photo.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-1.5 text-[9px] text-zinc-300 opacity-0 transition-opacity group-hover:opacity-100"
+                      title={photo.sourceUrl}
+                    >
+                      Source ↗
+                    </a>
+                    <button
+                      onClick={() => removePhoto(photo.url)}
+                      disabled={removing === photo.url}
+                      className="absolute right-1 top-1 hidden rounded-full bg-black/70 p-1 hover:bg-black/90 disabled:opacity-50 group-hover:block"
+                      aria-label="Remove photo"
+                      title="Remove photo"
+                    >
+                      {removing === photo.url ? <Loader2 className="size-3 animate-spin" /> : <X className="size-3" />}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Shell>
     );

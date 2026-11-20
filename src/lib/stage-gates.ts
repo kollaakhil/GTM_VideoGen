@@ -336,10 +336,55 @@ export function voiceChecks(lines: VoiceLine[], music: { planned: boolean; ok: b
 
 // ---------- Final QA ----------
 
+/**
+ * Check product visibility in final video frames using vision model.
+ * Samples 3-4 frames and asks if the branded product is clearly visible.
+ */
+export async function checkProductVisibility(
+  model: string,
+  frames: { at: number; url: string }[],
+  brandName: string,
+  productName?: string
+): Promise<{ score: number; visible: boolean; confidence: number; cost: number }> {
+  const product = productName ? `${brandName} ${productName}` : brandName;
+  
+  try {
+    const parts: Part[] = [
+      {
+        type: "text",
+        text: `Is the branded product "${product}" clearly visible in these frames from a video ad? Consider the product visible if you can see the actual product, its package, or its distinctive branding/logo. Return JSON {"visible": boolean, "confidence": 0-100}`,
+      },
+      ...frames.flatMap((f, i): Part[] => [
+        { type: "text", text: `Frame ${i + 1} (${f.at.toFixed(2)}s)` },
+        { type: "image_url", image_url: { url: f.url } },
+      ]),
+    ];
+
+    const { data, usage } = await chatJSON<unknown>(
+      model,
+      "You are a video QA reviewer checking product visibility. Return only JSON.",
+      parts
+    );
+
+    const parsed = z.object({ visible: z.boolean(), confidence: z.number().min(0).max(100) }).safeParse(data);
+
+    if (!parsed.success) {
+      return { score: 0, visible: false, confidence: 0, cost: usage.costUsd };
+    }
+
+    const { visible, confidence } = parsed.data;
+    const score = visible && confidence >= 60 ? 10 : 0;
+
+    return { score, visible, confidence, cost: usage.costUsd };
+  } catch (e) {
+    return { score: 0, visible: false, confidence: 0, cost: 0 };
+  }
+}
+
 /** Rubric for the finished export: craft review plus every hard finding, so one broken area can't hide. 
  * hasCharacter should be Boolean(sheet.character?.referenceUrl), not just whether character description exists.
  */
-export function finalChecks(o: { craft: number; findings: QualityFinding[]; shotScores: number[]; captionSync?: number | null; frameScores?: number[]; hasProductShots?: boolean; hasPeopleShots?: boolean; hasCharacter?: boolean }): Check[] {
+export function finalChecks(o: { craft: number; findings: QualityFinding[]; shotScores: number[]; captionSync?: number | null; frameScores?: number[]; productVisibilityScore?: number | null; hasPeopleShots?: boolean; hasCharacter?: boolean }): Check[] {
   const count = (k: QualityFinding["kind"]) => o.findings.filter((f) => f.kind === k && f.status === "fail").length;
   const copy = count("copy"), speech = count("speech"), visual = o.findings.filter((f) => f.kind === "visual" && f.status === "fail" && f.shotId).length, tech = count("technical");
   const shots = o.shotScores.length ? Math.min(...o.shotScores) : 0;
@@ -353,10 +398,15 @@ export function finalChecks(o: { craft: number; findings: QualityFinding[]; shot
     { name: "technical", score: clamp(10 - tech * 3), note: tech ? `${tech} technical problem(s)` : "Decodes cleanly, no black or frozen frames", by: "rules", weight: 0.5 },
   ];
   
-  // Hard penalty for no visible branded product when product shots should exist
-  // This should be checked against actual frames, but for now we check the sheet structure
-  if (o.hasProductShots === false) {
-    checks.push({ name: "product visibility", score: 0, note: "No visible branded product in the final", by: "rules", weight: 2 });
+  // Vision-based product visibility check when score is provided
+  if (o.productVisibilityScore != null) {
+    checks.push({ 
+      name: "product visibility", 
+      score: o.productVisibilityScore, 
+      note: o.productVisibilityScore >= 10 ? "Branded product clearly visible" : "Product not clearly visible in sampled frames", 
+      by: "judge", 
+      weight: 2 
+    });
   }
   
   // Penalty for inconsistent faces when people shots exist but no character reference was generated

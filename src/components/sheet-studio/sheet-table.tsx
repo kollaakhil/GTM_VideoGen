@@ -15,9 +15,33 @@ export function SheetTable({ sheet, onChange, issues }: { sheet: ShotSheet; onCh
   const set = (i: number, patch: Partial<SheetShot>) => onChange({ ...sheet, shots: sheet.shots.map((s, k) => (k === i ? { ...s, ...patch } : s)) });
   // Changing one shot's length keeps it and refits the others, so the sheet always sums to the target.
   const setLen = (i: number, len: number) => Number.isFinite(len) && len > 0 && onChange(setShotLength(sheet, i, len));
+  
+  const character = sheet.character;
+  const hasCharacter = character && character.description;
+  
   return (
-    <div className="overflow-x-auto rounded-lg border border-zinc-800">
-      <table className="w-full min-w-[1500px] border-collapse text-left text-xs" data-testid="shot-sheet">
+    <div className="space-y-3">
+      {hasCharacter && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-zinc-500">Recurring Character</div>
+          <div className="flex items-start gap-3">
+            {character.referenceUrl && (
+              <div className="shrink-0 overflow-hidden rounded-lg border border-white/10">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={character.referenceUrl} alt="Character reference" className="h-24 w-24 object-cover" />
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-xs leading-relaxed text-zinc-300">{character.description}</p>
+              {character.referenceUrl && (
+                <p className="mt-1 text-[10px] text-zinc-500">Reference image generated for consistency across people shots</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="overflow-x-auto rounded-lg border border-zinc-800">
+        <table className="w-full min-w-[1500px] border-collapse text-left text-xs" data-testid="shot-sheet">
         <thead className="bg-zinc-900 text-[10px] uppercase tracking-wider text-zinc-400">
           <tr>
             {["#", "Time", "Shot / framing", "Camera (angle · move · lens)", "Subject · action", "Lighting", "On-screen text", "Sound (VO · SFX · music)", "Out", "Engine", "Editor note"].map((h) => <th key={h} className="px-2 py-2 font-semibold">{h}</th>)}
@@ -70,6 +94,7 @@ export function SheetTable({ sheet, onChange, issues }: { sheet: ShotSheet; onCh
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
