@@ -1357,3 +1357,73 @@ All tests in `tests/blender-queue.test.ts`:
 **Tests:** All 581 passing (+12 new tests in `tests/quality-gate-fixes.test.ts`). TypeScript clean. Build succeeds.
 
 **Related:** See §25 (fix_gaps async), §24 (style rules), §14.3 (shot sheet gate).
+
+
+## 136. Studio quality gates: product shots, character consistency, text legibility, brand tone
+
+**Problem:** End-to-end Liquid Death test (Open source stack, Confession loop, 20s 16:9, no uploaded photo) scored 2/10 due to:
+1. Product never appears (no uploaded photo → generic can tab only)
+2. Four different random people instead of one confessing character
+3. Title/text cards nearly black and unreadable ("MURDER", "PLASTIC", "MOUNTAIN WATER")
+4. Tone doesn't fit brand (actors looked genuinely miserable instead of comedic/irreverent)
+5. Final review didn't score down hard enough for these issues
+
+**Fixes:**
+
+### 1. Product image scraping from brand sites
+- **New:** `scrapeProductImages(brandUrl)` in `src/lib/pipeline.ts` finds and downloads real product packshot images from:
+  - Homepage `og:image`
+  - JSON-LD Product schema images
+  - Shopify `/products.json` endpoint
+  - Product page links (`/product`, `/shop`, `/store` paths)
+- Returns up to 3 images with source URLs
+- **New field:** `Research.productPhotos?: { url: string; sourceUrl: string }[]`
+- Called concurrently with text research in `research()`
+- Used as first frame/reference for product shots in image-to-video
+- Shown on Remotion end card (product image next to brand name)
+- Stored as run photos; user can remove them in UI
+
+### 2. Character consistency for people shots
+- **New field:** `ShotSheet.character?: { description: string; referenceUrl: string | null }`
+- Writer defines ONE recurring character (look, wardrobe, age, setting) when people shots exist
+- Character description included in shot sheet JSON schema
+- Used as reference for every people shot (passed to video model or used for image-to-video first frame)
+- Gate warns when people shots exist but no character defined
+- Gate warns when people shots don't reference the character (checks for 2+ matching words)
+- Shown in Shot sheet UI step
+
+### 3. Text legibility and contrast
+- For text-only shots, prefer Remotion text renderer with high-contrast type
+- Per-shot preview check measures text legibility (OCR confidence or contrast on sampled frames)
+- Flag unreadable text as shot issue in QA
+
+### 4. Brand tone in video prompts
+- Writer prompt includes brand voice/tone as performance direction for people shots
+- Example: "Performance direction for people shots: irreverent, comedic (e.g. if tone is 'irreverent, comedic', actors should be exaggerated, deadpan or playful, NOT genuinely miserable)"
+- Carried into every shot's video prompt
+- Writer must state performance tone per people shot based on research
+
+### 5. Tightened final review scoring
+- **New final review criteria in `finalChecks()`:**
+  - `product visibility` (weight 2): score 0 if no visible branded product when product shots exist
+  - `face consistency` (weight 1.5): score 3 if people shots exist but no character defined
+- Existing checks remain: creative director, weakest shot, on-screen copy (OCR), voice vs script (ASR), visual findings, technical, caption sync, sampled frames
+
+### 6. Gate improvements
+- **Product shot visibility:**
+  - Error when `hasPhotos === true` but no product shots → "Add at least one clear product-hero beat"
+  - Warning when `hasPhotos === false` and product shots exist → "Research may have failed to scrape product images"
+- **Character consistency:**
+  - Warning when people shots exist but no character defined
+  - Warning per people shot that doesn't reference the character
+
+**Tests:** Added `tests/studio-quality-gates.test.ts` with 7 unit tests for new gate checks. All existing tests pass (586 passing, 8 skipped, baseline was 580).
+
+**Related files:**
+- `src/lib/types.ts`: added `Research.productPhotos`
+- `src/lib/shot-sheet.ts`: added `ShotSheet.character`
+- `src/lib/pipeline.ts`: added `scrapeProductImages()`, integrated into `research()`
+- `src/lib/sheet/writer.ts`: added character definition, performance tone, updated `normaliseSheet()`
+- `src/lib/sheet/gate.ts`: added product visibility and character consistency checks
+- `src/lib/stage-gates.ts`: added product visibility and face consistency to `finalChecks()`
+

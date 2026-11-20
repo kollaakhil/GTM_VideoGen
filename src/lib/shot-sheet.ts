@@ -83,6 +83,12 @@ export const SheetSchema = z.object({
   endCard: z.object({ title: Str(60, 1), line: Str(120).default(""), footer: Str(120).default("") }),
   /** Story pattern ID (optional, defaults to confession_loop). */
   patternId: Str(40).optional(),
+  /** Recurring character definition (look, wardrobe, age, setting) for people shots. */
+  character: z.object({
+    description: Str(400),
+    /** Generated reference image URL for character consistency. */
+    referenceUrl: z.string().nullable(),
+  }).optional(),
 });
 export type ShotSheet = z.infer<typeof SheetSchema>;
 

@@ -303,6 +303,41 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
 export function sheetGate(sheet: ShotSheet, o: { facts: string; rules?: StyleRule[]; afterRepair?: boolean; hasPhotos?: boolean }): GateResult {
   const issues: GateIssue[] = timingIssues(sheet).map((text) => ({ level: "error" as const, text }));
   const placeholderRegex = /\b(one physical example|insert product name|add brand here|placeholder|tbd|xxx|todo)\b/i;
+  
+  // Check for product shot visibility
+  const productShots = sheet.shots.filter((s) => 
+    s.engine === "blender" && s.blender?.template === "product_hero" ||
+    /\b(product|package|bottle|can|box|label)\b/i.test(`${s.subject} ${s.action}`)
+  );
+  
+  if (o.hasPhotos === true && productShots.length === 0) {
+    issues.push({ level: "error", text: "Product photos exist but there are no product shots. Add at least one clear product-hero beat." });
+  }
+  
+  // Only warn about missing photos when product shots exist (sheet wants to show the product but has no photos)
+  if (o.hasPhotos === false && productShots.length > 0) {
+    issues.push({ level: "warn", text: "No product photos available. Research may have failed to scrape product images from the brand site." });
+  }
+  
+  // Check for character consistency in people shots
+  const peopleShots = sheet.shots.filter((s) => s.engine === "ai_video" && /\b(person|people|man|woman|hands|actor|character)\b/i.test(`${s.subject} ${s.prompt ?? ""}`));
+  
+  if (peopleShots.length > 0) {
+    if (!sheet.character || !sheet.character.description) {
+      issues.push({ level: "warn", text: `${peopleShots.length} people shot(s) but no recurring character defined. Different faces across shots may break continuity.` });
+    } else {
+      // Check that people shots reference the character
+      const characterWords = new Set(sheet.character.description.toLowerCase().split(/\s+/).filter((w) => w.length > 3));
+      for (const s of peopleShots) {
+        const shotText = `${s.subject} ${s.prompt ?? ""}`.toLowerCase();
+        const matches = [...characterWords].filter((w) => shotText.includes(w));
+        if (matches.length < 2) {
+          issues.push({ level: "warn", shot: s.n, text: `Shot ${s.n} is a people shot but doesn't clearly reference the character ("${sheet.character.description.slice(0, 60)}").` });
+        }
+      }
+    }
+  }
+  
   for (const s of sheet.shots) {
     if (!s.camera.move.trim() || !s.camera.angle.trim() || !(s.camera.lensMm > 0)) issues.push({ level: "error", shot: s.n, text: `Shot ${s.n} has no complete camera (angle, move and lens).` });
     if (!s.audio.vo && !s.audio.sfx && !s.audio.music) issues.push({ level: "error", shot: s.n, text: `Shot ${s.n} has no sound: give it a VO line, a sound effect or a music cue.` });
