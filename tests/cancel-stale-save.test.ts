@@ -76,8 +76,8 @@ describe("Cancel and stale save protection", () => {
     
     // Job loads and starts working
     const jobRun = { ...testRun };
+    const jobLoadedAt = jobRun.updatedAt; // Capture timestamp at load time
     jobRun.status = "working";
-    const jobLoadedAt = jobRun.updatedAt;
     await saveProgress(jobRun);
     
     // User adds gate override
@@ -92,10 +92,11 @@ describe("Cancel and stale save protection", () => {
     };
     await saveProgress(userEditRun);
     
-    // Stale job tries to save without the override
+    // Stale job tries to save without the override (using old timestamp from before the job started)
     const staleJobRun = { ...jobRun };
-    staleJobRun.updatedAt = jobLoadedAt; // Old timestamp
+    staleJobRun.updatedAt = jobLoadedAt; // Restore old timestamp
     staleJobRun.gateOverride = null; // Job doesn't have the override
+    staleJobRun.status = "rendering";
     
     await saveProgress(staleJobRun);
     
