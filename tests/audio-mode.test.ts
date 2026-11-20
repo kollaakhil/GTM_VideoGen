@@ -20,10 +20,11 @@ describe("planAudio", () => {
     const p = planAudio("foley", sheet);
     expect(p.voice).toBe(false);
     expect(p.duck).toBe(true);
-    const kinds = (n: number) => p.sfx.filter((c) => c.shot === n && c.kind !== "whoosh").map((c) => c.kind);
+    const kinds = (n: number) => p.sfx.filter((c) => c.shot === n).map((c) => c.kind);
     expect(kinds(0)).toEqual(["click", "slide"]);
     expect(kinds(1)).toEqual(["pop", "pour", "fizz"]);
-    expect(p.sfx.filter((c) => c.kind === "whoosh")).toHaveLength(2);
+    // No automatic whoosh on cuts
+    expect(p.sfx.filter((c) => c.kind === "whoosh")).toHaveLength(0);
   });
   it("times the effect to its beat when the sheet gives one, else spreads the actions across the shot", () => {
     const p = planAudio("foley", sheet);
