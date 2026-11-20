@@ -106,9 +106,7 @@ export function ruleIssues(sheet: ShotSheet, rules: StyleRule[]): GateIssue[] {
         if (s && !/macro|extreme close|ecu|detail/i.test(`${s.shotType} ${s.framing}`)) bad(`shot 1 is "${s.shotType}", not an extreme macro.`, 1);
         break;
       }
-      case "diegetic_text":
-        for (const s of pics) if (s.text && !/diegetic|in[- ]scene|on the (plate|label|object)/i.test(s.text.placement)) bad(`shot ${s.n} overlays "${s.text.copy}"; text belongs in the scene or on the end card.`, s.n);
-        break;
+      // "diegetic_text" rule removed: text can be overlaid in brand style, not forced to be painted in scene
     }
   }
   return out;
@@ -277,14 +275,16 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
   }
   
   // Rule 8+17: all beats present in order, attempt result never shown
+  // Only check this if we're explicitly using the confession_loop pattern
   const expectedBeats = ["goal", "personal_stake", "stake_raised", "physical_example", "but_silence", "owned_cause", "low_point", "crazy_plan", "cut_before_attempt", "takeaway"];
   // Count end card for takeaway (it's excluded from pics)
   const allShots = sheet.shots.filter((s) => s.engine !== "remotion" || s.beat === "takeaway");
   const actualBeats = allShots.map((s) => s.beat).filter(Boolean);
   const missingBeats = expectedBeats.filter((b) => !actualBeats.includes(b));
   
-  if (missingBeats.length > 0) {
-    issues.push({ level: "warn", text: `Missing beats: ${missingBeats.join(", ")} (rule 17: all beats must be present).` });
+  // Only warn about missing beats if pattern-specific beats were used (not for free-form sheets)
+  if (missingBeats.length > 0 && actualBeats.length > 0) {
+    issues.push({ level: "warn", text: `Missing beats: ${missingBeats.join(", ")} (rule 17: all beats must be present when using pattern beats).` });
   }
   
   // Check order (simplified: just check that beats appear in roughly the right sequence)

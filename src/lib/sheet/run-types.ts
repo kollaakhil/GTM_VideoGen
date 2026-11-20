@@ -2,6 +2,7 @@ import type { Brief, Research } from "@/lib/types";
 import type { ShotSheet, StyleRule } from "@/lib/shot-sheet";
 import type { GateResult } from "./gate";
 import type { VersionStack } from "@/lib/versions";
+import type { ConceptChoice } from "./concepts";
 
 /** Run cost so far; the render pipeline's cost meter enforces the cap on paid render calls. */
 export type CostEntry = { at: string; stage: string; what: string; model: string; usd: number; estimate: number };
@@ -90,6 +91,7 @@ export interface SheetRun {
   };
   research: Research | null;
   brief: Brief | null;
+  concepts: ConceptChoice | null;
   rules: StyleRule[];
   ruleSource: string | null;
   script: string | null;

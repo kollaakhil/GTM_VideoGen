@@ -1668,3 +1668,121 @@ Seven issues discovered during a live Liquid Death e2e run on the sheet flow, al
 **Tests:** All existing tests pass. New product-scrape tests added.
 
 ---
+
+---
+
+## Creative Variety System (2026-11-20)
+
+**Problem:** Every video came out identical: same confession_loop beats, text on walls, identical templates.
+
+**Root causes:**
+- `writer.ts` defaulted `patternId` to `confession_loop`, forcing 10 fixed beats on every brand
+- `gate.ts:274` warned on "Missing beats", pushing Fix-the-gaps toward that template  
+- Rule r14 "Text is diegetic" + `gate.ts:110` forced text painted on walls/objects, producing garbled "location on the wall" shots
+- Blender templates (glow_word, macro_label, lab) and end-card layout were identical every run
+
+**Solution: Multi-stage creative variety system**
+
+### 1. Concept generation step
+
+Added a new step before the sheet that generates 3 distinct story concepts:
+
+**New file:** `src/lib/sheet/concepts.ts`
+- `generateConcepts()`: LLM generates 3 concepts with different premise, structure, setting, character, visual world, tone, opening shot, and key device
+- `pickStrongestConcept()`: Auto-selects the first (can be overridden by user in UI)
+- `checkNovelty()`: Detects repeated devices, settings, openings
+- `recordConcept()`: Records concept in LRU store (last 10) to detect repetition
+
+**Modified:** `src/lib/sheet/flow.ts`
+- Added `generateStoryConcepts()` step after research+brief, before sheet
+- Only runs when `patternId === "auto"` (not for explicit patterns like `confession_loop`)
+- Stores novelty warnings in `run.error` for UI visibility (non-blocking)
+
+**Modified:** `src/lib/sheet/run-types.ts`
+- Added `concepts: ConceptChoice | null` to `SheetRun`
+
+### 2. Pattern defaults changed
+
+- **Default pattern:** `"auto"` (was `"confession_loop"`)
+- `confession_loop` is now **opt-in only**
+- Auto pattern uses free-form structure, no fixed beats required
+
+**Modified files:**
+- `src/lib/sheet/flow.ts`: `newSheetRun()` defaults to `patternId: "auto"`
+- `src/lib/sheet/writer.ts`: `normaliseSheet()` defaults to `"auto"`, not `"confession_loop"`
+
+### 3. Writer enhancements
+
+**Modified:** `src/lib/sheet/writer.ts`
+
+- `SheetInput` now accepts optional `concept` field
+- `sheetPrompt()` includes concept details when available (logline, premise, structure, setting, character, visual world, tone, opening shot)
+- `getPatternPrompt()` added `"auto"` case:
+  ```
+  Free-form (no fixed pattern)
+  - NOT required to use confession_loop beats
+  - "beat" field is OPTIONAL
+  - Text is OPTIONAL and can be overlaid (Remotion), NOT forced to be painted in scene
+  - Focus on visual storytelling that matches the concept
+  ```
+
+### 4. Gate modifications
+
+**Modified:** `src/lib/sheet/gate.ts`
+
+**Removed enforcements:**
+- **Diegetic text rule removed:** `case "diegetic_text"` no longer enforces. Text can now be overlaid in brand style (Remotion engine), not forced to be painted on walls/objects in the scene.
+- **Missing beats warning:** Only fires when pattern-specific beats are actually used (`actualBeats.length > 0`), not for free-form sheets with `patternId: "auto"`.
+
+**Result:** No more forced "text on wall" shots or garbled location text. Gate accepts free-form structures without warning about missing confession_loop beats.
+
+### 5. Novelty guard
+
+**Concept novelty checking:**
+- Flags repeated key devices (e.g., "text on wall" used multiple times)
+- Flags repeated settings (e.g., "kitchen" used 3 runs in a row)
+- Flags repeated opening shots
+- Detects stock devices: "text on wall", "location title card", "generic product shot"
+
+**Storage:** Simple in-memory LRU (last 10 items per category). In production, would be persistent across runs.
+
+**Non-blocking:** Warnings stored in `run.error`, visible in UI, but don't block rendering.
+
+### 6. Tests
+
+**New file:** `tests/creative-variety.test.ts` (13 tests)
+
+Tests cover:
+- Concept generation (3 distinct concepts)
+- Picking strongest concept
+- Novelty guard (repeated devices, stock devices)
+- Pattern defaults (`auto`, not `confession_loop`)
+- Sheet prompt with concept context
+- Gate checks (no forced beats for auto, no diegetic text enforcement)
+
+**Modified:** `tests/shot-sheet.test.ts`
+- Removed expectation for diegetic text warning (rule no longer enforced)
+
+### Summary of changes
+
+**New features:**
+1. Concept generation: 3 distinct stories per run, user picks or auto-selects
+2. Novelty guard: detects and warns about repeated devices/settings
+3. Free-form default: pattern `"auto"` replaces forced `confession_loop`
+4. Text flexibility: overlaid text allowed, not forced to be painted in scene
+5. Gate relaxed: no missing-beats warning for free-form, no diegetic-text enforcement
+
+**Files modified:**
+- `src/lib/sheet/concepts.ts` (new)
+- `src/lib/sheet/flow.ts`
+- `src/lib/sheet/run-types.ts`
+- `src/lib/sheet/writer.ts`
+- `src/lib/sheet/gate.ts`
+- `tests/creative-variety.test.ts` (new)
+- `tests/shot-sheet.test.ts`
+
+**Tests:** 638 passing (was 626 baseline, +12 new tests). TypeScript clean. Build succeeds.
+
+**Result:** Each run now gets a unique concept, structure, and visual world. No more identical confession_loop templates or garbled wall text.
+
+---

@@ -201,7 +201,8 @@ describe("shot sheet gate (check 1 of 3)", () => {
     expect(t).toMatch(/shot 2 moves "static"/);
     expect(t).toMatch(/fade to black/);
     expect(t).toMatch(/not an extreme macro/);
-    expect(t).toMatch(/overlays "Switch on"/);
+    // Diegetic text rule removed: text can be overlaid in brand style, not forced to be painted in scene
+    // expect(t).toMatch(/overlays "Switch on"/);
   });
 });
 

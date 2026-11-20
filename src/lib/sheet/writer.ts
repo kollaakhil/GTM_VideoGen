@@ -22,6 +22,7 @@ export type SheetInput = {
   audioMode: ShotSheet["audioMode"];
   hasPhotos: boolean;
   patternId?: string;
+  concept?: { logline: string; premise: string; structure: string; setting: string; character: string | null; visualWorld: string; tone: string; openingShot: string } | null;
 };
 
 const SYSTEM = `You are a commercial director and editor. You write a short ad script, then enhance it into a precise shot sheet a 3D artist, an AI video operator and an editor can execute exactly with no guesswork. Use only facts you are given; never invent numbers, rankings or features. When a story pattern is specified, follow its rules exactly.`;
@@ -29,6 +30,18 @@ const SYSTEM = `You are a commercial director and editor. You write a short ad s
 export function sheetPrompt(i: SheetInput, fixes: GateIssue[] = []) {
   const patternPrompt = getPatternPrompt(i.patternId);
   const performanceTone = i.research?.tone ? ` Performance direction for people shots: ${i.research.tone} (e.g. if tone is "irreverent, comedic", actors should be exaggerated, deadpan or playful, NOT genuinely miserable).` : "";
+  const conceptPrompt = i.concept ? `
+STORY CONCEPT (follow this creative direction):
+Logline: ${i.concept.logline}
+Premise: ${i.concept.premise}
+Structure: ${i.concept.structure}
+Setting: ${i.concept.setting}
+${i.concept.character ? `Character: ${i.concept.character}` : ""}
+Visual world: ${i.concept.visualWorld}
+Tone: ${i.concept.tone}
+Opening shot: ${i.concept.openingShot}
+
+Bring this concept to life in your shot sheet. The opening must match the concept's opening shot.` : "";
   
   return `Brand/product: ${i.brand}
 Goal: ${i.goal}${i.offer ? `\nOffer: ${i.offer}` : ""}
@@ -40,6 +53,7 @@ ${i.facts || "(none: make no factual claims)"}
 STYLE RULES (follow every one):
 ${i.rules.map((r) => `- [${r.id}] ${r.text}`).join("\n") || "- (none)"}
 
+${conceptPrompt}
 ${patternPrompt}
 
 Format: ${i.targetSec}s total, aspect ${i.aspect}, 24 fps. Audio: ${i.audioMode === "foley" ? "FOLEY-FIRST: no voiceover; every shot gets one crisp close-miked sound effect on its action, plus a low bed under everything" : "voiceover: short spoken lines, max ~2.5 words per second, plus sound effects"}.
@@ -58,6 +72,14 @@ Return JSON:
 }
 
 function getPatternPrompt(patternId?: string): string {
+  if (patternId === "auto" || !patternId) {
+    return `STORY STRUCTURE: Free-form (no fixed pattern)
+Create a unique story structure that fits the concept. You are NOT required to use the confession_loop beats.
+The "beat" field is OPTIONAL - use it only if specific beats help you organize the story.
+Text is OPTIONAL and can be overlaid in the brand's style (Remotion engine) - it does NOT need to be painted on walls or objects in the scene.
+Focus on visual storytelling that matches the concept's premise, structure and visual world.`;
+  }
+  
   if (patternId === "confession_loop") {
     return `STORY PATTERN: "Confession loop"
 Follow these rules EXACTLY:
@@ -134,7 +156,7 @@ export function normaliseSheet(raw: unknown, i: Pick<SheetInput, "targetSec" | "
     rules: i.rules,
     endCard: r.endCard ?? { title: "Brand" },
     shots: shots.map((s) => ({ ...s, shotType: String((s as Record<string, unknown>).shotType ?? "CU"), subject: String((s as Record<string, unknown>).subject ?? "product") })),
-    patternId: String(r.patternId || i.patternId || "confession_loop"),
+    patternId: String(r.patternId || i.patternId || "auto"),
   };
   
   // Only add character if it exists (don't set to undefined)
