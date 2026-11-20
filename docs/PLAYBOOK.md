@@ -1886,3 +1886,71 @@ Tests cover:
 **Result:** Sound is now concept- and brand-driven. Music matches the concept's genre/tempo. Voice matches the brand tone. SFX are neutral and context-driven. Captions use brand colors. Tests are guaranteed offline.
 
 ---
+
+## Preflight Model Validation (2026-11-20, PR #81)
+
+**Problem:** Preflight regressed to only checking 4 provider list endpoints were reachable. Didn't validate individual model IDs, check for deprecated models, or verify output modality matches role. Text models could be assigned to image/video/audio roles without detection.
+
+**Fix: Comprehensive model validation**
+
+### What preflight now checks
+
+**Sources (every model ID):**
+- `src/lib/versions.ts` PRESET_STACKS
+- `src/lib/registry/catalog.ts` CATALOG
+- `src/lib/registry/index.ts` STAGE_DEFAULTS
+- `src/lib/sheet/render-deps.ts` fallback models
+
+**Validation per model:**
+1. **Exists** in provider's list or schema endpoint
+2. **Not deprecated** (fal 410 status or "deprecated" in response)
+3. **Modality matches role:**
+   - Image role → image output
+   - Video role → video output
+   - Audio role (sfx/music/voice) → audio output
+   - Text role (research/script/enhancer/qa) → text output
+   - **Text models CANNOT be in image/video/audio roles** (hard error)
+
+**Output:** One line per model ID. Exit nonzero on any error. No media generation (metadata checks only).
+
+### Script changes: `scripts/preflight-models.mjs`
+- **Was:** Only checked 4 provider endpoints were reachable
+- **Now:** Validates every model ID from codebase sources
+- Checks: OpenRouter `/models`, fal schema endpoint, Hugging Face router
+- Infers modality from endpoint path and architecture.output_modalities
+- Skips local models (local-synth, local-blender) and auth-required (hfmcp, higgsfield)
+- Prints: `modelId.padEnd(60) ✅|❌|⚠️|⏭️`
+- Exit codes: 0 if all pass, 1 if any errors
+
+### API endpoint: `GET /api/preflight/models`
+- **Use case:** Studio shows warning banner before Start listing bad models
+- Same validation logic as script
+- Returns: `{ ok: boolean, errors: string[], warnings: string[], checked: number }`
+- Errors shown: NOT FOUND, DEPRECATED, MODALITY MISMATCH
+- Example error: `anthropic/claude-sonnet-5.5: MODALITY MISMATCH - text model in image role (expected image)`
+
+### Tests: `tests/preflight-validation.test.ts`
+- Mocked fetch, offline
+- Flags text model in image role (MODALITY MISMATCH error)
+- Flags deprecated model (fal 410)
+- Flags "deprecated" message in response text
+- Validates all model IDs from presets/defaults/fallbacks
+- Checks modality matches for each stage
+- Skips local and auth-required models
+- Detects NOT FOUND models (404)
+
+**Files modified:**
+- `scripts/preflight-models.mjs` - comprehensive validation (was: simple endpoint checks)
+- `src/app/api/preflight/models/route.ts` - same validation logic for API
+- `tests/preflight-validation.test.ts` - mocked fetch tests (17 tests)
+- `tests/sound-concept-driven.test.ts` - updated preflight test expectations
+
+**Verification:**
+- TypeScript: Clean
+- Tests: 740 passing (run twice), 7 skipped, 0 failures
+- Build: Success
+- Zero spend: All tests mocked with vi.fn() fetch
+
+**Result:** Every model ID in the codebase is validated before any run. Text models assigned to image/video/audio roles are caught immediately. Deprecated models are flagged. Studio shows warnings before spend.
+
+---
