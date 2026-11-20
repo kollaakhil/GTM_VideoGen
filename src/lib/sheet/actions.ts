@@ -210,11 +210,11 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
       const oldVersion = oldSheet.version;
       const oldGate = r.gate!;
       
-      // Score: blocking errors * 10 + warnings
+      // Score: blocking errors only (ignore style warnings in selection)
+      // Warnings are advisory and should not drive the fix loop
       const scoreGate = (gate: GateResult) => {
         const blocking = gate.issues.filter((i: GateIssue) => i.level === "error").length;
-        const warnings = gate.issues.filter((i: GateIssue) => i.level === "warn").length;
-        return blocking * 10 + warnings;
+        return blocking;
       };
       
       const bestScore = scoreGate(oldGate);
@@ -225,8 +225,8 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
         const attempt = i + 1;
         return (async () => {
           try {
-            // Target both errors and warnings
-            const fixes = oldGate.issues;
+            // Only send errors to the writer, not style warnings
+            const fixes = oldGate.issues.filter((i: GateIssue) => i.level === "error");
             const result = await writeSheet(input, chatWithRetry, fixes, oldVersion + attempt);
             const currentSheet = result.sheet;
             const currentGate = sheetGate(currentSheet, { facts: factBase(r), rules: r.rules, hasPhotos: r.input.photos.length > 0 });

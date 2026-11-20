@@ -1885,4 +1885,120 @@ Tests cover:
 
 **Result:** Sound is now concept- and brand-driven. Music matches the concept's genre/tempo. Voice matches the brand tone. SFX are neutral and context-driven. Captions use brand colors. Tests are guaranteed offline.
 
+## Creativity: Story and Review (2026-11-20)
+
+**Problem:** The writer had too little creative room. Pattern auto was still pulling sheets back toward confession_loop structure. Review loop sent style warnings back as "fix these", rewarding template conformance. Models and context were limited.
+
+**Goal:** Apart from the script's hook/emotion/twist, everything is defaulted. Give the writer real creative room, and stop the review loop from pulling sheets back to a template.
+
+### Fixes Implemented
+
+#### 1. Engine Routing (writer.ts:46-47, :60)
+**Before:** "blender for product, hero, label, macro, sign, object and abstract shots; ai_video only for people, hands or live action"
+**After:** "blender for product shots needing exact labels or precise camera control; ai_video for any scene, environment, or product-in-world shot"
+**Removed:** "lab: good for detail/trigger/reveal loops" nudge
+
+**Impact:** ai_video is now allowed for environment, scene, and product-in-world shots. Blender is used where exact labels or camera matter.
+
+#### 2. Copied Examples Replaced with Neutral Field Descriptions
+Removed concrete examples that the model was copying:
+- **Line 57:** ECU macro, slow push-in 15%, lensMm 100, 0-1.5s, brass switch snap at 0.3s
+- **Line 49:** glass bottle on marble
+- **Line 55:** mid-30s male, black hoodie, kitchen
+
+**Replaced with:** Neutral field descriptions in the JSON schema that describe what each field is for without providing copyable concrete values.
+
+#### 3. Story Structure Fixes
+**writer.ts:60-91** Previously forced:
+- Opening with the goal
+- Echoing it at the end
+- No CTA
+
+**Now:** With pattern auto, the chosen concept decides the structure, opening, ending, and whether there is a CTA.
+
+**writer.ts:149** Previously forced the end card last.
+**Now:** The end card can be placed anywhere the concept requires (for confession_loop, it's still enforced last).
+
+**Foley conflict resolved:** writer.ts:45 asked for "a low bed" even when audioMode was foley. Now respects audioMode and doesn't ask for a music bed when foley is selected.
+
+**rules.ts:22 and gate.ts:109-110:** Diegetic-text push is gone (already removed in Creative Variety System).
+
+#### 4. Gate Pattern-Awareness
+**gate.ts:143-149, 201-210:** Enforced 1.5-2s setup cuts and 3.5-4.5 wps
+**gate.ts:240-250:** Required opening echo
+**gate.ts:181-199:** Forced 2-4 word chunks and "bright label" from fixed word list
+**gate.ts:214-216:** Music rule
+
+**Fix:** All of these checks now ONLY apply when `patternId === "confession_loop"`. With pattern auto, no warnings are raised for cut length, wps, echo, or chunk violations.
+
+#### 5. Fix Loop Scoring (actions.ts:211-223)
+**Before:** Sent all warnings to the writer and kept the attempt with the fewest warnings (errors * 10 + warnings), rewarding template conformance.
+
+**After:** Choose only on claim, safety, and technical errors. Style warnings stay advisory and are never sent as "fix these" unless the user picked a pattern. Only errors (not warnings) drive the fix loop selection.
+
+#### 6. Models and Context
+**flow.ts:13-14** Previously hardcoded `google/gemini-3.8-flash` for every sheet text stage.
+
+**After:**
+- Added `getStageModel()` function that uses version stack models (research, script, enhancer) or falls back to stage defaults
+- Updated `chatFor()` to accept temperature parameter and use stage models
+- Concept generation uses temperature ~0.9 for creativity
+- Writer uses temperature ~0.7 for structure
+- Added temperature support to `chatJSON()` in ai.ts
+
+**writer.ts:36** Previously passed only audience and tone.
+
+**After:** Passes the full research object including:
+- Colours
+- Style reference
+- Logo
+- Angles
+- Competitors
+- Pronunciation
+
+#### 7. Review Rubric
+**pipeline.ts:441** Previously scored "CTA clarity" unconditionally, contradicting no-CTA concepts.
+
+**After:** Removed CTA from the base QA rubric (now checks: hook clarity, text legibility, brand fit, visual quality, AI artifacts, policy risk).
+
+**stage-gates.ts:387** Added to `finalChecks()`:
+- **Audio score:** New optional parameter for sync, mix, and fit (weight 1)
+- **Concept-aware CTA check:** Only checks CTA when `hasCTA !== false`. For patterns like confession_loop that explicitly have no CTA, the check is skipped.
+
+### Tests
+**New file:** `tests/creativity-story-review.test.ts` (18 tests)
+
+Tests verify:
+1. Writer prompt contains NO banned example strings
+2. ai_video is allowed for non-person shots
+3. Writer output parses music, voice, look, endCard.layout fields
+4. With pattern auto, gate raises no confession_loop warnings
+5. With confession_loop, gate DOES raise those warnings
+6. Fix loop ignores style warnings, only fixes errors
+7. Flow uses stack models (not hardcoded flash)
+8. Temperature is set for concepts and writer
+9. Writer prompt includes full research fields
+10. Review rubric has audio score and concept-aware CTA
+
+**Modified:** `tests/creative-variety.test.ts` - Updated test expectation to match new prompt wording.
+
+### Verification
+- **TypeScript:** `pnpm typecheck` - ✅ Clean
+- **Tests:** `pnpm test` - ✅ 719 passed, 7 skipped
+- **Build:** `pnpm build` - ✅ Successful
+
+### Files Modified
+- `src/lib/sheet/writer.ts` - Engine routing, examples removed, full research, story structure, foley fix
+- `src/lib/sheet/gate.ts` - Pattern-aware checks (only for confession_loop)
+- `src/lib/sheet/actions.ts` - Fix loop scoring (errors only, not warnings)
+- `src/lib/sheet/flow.ts` - Stage models, temperature support, getStageModel()
+- `src/lib/ai.ts` - Temperature parameter for chatJSON()
+- `src/lib/pipeline.ts` - CTA removed from base QA rubric
+- `src/lib/stage-gates.ts` - Audio score, concept-aware CTA in finalChecks()
+- `tests/creativity-story-review.test.ts` (new) - 18 comprehensive tests
+- `tests/creative-variety.test.ts` - Updated test expectation
+
+### Result
+Writers now have real creative freedom. Pattern auto doesn't force structure, gate doesn't penalize non-template choices, and the fix loop focuses on real errors (claims, safety) rather than style conformance. Full research context and proper temperature settings improve output quality.
+
 ---

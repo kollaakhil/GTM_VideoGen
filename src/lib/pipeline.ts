@@ -438,7 +438,7 @@ export async function qa(model: string, mediaUrl: string, mediaType: "image" | "
 }
 
 const QA_RUBRIC =
-  "You are a strict creative director grading a paid-social ad. Score 1-10 on: hook clarity in the first second, text legibility at phone size, brand fit, visual quality and AI artifacts, CTA clarity, and policy risk. Anchors: 9-10 = standout, publish as is; 8 = ready to publish, only minor polish notes; 6-7 = a visible defect most viewers would notice; 4-5 = several defects or a weak hook; 1-3 = broken (garbled text, morphing, wrong product). Taste-level suggestions alone never pull a score below 8.";
+  "You are a strict creative director grading a paid-social ad. Score 1-10 on: hook clarity in the first second, text legibility at phone size, brand fit, visual quality and AI artifacts, and policy risk. Anchors: 9-10 = standout, publish as is; 8 = ready to publish, only minor polish notes; 6-7 = a visible defect most viewers would notice; 4-5 = several defects or a weak hook; 1-3 = broken (garbled text, morphing, wrong product). Taste-level suggestions alone never pull a score below 8.";
 
 const run = promisify(execFile);
 const FFMPEG = ffmpegPath || "ffmpeg";

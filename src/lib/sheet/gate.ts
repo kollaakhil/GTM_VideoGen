@@ -316,6 +316,7 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
 export function sheetGate(sheet: ShotSheet, o: { facts: string; rules?: StyleRule[]; afterRepair?: boolean; hasPhotos?: boolean }): GateResult {
   const issues: GateIssue[] = timingIssues(sheet).map((text) => ({ level: "error" as const, text }));
   const placeholderRegex = /\b(one physical example|insert product name|add brand here|placeholder|tbd|xxx|todo)\b/i;
+  const isConfessionLoop = sheet.patternId === "confession_loop";
   
   // Check for product shot visibility
   const productShots = sheet.shots.filter((s) => 
@@ -368,7 +369,8 @@ export function sheetGate(sheet: ShotSheet, o: { facts: string; rules?: StyleRul
   issues.push(...ruleIssues(sheet, o.rules ?? sheet.rules), ...claimIssues(sheet, o.facts));
   
   // Pattern-specific checks for confession_loop (always warnings, not blocking)
-  if (sheet.patternId === "confession_loop") {
+  // Only apply these checks when the user explicitly picked confession_loop
+  if (isConfessionLoop) {
     issues.push(...confessionLoopChecks(sheet));
   }
   
