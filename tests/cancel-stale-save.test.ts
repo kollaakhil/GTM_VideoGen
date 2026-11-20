@@ -80,6 +80,9 @@ describe("Cancel and stale save protection", () => {
     jobRun.status = "working";
     await saveProgress(jobRun);
     
+    // Small delay to ensure distinct timestamps
+    await new Promise(resolve => setTimeout(resolve, 10));
+    
     // User adds gate override
     const userEditDoc = await get("sheet_runs", testRun.id);
     const userEditRun = userEditDoc as SheetRun;
