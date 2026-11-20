@@ -1,5 +1,6 @@
 import type { Stage } from "./registry/types";
 import { CATALOG, STAGE_DEFAULTS } from "./registry";
+import { migrateModels } from "./registry/migrations";
 
 /**
  * A version stack: one complete set of model choices for a video run.
@@ -33,7 +34,7 @@ export const PRESET_STACKS: VersionStack[] = [
       video: "kling/v4/image-to-video",
       voice: "elevenlabs/tts/eleven-v4",
       music: "elevenlabs/music/v2.5",
-      sfx: "fal-ai/mmaudio-v2",
+      sfx: "mirelo-ai/sfx2.0/text-to-audio",
       qa: "google/gemini-3.8-flash",
       asset3d: "speridlabs/idol/max",
     },
@@ -51,7 +52,7 @@ export const PRESET_STACKS: VersionStack[] = [
       video: "alibaba/wan-3.0/image-to-video",
       voice: "fal-ai/chatterbox/text-to-speech",
       music: "fal-ai/ace-step",
-      sfx: "fal-ai/stable-audio-3/small/sfx/text-to-audio",
+      sfx: "mirelo-ai/sfx2.0/text-to-audio",
       qa: "google/gemini-3.8-flash",
       asset3d: "speridlabs/idol/max/turbo",
     },
@@ -69,7 +70,7 @@ export const PRESET_STACKS: VersionStack[] = [
       video: "auto",
       voice: "fal-ai/elevenlabs/tts/eleven-v3",
       music: "elevenlabs/music/v2.5",
-      sfx: "fal-ai/mmaudio-v2",
+      sfx: "mirelo-ai/sfx2.0/text-to-audio",
       qa: "google/gemini-3.8-flash",
       asset3d: "speridlabs/idol/max",
     },
@@ -206,4 +207,14 @@ export function normalizeStack(stack: VersionStack): VersionStack {
     }
   }
   return { ...stack, models };
+}
+
+/**
+ * Migrates a version stack's models from deprecated IDs to their live replacements.
+ */
+export function migrateStack(stack: VersionStack): VersionStack {
+  return {
+    ...stack,
+    models: migrateModels(stack.models),
+  };
 }

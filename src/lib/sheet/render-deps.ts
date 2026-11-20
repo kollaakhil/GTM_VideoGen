@@ -9,6 +9,7 @@ import { mediaDataUrl, storeMedia } from "@/lib/store";
 import { stitchShots } from "@/lib/video-post";
 import { designSound } from "@/lib/audio/sound-design";
 import { generateVideoToAudioSfx, selectVoice } from "@/lib/audio/generate";
+import { generateSfxWithFallback, generateMusicWithFallback, type FallbackWarning } from "@/lib/audio/fallback";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
@@ -17,6 +18,7 @@ import os from "node:os";
 import type { RenderDeps } from "./render";
 import { DEFAULT_VIDEO_MODEL, videoPricePerSec } from "./version-estimate";
 import type { SheetRun } from "./run-types";
+import { migrateModelId } from "@/lib/registry/migrations";
 
 const run = promisify(execFile);
 
@@ -63,13 +65,13 @@ export const DEFAULT_SHEET_VIDEO_MODEL = () => process.env.SHEET_VIDEO_MODEL || 
 
 export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>, jobContext?: { runId: string; versionId: string; priority?: "high" | "normal" }): RenderDeps {
   const sheetModel = (r: SheetRun) => r.input.visionModel;
-  // Resolve models from stack or fallback to env/defaults
+  // Resolve models from stack or fallback to env/defaults, migrating deprecated IDs
   const videoModel = (stackModels?.video && stackModels.video !== "auto" ? stackModels.video : "") || process.env.SHEET_VIDEO_MODEL || "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video";
-  const qaModel = stackModels?.qa || process.env.SHEET_VISION_MODEL || "google/gemini-3.8-flash";
-  const voiceModel = stackModels?.voice; // undefined means use voiceover's VOICE_MODEL default
-  const asset3dModel = stackModels?.asset3d; // undefined means use generateProductMesh's auto
-  const sfxModel = stackModels?.sfx || "fal-ai/mmaudio-v2";
-  const musicModel = stackModels?.music || "elevenlabs/music/v2.5";
+  const qaModel = migrateModelId(stackModels?.qa || process.env.SHEET_VISION_MODEL || "google/gemini-3.8-flash");
+  const voiceModel = stackModels?.voice ? migrateModelId(stackModels.voice) : undefined; // undefined means use voiceover's VOICE_MODEL default
+  const asset3dModel = stackModels?.asset3d ? migrateModelId(stackModels.asset3d) : undefined; // undefined means use generateProductMesh's auto
+  const sfxModel = migrateModelId(stackModels?.sfx || "mirelo-ai/sfx2.0/text-to-audio");
+  const musicModel = migrateModelId(stackModels?.music || "elevenlabs/music/v2.5");
   
   return {
     renderers: { 
@@ -122,18 +124,73 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
     selectVoice: (persona, brand) => selectVoice(persona, brand),
     generateSfx: async (videoUrl, textPrompt, durationSeconds) => {
       try {
-        // Use the SFX model from the stack
-        const result = await generateVideoToAudioSfx(videoUrl, textPrompt, durationSeconds, sfxModel);
+        // Use fallback chain - tries all verified models
+        const result = await generateSfxWithFallback(textPrompt, durationSeconds, sfxModel);
+        
+        // Log visible warning if fallback was used
+        if (result.warning) {
+          console.warn(`⚠️  [AUDIO FALLBACK] SFX: ${result.warning.primary} → ${result.warning.fallback}`);
+          console.warn(`    Reason: ${result.warning.reason}`);
+        }
+        
         return { url: result.url, usd: result.usage.costUsd };
-      } catch (e) {
-        // Fallback: return null on failure, caller will skip this SFX
-        console.warn(`[audio] SFX generation failed: ${(e as Error).message}`);
-        throw e;
+      } catch (error: unknown) {
+        // All models failed - generate bundled audio as last resort and store visible warning
+        const err = error as { audioFallbackFailure?: boolean; primary?: string; lastError?: unknown };
+        if (err.audioFallbackFailure) {
+          console.error(`❌ [AUDIO FAILURE] All SFX models failed, using bundled audio`);
+          console.error(`    Primary: ${err.primary}`);
+          console.error(`    Last error: ${err.lastError}`);
+          
+          // Generate bundled audio or silence as absolute last resort
+          const { loadBundledAudio, generateSilence } = await import("@/lib/audio/bundled");
+          let url: string;
+          try {
+            url = await loadBundledAudio("click.wav", durationSeconds);
+          } catch {
+            url = generateSilence(durationSeconds);
+          }
+          
+          // TODO: Store this warning on the run/version for UI display
+          return { url, usd: 0 };
+        }
+        throw error;
       }
     },
     generateMusic: async (prompt, seconds) => {
-      const result = await musicBed(prompt, seconds, musicModel);
-      return result.url;
+      try {
+        // Use fallback chain for music
+        const result = await generateMusicWithFallback(prompt, seconds, musicModel);
+        
+        // Log visible warning if fallback was used
+        if (result.warning) {
+          console.warn(`⚠️  [AUDIO FALLBACK] Music: ${result.warning.primary} → ${result.warning.fallback}`);
+          console.warn(`    Reason: ${result.warning.reason}`);
+        }
+        
+        return result.url;
+      } catch (error: unknown) {
+        // All models failed - generate bundled music as last resort and store visible warning
+        const err = error as { audioFallbackFailure?: boolean; primary?: string; lastError?: unknown };
+        if (err.audioFallbackFailure) {
+          console.error(`❌ [AUDIO FAILURE] All music models failed, using bundled audio`);
+          console.error(`    Primary: ${err.primary}`);
+          console.error(`    Last error: ${err.lastError}`);
+          
+          // Generate bundled music or silence as absolute last resort
+          const { loadBundledAudio, generateSilence } = await import("@/lib/audio/bundled");
+          let url: string;
+          try {
+            url = await loadBundledAudio("ambient-bed.wav", seconds);
+          } catch {
+            url = generateSilence(seconds);
+          }
+          
+          // TODO: Store this warning on the run/version for UI display
+          return url;
+        }
+        throw error;
+      }
     },
     burnCaptions: async (video, cues, width, height) => {
       const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-cap-"));

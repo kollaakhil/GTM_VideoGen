@@ -44,12 +44,12 @@ describe("Audio Quality Gates", () => {
       expect(voiceModels.length).toBeGreaterThan(0);
     });
 
-    it("includes MMAudio in SFX models", () => {
+    it("includes Mirelo SFX 2.0 in SFX models", () => {
       const sfxModels = modelsFor("sfx");
-      const mmaudio = sfxModels.find((m) => m.id === "fal-ai/mmaudio-v2");
+      const mirelo = sfxModels.find((m) => m.id === "mirelo-ai/sfx2.0/text-to-audio");
 
-      expect(mmaudio).toBeDefined();
-      expect(mmaudio?.label).toContain("MMAudio");
+      expect(mirelo).toBeDefined();
+      expect(mirelo?.label).toContain("Mirelo");
     });
 
     it("includes ElevenLabs Music in music models", () => {
@@ -61,7 +61,7 @@ describe("Audio Quality Gates", () => {
     });
 
     it("defaults to top quality audio models", () => {
-      expect(STAGE_DEFAULTS.sfx).toBe("fal-ai/mmaudio-v2");
+      expect(STAGE_DEFAULTS.sfx).toBe("mirelo-ai/sfx2.0/text-to-audio");
       expect(STAGE_DEFAULTS.music).toBe("elevenlabs/music/v2.5");
       expect(STAGE_DEFAULTS.voice).toBe("fal-ai/elevenlabs/tts/eleven-v3");
     });
@@ -71,7 +71,7 @@ describe("Audio Quality Gates", () => {
     it("Premium stack uses top quality audio", () => {
       const premium = PRESET_STACKS.find((s) => s.id === "premium");
 
-      expect(premium?.models.sfx).toBe("fal-ai/mmaudio-v2");
+      expect(premium?.models.sfx).toBe("mirelo-ai/sfx2.0/text-to-audio");
       expect(premium?.models.music).toBe("elevenlabs/music/v2.5");
       expect(premium?.models.voice).toContain("elevenlabs");
     });
