@@ -217,8 +217,9 @@ for lab in SPEC.get("labels", []):
     cu.size = float(lab.get("size", 0.05))
     cu.extrude = 0.0003
     cu.align_x = lab.get("align", "LEFT")
+    font_path = lab.get("font") or SPEC.get("fontPath", "/System/Library/Fonts/Helvetica.ttc")
     try:
-        cu.font = bpy.data.fonts.load(lab.get("font", "/System/Library/Fonts/Helvetica.ttc"))
+        cu.font = bpy.data.fonts.load(font_path)
     except Exception:
         pass
     o = bpy.data.objects.new("label", cu)
@@ -338,8 +339,9 @@ def word_tube(name, text, x, z, size, radius, m):
     cu.body = text
     cu.size = size
     cu.align_x = "CENTER"
+    font_path = SPEC.get("fontPath", "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf")
     try:
-        cu.font = bpy.data.fonts.load("/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf")
+        cu.font = bpy.data.fonts.load(font_path)
     except Exception:
         pass
     o = bpy.data.objects.new(name, cu)
@@ -478,8 +480,9 @@ for k, line in enumerate(SPEC.get("plate", ["NE 10", "15 kV  30 mA"])):
     cu.size = 0.022 if k == 0 else 0.013
     cu.extrude = 0.0002
     cu.align_x, cu.align_y = "CENTER", "CENTER"
+    font_path = SPEC.get("fontPath", "/System/Library/Fonts/Supplemental/Courier New Bold.ttf")
     try:
-        cu.font = bpy.data.fonts.load("/System/Library/Fonts/Supplemental/Courier New Bold.ttf")
+        cu.font = bpy.data.fonts.load(font_path)
     except Exception:
         pass
     o = bpy.data.objects.new("plate_text", cu)
