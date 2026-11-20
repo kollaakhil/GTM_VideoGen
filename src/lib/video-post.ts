@@ -231,16 +231,31 @@ export async function stitchShots(clips: string[], audio: { voices?: { url: stri
       const src = srcs[i];
       const info = infos[i];
       const duration = planned?.[i] ?? info.duration;
-      if (!(duration > 0) || info.duration + 0.12 < duration) throw new Error(`Shot ${i + 1} is shorter than its planned ${duration}s.`);
+      if (!(duration > 0)) throw new Error(`Shot ${i + 1} has invalid duration: ${duration}s.`);
+      
+      // Allow some tolerance for short clips (AI models often return whole seconds)
+      const shortage = duration - info.duration;
+      if (shortage > 1.0) {
+        // Grossly short: throw
+        throw new Error(`Shot ${i + 1} is ${shortage.toFixed(2)}s shorter than its planned ${duration}s (actual ${info.duration}s).`);
+      }
+      
       const w = audio.width ?? 720;
       const h = audio.height ?? Math.round(w * 16 / 9 / 2) * 2;
       const out = path.join(dir, `n${i}.mp4`);
+      
+      // If short by up to ~0.75s, extend by holding the last frame
+      const needsPadding = shortage > 0.12;
+      const vf = needsPadding 
+        ? `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=${shortage.toFixed(3)}`
+        : `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1,fps=30,format=yuv420p`;
+      
       await run(
         FFMPEG,
         [
           "-hide_banner", "-loglevel", "error", "-i", src,
           ...(info.audio ? [] : ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]),
-          "-vf", `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1,fps=30,format=yuv420p`,
+          "-vf", vf,
           "-map", "0:v", "-map", info.audio ? "0:a" : "1:a", "-af", "apad", "-t", String(duration),
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-ar", "44100", "-ac", "2", "-y", out,
         ],

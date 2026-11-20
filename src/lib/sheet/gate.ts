@@ -124,9 +124,18 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
   if (!butBeat) {
     issues.push({ level: "warn", text: 'Missing "but_silence" beat (rule 4: bring in the problem with "but…" and silence).' });
   } else {
-    const butVo = (butBeat.audio.vo || "").toLowerCase();
-    if (!butVo.includes("but")) {
-      issues.push({ level: "warn", shot: butBeat.n, text: 'Beat "but_silence" must include "but" in the VO.' });
+    const hasVo = pics.some((s) => s.audio.vo);
+    if (hasVo) {
+      const butVo = (butBeat.audio.vo || "").toLowerCase();
+      if (!butVo.includes("but")) {
+        issues.push({ level: "warn", shot: butBeat.n, text: 'Beat "but_silence" must include "but" in the VO.' });
+      }
+    } else {
+      // No VO: check for "but" in on-screen text or caption
+      const butText = (butBeat.text?.copy || "").toLowerCase();
+      if (!butText.includes("but")) {
+        issues.push({ level: "warn", shot: butBeat.n, text: 'Beat "but_silence" must include "but" in on-screen text or caption (no VO).' });
+      }
     }
     // Check for silence gap - this will be enforced in the stitcher, but we can check the beat structure
   }
@@ -180,8 +189,8 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
         }
       }
     }
-    // Check for bright label in first 3 seconds
-    if (s.start < 3 && s.text?.copy && /\b(new|limited|exclusive|pro|max|ultra|premium)\b/i.test(s.text.copy)) {
+    // Check for bright label in first 3 seconds (expanded list)
+    if (s.start < 3 && s.text?.copy && /\b(new|limited|exclusive|pro|max|ultra|premium|plus|advanced|elite|deluxe|signature|special|edition|now|introducing|best|top|super|mega|hyper)\b/i.test(s.text.copy)) {
       hasBrightLabelEarly = true;
     }
   }
@@ -242,12 +251,13 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
     }
   }
   
-  // Rule 15: no CTA phrases
+  // Rule 15: no CTA phrases (use word boundaries to avoid false positives like "tap water")
   const ctaPhrases = ["buy", "shop", "link in bio", "sign up", "learn more", "get yours", "order now", "try it", "download", "click", "tap"];
   for (const s of pics) {
     const allText = [s.audio.vo, s.text?.copy, s.action].filter(Boolean).join(" ").toLowerCase();
     for (const phrase of ctaPhrases) {
-      if (allText.includes(phrase)) {
+      const regex = new RegExp(`\\b${phrase.replace(/\s+/g, "\\s+")}\\b`, "i");
+      if (regex.test(allText)) {
         issues.push({ level: "warn", shot: s.n, text: `Shot ${s.n} contains CTA phrase "${phrase}"; rule 15 says no call to action.` });
       }
     }
@@ -255,7 +265,9 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
   
   // Rule 8+17: all beats present in order, attempt result never shown
   const expectedBeats = ["goal", "personal_stake", "stake_raised", "physical_example", "but_silence", "owned_cause", "low_point", "crazy_plan", "cut_before_attempt", "takeaway"];
-  const actualBeats = pics.map((s) => s.beat).filter(Boolean);
+  // Count end card for takeaway (it's excluded from pics)
+  const allShots = sheet.shots.filter((s) => s.engine !== "remotion" || s.beat === "takeaway");
+  const actualBeats = allShots.map((s) => s.beat).filter(Boolean);
   const missingBeats = expectedBeats.filter((b) => !actualBeats.includes(b));
   
   if (missingBeats.length > 0) {
@@ -288,13 +300,21 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
   return issues;
 }
 
-export function sheetGate(sheet: ShotSheet, o: { facts: string; rules?: StyleRule[]; afterRepair?: boolean }): GateResult {
+export function sheetGate(sheet: ShotSheet, o: { facts: string; rules?: StyleRule[]; afterRepair?: boolean; hasPhotos?: boolean }): GateResult {
   const issues: GateIssue[] = timingIssues(sheet).map((text) => ({ level: "error" as const, text }));
+  const placeholderRegex = /\b(one physical example|insert product name|add brand here|placeholder|tbd|xxx|todo)\b/i;
   for (const s of sheet.shots) {
     if (!s.camera.move.trim() || !s.camera.angle.trim() || !(s.camera.lensMm > 0)) issues.push({ level: "error", shot: s.n, text: `Shot ${s.n} has no complete camera (angle, move and lens).` });
     if (!s.audio.vo && !s.audio.sfx && !s.audio.music) issues.push({ level: "error", shot: s.n, text: `Shot ${s.n} has no sound: give it a VO line, a sound effect or a music cue.` });
     if (sheet.audioMode === "foley" && s.audio.vo) issues.push({ level: "error", shot: s.n, text: `Shot ${s.n} has a VO line, but this sheet is foley-first.` });
     if (s.engine === "ai_video" && !s.prompt) issues.push({ level: "warn", shot: s.n, text: `Shot ${s.n} is AI video with no prompt; the row will be used as the prompt.` });
+    if (s.blender?.template === "product_hero" && o.hasPhotos === false) issues.push({ level: "error", shot: s.n, text: `Shot ${s.n} uses product_hero template but no product photos are available.` });
+    
+    // Check for placeholder text
+    const allText = [s.audio.vo, s.text?.copy, s.action, s.subject, s.blender?.word, s.blender?.label].filter(Boolean).join(" ");
+    if (placeholderRegex.test(allText)) {
+      issues.push({ level: "error", shot: s.n, text: `Shot ${s.n} contains placeholder text: "${allText.match(placeholderRegex)?.[0]}".` });
+    }
   }
   if (sheet.audioMode === "vo" && !sheet.shots.some((s) => s.audio.vo)) issues.push({ level: "error", text: "Voiceover mode, but no shot has a VO line." });
   issues.push(...ruleIssues(sheet, o.rules ?? sheet.rules), ...claimIssues(sheet, o.facts));

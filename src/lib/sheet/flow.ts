@@ -128,6 +128,7 @@ export function applySheetEdit(run: SheetRun, raw: unknown) {
   if (!p.ok) return { error: p.error };
   const shots = fitTimings(p.sheet.shots.map((s, i) => ({ ...s, n: i + 1, id: s.id || `s${i + 1}` })), p.sheet.targetSec);
   run.sheet = { ...p.sheet, shots, version: (run.sheet?.version ?? 0) + 1 };
-  run.gate = sheetGate(run.sheet, { facts: factBase(run), rules: run.sheet.rules });
+  run.gate = sheetGate(run.sheet, { facts: factBase(run), rules: run.sheet.rules, hasPhotos: run.input.photos.length > 0 });
+  run.gateOverride = null; // Clear override when sheet is edited and re-gated
   return { ok: true as const };
 }

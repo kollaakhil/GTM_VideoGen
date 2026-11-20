@@ -122,7 +122,23 @@ export interface RenderOutcome { version: Version; stitched: Stitched | null; me
 export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { tier: Version["tier"]; versionId?: string; stack?: VersionStack }): Promise<RenderOutcome> {
   const sheet = run.sheet;
   if (!sheet) throw new Error("Write the shot sheet first.");
-  if (run.gate && !run.gate.pass) throw new Error("The shot sheet gate has errors. Fix them before rendering.");
+  
+  // Honor gate override, but still block on claim or safety errors
+  if (run.gate && !run.gate.pass && !run.gateOverride) {
+    throw new Error("The shot sheet gate has errors. Fix them before rendering.");
+  }
+  if (run.gate && !run.gate.pass && run.gateOverride) {
+    const blockingErrors = run.gate.issues.filter((i) => i.level === "error");
+    const claimOrSafetyErrors = blockingErrors.filter((i) =>
+      i.text.includes("claims") ||
+      i.text.includes("unverified") ||
+      i.text.includes("facts mark as") ||
+      i.text.includes("verified facts don't support")
+    );
+    if (claimOrSafetyErrors.length > 0) {
+      throw new Error("Cannot override claim or safety errors. Fix them before rendering.");
+    }
+  }
   const mode: RenderMode = o.tier === "preview" ? "preview" : "final";
   const [width, height] = (mode === "preview" ? WIDTH : FINAL_WIDTH)[sheet.aspect];
   const t0 = Date.now();
@@ -362,12 +378,36 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
     silenceGaps
   });
   
-  // Burn chunked captions for pattern-aware sheets
+  // Burn chunked captions for pattern-aware sheets, but not over the end card
   if (sheet.patternId === "confession_loop" && deps.burnCaptions) {
-    const captionCues = buildChunkedCaptions(sheet, stitched.starts);
+    const endCardIndex = sheet.shots.findIndex((s) => s.engine === "remotion" && s.n === sheet.shots.length);
+    const endCardStart = endCardIndex >= 0 ? stitched.starts[endCardIndex] : Infinity;
+    const captionCues = buildChunkedCaptions(sheet, stitched.starts).filter((c) => c.start < endCardStart);
     if (captionCues.length > 0) {
       const captioned = await deps.burnCaptions(stitched.url, captionCues, width, height ?? Math.round(width * 16 / 9));
       stitched = { ...stitched, url: captioned };
+    }
+  }
+  
+  // Trim final to exact sheet length if it's slightly longer
+  if (mode === "final" && stitched.duration > sheet.targetSec + 0.05) {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const ffmpegPath = (await import("ffmpeg-static")).default;
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const run = promisify(execFile);
+    
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gtm-trim-"));
+    try {
+      const inFile = path.join(dir, "in.mp4");
+      await fs.writeFile(inFile, Buffer.from(stitched.url.split(",")[1], "base64"));
+      const outFile = path.join(dir, "out.mp4");
+      await run(ffmpegPath || "ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", inFile, "-t", String(sheet.targetSec), "-c", "copy", "-y", outFile], { timeout: 60_000 });
+      stitched = { ...stitched, url: `data:video/mp4;base64,${(await fs.readFile(outFile)).toString("base64")}`, duration: sheet.targetSec };
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
     }
   }
   

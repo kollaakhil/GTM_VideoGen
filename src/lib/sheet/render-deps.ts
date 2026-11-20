@@ -188,21 +188,28 @@ export function defaultRenderDeps(stackModels?: Partial<Record<string, string>>,
     },
     final: (video, r, stitched) => ({
       review: async () => {
+        // Resolve media URL to data URL for review
+        const videoData = await mediaDataUrl(video);
         // Use stack's QA model for final review
-        const out = await qa(qaModel, video, "video", r.brief!, r.sheet?.shots[0]?.text?.copy ?? r.input.goal, r.sheet?.shots.flatMap((s) => (s.text ? [s.text.copy] : [])).join(" "));
+        const out = await qa(qaModel, videoData, "video", r.brief!, r.sheet?.shots[0]?.text?.copy ?? r.input.goal, r.sheet?.shots.flatMap((s) => (s.text ? [s.text.copy] : [])).join(" "));
         return { score: out.data.score, notes: out.data.notes };
       },
-      loudness: () => loudness(video),
+      loudness: async () => {
+        const videoData = await mediaDataUrl(video);
+        return loudness(videoData);
+      },
       ocr: async () => {
+        const videoData = await mediaDataUrl(video);
         const cues: CopyCue[] = (r.sheet?.shots ?? []).flatMap((s) => (s.text ? [{ start: s.start, end: s.end, text: s.text.copy, layer: "overlay" as const }] : []));
-        return cues.length ? checkExport(video, r.sheet!.aspect, stitched.duration, cues) : [];
+        return cues.length ? checkExport(videoData, r.sheet!.aspect, stitched.duration, cues) : [];
       },
       // Captions are not burned into sheet renders yet, so there is nothing to time against the voice.
       sync: async () => null,
       patternReview: r.sheet?.patternId === "confession_loop" ? async () => {
+        const videoData = await mediaDataUrl(video);
         const { confessionLoopReviewPrompt } = await import("@/lib/qa/pattern-review");
         const prompt = confessionLoopReviewPrompt(r.sheet!);
-        const result = await qa(qaModel, video, "video", r.brief!, prompt);
+        const result = await qa(qaModel, videoData, "video", r.brief!, prompt);
         return { score: result.data.score, notes: result.data.notes };
       } : undefined,
     }),

@@ -223,7 +223,7 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
             const fixes = oldGate.issues;
             const result = await writeSheet(input, chatWithRetry, fixes, oldVersion + attempt);
             const currentSheet = result.sheet;
-            const currentGate = sheetGate(currentSheet, { facts: factBase(r), rules: r.rules });
+            const currentGate = sheetGate(currentSheet, { facts: factBase(r), rules: r.rules, hasPhotos: r.input.photos.length > 0 });
             const currentScore = scoreGate(currentGate);
             return { sheet: currentSheet, gate: currentGate, score: currentScore, attempt };
           } catch (e) {
@@ -281,14 +281,17 @@ export async function sheetActions(raw: unknown, user: string, deps: (stackModel
       
       // Save fix_gaps result in a field the UI can poll
       const originalErrors = oldGate.issues.filter((i) => i.level === "error").length;
+      const originalWarnings = oldGate.issues.filter((i) => i.level === "warn").length;
       const bestErrors = bestGate.issues.filter((i) => i.level === "error").length;
+      const bestWarnings = bestGate.issues.filter((i) => i.level === "warn").length;
       const improved = newBestScore < bestScore;
       
       // Store result in run for UI to poll (add to run-types.ts)
+      // Count both errors and warnings fixed
       (r as { fixGapsResult?: unknown }).fixGapsResult = {
         changes,
-        fixed: improved ? originalErrors - bestErrors : 0,
-        remaining: bestErrors + bestGate.issues.filter((i) => i.level === "warn").length,
+        fixed: improved ? (originalErrors - bestErrors) + (originalWarnings - bestWarnings) : 0,
+        remaining: bestErrors + bestWarnings,
         message: improved ? undefined : `Couldn't improve automatically; ${oldGate.issues.length} issue(s) remain`,
       };
       
