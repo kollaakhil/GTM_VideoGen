@@ -184,19 +184,61 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
       }
     }
     
+    // Build prompt with anti-text guidance when shot has text copy
+    let enhancedPrompt = promptFor(s);
+    if (s.engine === "ai_video" && s.text?.copy) {
+      // Add guidance to prevent AI from drawing garbled text
+      enhancedPrompt += ". No text, no letters, no words, no signage, no labels visible in the scene; text will be added in post-production.";
+    }
+    
     return { 
       mode, 
       width, 
       height, 
       refs, 
       firstFrame,
-      prompt: promptFor(s), 
+      prompt: enhancedPrompt, 
       resolution: mode === "preview" ? "480p" : "720p", 
       signal, 
       ...(s.engine === "remotion" ? { card } : {}) 
     };
   };
   const keys = rows.map(({ s }) => clipKey(s, mode, photoSig, [width, height], videoModel, sheet.palette));
+
+  // Check if we can reuse preview clips for the final (when unchanged and reRenderAllForFinal is false)
+  const reusablePreviewClips = new Map<string, { url: string; model: string; renderer: string }>();
+  if (mode === "final" && !run.input.reRenderAllForFinal) {
+    const winningPreview = run.versions.find((pv) => pv.tier === "preview" && pv.id === run.picks.video && pv.status === "done");
+    if (winningPreview && winningPreview.stack) {
+      // Compare shots: reuse if prompt, model, duration, and first frame are unchanged
+      const previewVideoModel = winningPreview.stack.models?.video && winningPreview.stack.models.video !== "auto" ? winningPreview.stack.models.video : "";
+      const finalVideoModel = v.stack?.models?.video && v.stack.models.video !== "auto" ? v.stack.models.video : "";
+      
+      for (let i = 0; i < shots.length && i < winningPreview.shots.length; i++) {
+        const finalShot = shots[i];
+        const previewShot = sheet!.shots[i]; // Original preview sheet shot
+        const previewRender = winningPreview.shots[i];
+        
+        // Check if shot is unchanged: same prompt, model, duration, first frame, and engine
+        const promptUnchanged = promptFor(finalShot) === promptFor(previewShot);
+        const modelUnchanged = previewVideoModel === finalVideoModel;
+        const durationUnchanged = Math.abs(dur(finalShot) - dur(previewShot)) < 0.1;
+        const firstFrameUnchanged = (finalShot.engine !== "ai_video" || !ctxFor(finalShot).firstFrame) && 
+                                     (previewShot.engine !== "ai_video" || !sheet.character?.referenceUrl);
+        const engineUnchanged = finalShot.engine === previewShot.engine;
+        
+        if (promptUnchanged && modelUnchanged && durationUnchanged && firstFrameUnchanged && engineUnchanged && 
+            previewRender.url && !previewRender.error) {
+          // This shot can be reused - mark it for upscaling
+          reusablePreviewClips.set(finalShot.id, {
+            url: previewRender.url,
+            model: previewRender.model,
+            renderer: previewRender.engine
+          });
+        }
+      }
+    }
+  }
 
   // Preflight: what the paid shots still to render would cost, against what is left of the cap. Nothing is spent when it does not fit.
   const stage = mode === "preview" ? "previews" : "final";
@@ -206,9 +248,10 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
     onCharge: (c) => { const e: CostEntry = { at: c.at, stage, what: `${v.stack?.label ?? v.id}: ${c.label}`, model: c.label.replace(/^[a-z]+:/, ""), usd: c.usd, estimate: c.estimated }; run.cost.entries.push(e); ledger(run, e); },
   });
   const pending = await Promise.all(rows.map(async ({ s, row }, i) => {
-    if (await deps.clipCache.get(keys[i])) return { id: s.id, usd: 0 };
+    if (await deps.clipCache.get(keys[i])) return { id: s.id, usd: 0, reusable: false };
+    if (reusablePreviewClips.has(s.id)) return { id: s.id, usd: 0, reusable: true };
     const r = deps.renderers[routeShot(row, { hasProductRef: refs.length > 0, autoBlender: deps.autoBlender }).renderer];
-    return { id: s.id, usd: r ? Math.max(0, r.estimateUsd(row, ctxFor(s))) : 0 };
+    return { id: s.id, usd: r ? Math.max(0, r.estimateUsd(row, ctxFor(s))) : 0, reusable: false };
   }));
   const estimate = Number(pending.reduce((a, p) => a + p.usd, 0).toFixed(4));
   v.estimate = { usd: estimate, lines: pending.filter((p) => p.usd > 0).map((p) => ({ what: `shot ${p.id}`, model: "ai-video", usd: p.usd })), blocked: [] };
@@ -225,16 +268,40 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
   v.shots = rows.map(({ s }) => ({ shotId: s.id, engine: s.engine, model: "", url: null, cached: false, ms: 0, usd: 0 }));
   await saveProgress(run);
 
-  const results = await withMeter(meter, () => runParallel(rows.map(({ s, row }, i) => ({
-    id: s.id, key: keys[i], stage: "shot", renderer: row.renderer === "auto" ? undefined : row.renderer,
-    run: async () => {
-      const out = await renderRouted(row, ctxFor(s), deps.renderers, { autoBlender: deps.autoBlender });
-      const url = await deps.store(out.url, `${run.id}/${s.id}-${keys[i].slice(0, 12)}`);
-      const rec: ShotRender = v.shots[i];
-      Object.assign(rec, { url, engine: out.renderer, model: out.note ?? out.renderer, usd: out.costUsd, ms: out.ms ?? 0, fallback: out.fellBackFrom ? `${out.fellBackFrom} → ${out.renderer}` : null });
-      return { url, renderer: out.renderer as string, model: out.note ?? out.renderer };
-    },
-  })), { limit: deps.concurrency ?? concurrencyFromEnv(), retries: 1, cache: deps.clipCache }));
+  const results = await withMeter(meter, () => runParallel(rows.map(({ s, row }, i) => {
+    const reusable = reusablePreviewClips.get(s.id);
+    return {
+      id: s.id,
+      key: keys[i],
+      stage: "shot",
+      renderer: row.renderer === "auto" ? undefined : row.renderer,
+      run: async () => {
+        // If we can reuse a preview clip, upscale it instead of rendering
+        if (reusable) {
+          const { upscaleClip } = await import("@/lib/upscale");
+          const upscaled = await upscaleClip(reusable.url, width);
+          const url = await deps.store(upscaled.url, `${run.id}/${s.id}-${keys[i].slice(0, 12)}-upscaled`);
+          const rec: ShotRender = v.shots[i];
+          Object.assign(rec, { 
+            url, 
+            engine: reusable.renderer, 
+            model: `${reusable.model} (reused from preview, ${upscaled.method} upscale)`, 
+            usd: 0, 
+            ms: 0, 
+            fallback: null 
+          });
+          return { url, renderer: reusable.renderer, model: reusable.model };
+        }
+        
+        // Normal render path
+        const out = await renderRouted(row, ctxFor(s), deps.renderers, { autoBlender: deps.autoBlender });
+        const url = await deps.store(out.url, `${run.id}/${s.id}-${keys[i].slice(0, 12)}`);
+        const rec: ShotRender = v.shots[i];
+        Object.assign(rec, { url, engine: out.renderer, model: out.note ?? out.renderer, usd: out.costUsd, ms: out.ms ?? 0, fallback: out.fellBackFrom ? `${out.fellBackFrom} → ${out.renderer}` : null });
+        return { url, renderer: out.renderer as string, model: out.note ?? out.renderer };
+      },
+    };
+  }), { limit: deps.concurrency ?? concurrencyFromEnv(), retries: 1, cache: deps.clipCache }));
 
   results.forEach((r, i) => {
     const rec = v.shots[i];

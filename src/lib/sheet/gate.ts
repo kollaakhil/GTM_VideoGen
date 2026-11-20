@@ -251,13 +251,26 @@ export function confessionLoopChecks(sheet: ShotSheet): GateIssue[] {
     }
   }
   
-  // Rule 15: no CTA phrases (use word boundaries to avoid false positives like "tap water")
-  const ctaPhrases = ["buy", "shop", "link in bio", "sign up", "learn more", "get yours", "order now", "try it", "download", "click", "tap"];
+  // Rule 15: no CTA phrases (use word boundaries and context to avoid false positives like "tap water")
+  const ctaPhrases = ["buy", "shop", "link in bio", "sign up", "learn more", "get yours", "order now", "try it", "download", "click"];
+  const contextualCtaPhrases = [
+    { pattern: /\btap\s+(to|the\s+link|here|now)\b/i, phrase: "tap to/tap the link" }
+  ];
+  
   for (const s of pics) {
     const allText = [s.audio.vo, s.text?.copy, s.action].filter(Boolean).join(" ").toLowerCase();
+    
+    // Check simple CTA phrases
     for (const phrase of ctaPhrases) {
       const regex = new RegExp(`\\b${phrase.replace(/\s+/g, "\\s+")}\\b`, "i");
       if (regex.test(allText)) {
+        issues.push({ level: "warn", shot: s.n, text: `Shot ${s.n} contains CTA phrase "${phrase}"; rule 15 says no call to action.` });
+      }
+    }
+    
+    // Check contextual phrases like "tap to" but not "tap water"
+    for (const { pattern, phrase } of contextualCtaPhrases) {
+      if (pattern.test(allText)) {
         issues.push({ level: "warn", shot: s.n, text: `Shot ${s.n} contains CTA phrase "${phrase}"; rule 15 says no call to action.` });
       }
     }

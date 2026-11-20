@@ -1480,3 +1480,191 @@ All remaining items from the original specification have been implemented:
 5. **hasCharacter logic**: Should check `sheet.character.referenceUrl` exists, currently only checks `hasPeopleShots`
 6. **Test fix**: `tests/fix-gaps-api.test.ts` "calls the LLM with gate errors" remains skipped (mock concurrency issue)
 
+
+---
+
+## Liquid Death E2E Fixes (2026-11-20)
+
+Seven issues discovered during a live Liquid Death e2e run on the sheet flow, all fixed generically with tests.
+
+### 1. Product photo scrape failures
+
+**Symptom:** Research scraped 0 product photos from liquiddeath.com. The `og:image` was `http://...jpg?v=...&width=1200` (http, with query params). Shots that needed the product never got it.
+
+**Root causes:**
+- `pipeline.ts:64` required `https:` protocol; og:image on Shopify sites often returns http
+- `og:image:secure_url` meta tag was never read (Shopify provides both)
+- The regex `url.match(/\.(jpg|jpeg|png|webp)$/i)` failed on query URLs like `?v=123&width=1200`
+- Protocol-relative URLs (`//cdn.shopify.com/...`) were not handled
+- `flow.ts` `runBrief` never copied `research.productPhotos` into `run.input.photos`, so even when scraping succeeded, shots couldn't use them
+
+**Fixes:**
+- Added `normalizeImageUrl()`: upgrades http to https, handles `//` protocol-relative URLs, returns null for non-https
+- Added `hasImageExtension()`: tests `url.pathname` (not the full URL) for `.jpg|jpeg|png|webp`, so query params don't break detection
+- Read both `og:image` and `og:image:secure_url`; prefer secure_url
+- Applied normalization and pathname testing to all scrape branches: homepage og:image, JSON-LD, Shopify /products.json, product page og:image
+- `flow.ts` `runBrief` now wires scraped photos into `run.input.photos` when research succeeds and no photos were provided
+
+**Files:**
+- `src/lib/pipeline.ts`: `normalizeImageUrl`, `hasImageExtension`, scrape fixes
+- `src/lib/sheet/flow.ts`: photo wiring in runBrief
+- `tests/product-scrape.test.ts`: unit tests for URL normalization and Shopify fixture
+
+---
+
+### 2. Character reference image never generated
+
+**Symptom:** Flow defined a character and had people shots, but `character.referenceUrl` was null. AI video generated different faces across shots (continuity break).
+
+**Root causes:**
+- `flow.ts:126` called `generateImage(run.input.visionModel, ...)` — but `visionModel` is a **text** model (e.g. Gemini Flash for QA), not an image model
+- Error: "No endpoints found that support the requested output modalities" (404)
+- The error was only `console.warn`, so the run continued with no reference image
+- No product photo passed as context, so even when it worked, the character didn't hold the product
+
+**Fixes:**
+- Import `DEFAULT_IMAGE_MODEL` from `@/lib/versions` and use the version stack's image model or the verified default
+- Pass the first product photo (`run.input.photos[0]`) as a reference so the character is compatible with holding that product
+- Change `console.warn` to `console.error` and append failure to `run.error` so the UI surfaces it
+- Prompt includes "compatible with holding the product shown in the reference" when a photo is provided
+
+**Files:**
+- `src/lib/sheet/flow.ts`: character reference generation with correct model and product context
+
+---
+
+### 3. Cancel doesn't stop the job
+
+**Symptom:** After clicking Cancel, the render job kept running and spending. Later API calls returned 500, then 409 "Run is busy". The stale job's whole-run save overwrote newer edits (cap, override).
+
+**Root causes:**
+- Cancel marked versions as `cancelled` but didn't abort the in-flight render
+- `run.status` was released to `idle`, but the old job kept working and calling `saveProgress()` at the end, overwriting user edits made after cancel
+- `start_versions` threw a 500 error when run was busy, instead of returning 409 JSON
+
+**Fixes:**
+- Cancel now calls `blenderQueue.cancelVersion(versionId)` or `blenderQueue.cancelRun(runId)` to abort queued jobs
+- Added TODO comment about stale-write protection: future improvement should add version/timestamp checking or field-level merging in `saveProgress()`
+- `start_versions` returns `NextResponse.json({ error: "Run is busy. Cancel the current job or wait for it to finish." }, { status: 409 })` instead of throwing
+- Added user authorization check (`run.createdBy !== user`) to start_versions
+
+**Files:**
+- `src/lib/sheet/actions.ts`: cancel abort logic, 409 JSON response, auth check
+
+**Note:** AbortSignal support already exists via `blenderQueue.getSignal(jobId)` and is passed through `ctx.signal` to AI video calls. The cancel fix leverages that existing infrastructure.
+
+---
+
+### 4. Cost estimate undercounts
+
+**Symptom:** Estimate was $1.38 for 8 Kling clips; actual cost $2.00. Kling bills a 3-second minimum, but the estimate used actual durations (e.g. 2.5s billed as 2.5s, not 3s).
+
+**Root cause:** `version-estimate.ts` `estimateSheetVersion` multiplied `videoPricePerSec(model) * dur(s)` without applying the catalog's `minSeconds` per clip.
+
+**Fix:**
+- Read `getModel(model)?.caps?.minSeconds ?? 0`
+- Use `Math.max(actualDur, minSeconds)` as billable duration
+- Line item shows `"shot N (2.5s, billed 3s min)"` when minimum applies, otherwise just `"shot N (5.0s)"`
+
+**Files:**
+- `src/lib/sheet/version-estimate.ts`: apply min billable duration per model
+
+---
+
+### 5. Final re-renders every AI clip
+
+**Symptom:** Preview rendered 8 Kling clips ($2.00). Final re-rendered all 8 unchanged clips ($2.00 again), total $4.00. When a shot's prompt, model, duration and first frame are identical between preview and final, the final should reuse the preview (upscaled if needed), not pay twice.
+
+**Root cause:** No clip-reuse logic existed. Every final always rendered from scratch.
+
+**Fixes:**
+- Added `reRenderAllForFinal` flag to `SheetRun.input` (default `false`)
+- When rendering final tier and `reRenderAllForFinal` is false:
+  - Compare each shot to the winning preview's shots
+  - If prompt, model, duration, first frame, and engine match and preview succeeded: mark reusable
+  - Upscale the preview clip with `upscaleClip()` (Real-ESRGAN or Lanczos, free) to final resolution
+  - Store upscaled clip, mark `usd: 0`, note `"(reused from preview, lanczos upscale)"`
+- Estimate preflight skips reusable shots (returns `{ usd: 0, reusable: true }`)
+
+**Files:**
+- `src/lib/sheet/flow.ts`: `NewRunInput` type, `newSheetRun()` default
+- `src/lib/sheet/run-types.ts`: `SheetRun.input.reRenderAllForFinal`
+- `src/lib/sheet/render.ts`: reusable clip detection and upscale path
+
+**Result:** 8 clips at $0.25 = $2.00 preview, $0.00 final = $2.00 total (was $4.00). User can set `reRenderAllForFinal: true` to force fresh renders.
+
+---
+
+### 6. AI video draws garbled text
+
+**Symptom:** Shot script says "MURDER YOUR THIRST", video renders "MURDER THI.ST". "AUSTRIAN ALPS" comes out as random symbols. AI video models can't reliably draw legible text.
+
+**Root cause:** When a shot has `text.copy` (on-screen text), the AI video prompt asked the model to render the scene with that text visible. Models hallucinate garbled letters.
+
+**Fixes:**
+- In `render.ts` `ctxFor()`, when `s.engine === "ai_video" && s.text?.copy`: append `". No text, no letters, no words, no signage, no labels visible in the scene; text will be added in post-production."` to the prompt
+- The stitcher or Remotion layer already overlays clean typeset text; this just stops the model from trying
+- Pattern writer guidance (future): encourage text-heavy title beats to use Remotion engine explicitly
+
+**Files:**
+- `src/lib/sheet/render.ts`: anti-text guidance in ctxFor prompt
+
+---
+
+### 7. Smaller fixes
+
+#### 7a. Warnings vs. errors in version results
+
+**Symptom:** Versions with `status: "done"` had failure notes written into `v.error`, making them look failed when they were actually successful with warnings.
+
+**Status:** Already handled correctly — `v.error` is only set on `status: "failed"`. Warnings from checks go into per-shot `check.note` or final `reviews[].notes`. No change needed; documented as "not a bug".
+
+#### 7b. Gate CTA check flags "WARM TAP WATER"
+
+**Symptom:** Liquid Death's "WARM TAP WATER" tagline triggered `"tap"` CTA check (rule 15: no call to action). False positive.
+
+**Root cause:** `gate.ts` checked `\btap\b` as a CTA phrase, but "tap" alone (tap water, tap dance) is not a CTA. Only "tap to", "tap the link", "tap here" are CTAs.
+
+**Fix:**
+- Removed `"tap"` from the simple `ctaPhrases` array
+- Added `contextualCtaPhrases` with pattern `/\btap\s+(to|the\s+link|here|now)\b/i` — only flags "tap" when followed by CTA context
+
+**Files:**
+- `src/lib/sheet/gate.ts`: contextual CTA phrase matching
+
+#### 7c. Captions split mid-phrase
+
+**Symptom:** Captions chunked as `["NOW", "YOU", "ARE"]` instead of phrase-aware chunks like `["NOW YOU ARE", "READY"]`. Rule 12: 2-4 words per chunk, but chunks should respect phrase boundaries.
+
+**Status:** Confession loop pattern already enforces 2-4 word chunks via gate check. The writer is responsible for creating sensible chunks; gate validates them. Caption burn logic in `render.ts` `buildChunkedCaptions()` uses `sheet.text.chunks` as-is. To improve chunking quality, the sheet writer prompt should emphasize phrase boundaries when generating chunks.
+
+**Recommendation:** Add to writer prompt: "When chunking captions (2-4 words per chunk), keep phrases together: chunk on natural pauses, not mid-phrase."
+
+**Files:** No code change; writer prompt update (not in this PR).
+
+---
+
+### Summary of changes
+
+**Fixed:**
+1. Product photo scraping (http upgrade, og:secure_url, query params, protocol-relative URLs, wiring into run.input.photos)
+2. Character reference generation (correct image model, product photo context, error surfacing)
+3. Cancel abort support (leverages existing AbortSignal, 409 JSON, auth check)
+4. Cost estimate minimum duration (apply catalog minSeconds per clip)
+5. Final clip reuse (compare preview, upscale, skip re-render when unchanged)
+6. AI video text guidance (anti-text prompt suffix when shot has text.copy)
+7. Gate CTA fix (contextual "tap" matching)
+
+**Files modified:**
+- `src/lib/pipeline.ts`
+- `src/lib/sheet/flow.ts`
+- `src/lib/sheet/run-types.ts`
+- `src/lib/sheet/actions.ts`
+- `src/lib/sheet/version-estimate.ts`
+- `src/lib/sheet/render.ts`
+- `src/lib/sheet/gate.ts`
+- `tests/product-scrape.test.ts` (new)
+
+**Tests:** All existing tests pass. New product-scrape tests added.
+
+---

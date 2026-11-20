@@ -86,6 +86,7 @@ export interface SheetRun {
     patternId: string;
     textModel: string;
     visionModel: string;
+    reRenderAllForFinal: boolean;
   };
   research: Research | null;
   brief: Brief | null;

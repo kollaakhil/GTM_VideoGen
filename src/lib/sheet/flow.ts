@@ -18,6 +18,7 @@ const TEXT_ESTIMATE = 0.02;
 export type NewRunInput = {
   brandUrl: string; brand?: string; goal: string; offer?: string | null; facts?: string; inspirationUrl?: string | null; photos?: string[];
   targetSec?: number; aspect?: ShotSheet["aspect"]; audioMode?: ShotSheet["audioMode"]; patternId?: string; capUsd?: number; textModel?: string; visionModel?: string;
+  reRenderAllForFinal?: boolean;
 };
 
 const nameOf = (url: string) => {
@@ -36,6 +37,7 @@ export function newSheetRun(i: NewRunInput, user: string): SheetRun {
       brandUrl: i.brandUrl, brand: i.brand?.trim() || nameOf(i.brandUrl), goal: i.goal, offer: i.offer ?? null, facts: i.facts ?? "", inspirationUrl: i.inspirationUrl || null,
       photos: i.photos ?? [], targetSec: i.targetSec ?? 20, aspect: i.aspect ?? "16:9", audioMode: i.audioMode ?? "foley", patternId: i.patternId ?? "confession_loop",
       textModel: i.textModel || CHEAP_TEXT, visionModel: i.visionModel || CHEAP_VISION,
+      reRenderAllForFinal: i.reRenderAllForFinal ?? false,
     },
     research: null, brief: null, rules: [], ruleSource: null, script: null, sheet: null, gate: null, gateOverride: null, versions: [],
     picks: { mode: "video", video: null, shots: {} }, final: null, timings: [],
@@ -67,6 +69,12 @@ export async function runBrief(run: SheetRun) {
       return { value: b.data, usd: b.cost };
     }));
   await timed(run, "style rules", () => loadRules(run));
+  
+  // Wire product photos into run.input.photos so shots can use them
+  if (run.research?.productPhotos && run.research.productPhotos.length > 0 && run.input.photos.length === 0) {
+    run.input.photos = run.research.productPhotos.map((p) => p.url);
+  }
+  
   run.step = "brief";
   await saveProgress(run);
 }
@@ -120,12 +128,22 @@ export async function runSheet(run: SheetRun, chat: Chat = chatFor(run, "sheet")
       try {
         const meter = meterFor(run);
         const { generateImage, aiConfigured } = await import("@/lib/ai");
+        const { STAGE_DEFAULTS } = await import("@/lib/registry");
         if (aiConfigured()) {
           const charImg = await timed(run, "character reference", async () => {
+            // Use the version stack image model, or the verified default image model
+            const imageModel = run.versions.find((v) => v.stack?.models?.image)?.stack.models.image || STAGE_DEFAULTS.image;
+            
+            // Pass the first product photo as reference context if available
+            const productPhotoRefs = run.input.photos.slice(0, 1);
+            const contextPrompt = productPhotoRefs.length > 0 
+              ? `The attached reference shows the product they will hold. Portrait reference: ${out.sheet.character!.description}. Professional headshot style, neutral expression, well-lit, clear details. The character should be compatible with holding the product shown in the reference. No text, logos or graphics.`
+              : `Portrait reference image: ${out.sheet.character!.description}. Professional headshot style, neutral expression, well-lit, clear details. No text, logos or graphics.`;
+            
             const result = await generateImage(
-              run.input.visionModel,
-              `Portrait reference image: ${out.sheet.character!.description}. Professional headshot style, neutral expression, well-lit, clear details. No text, logos or graphics.`,
-              []
+              imageModel,
+              contextPrompt,
+              productPhotoRefs
             );
             const stored = await storeMedia(result.url, `${run.id}/character-${Date.now()}`);
             return stored;
@@ -133,7 +151,10 @@ export async function runSheet(run: SheetRun, chat: Chat = chatFor(run, "sheet")
           out.sheet.character.referenceUrl = charImg;
         }
       } catch (e) {
-        console.warn("Failed to generate character reference:", e);
+        console.error("Failed to generate character reference:", e);
+        // Surface the failure in run notes
+        if (!run.error) run.error = "";
+        run.error += `\nWarning: Character reference generation failed: ${(e as Error).message.slice(0, 200)}`;
       }
     }
   }
