@@ -127,6 +127,47 @@ describe("Sound concept-driven", () => {
       expect(whooshCues.length).toBe(0);
     });
 
+    it("non-beverage brand (SaaS) gets no fizz/pour/clink", () => {
+      // SaaS product video: laptop, clicking, typing, no beverages
+      const shots = [
+        { seconds: 3.0, visual: "hand clicks mouse, cursor moves across screen" },
+        { seconds: 2.5, visual: "fingers tap keyboard, text appears" },
+        { seconds: 2.0, visual: "user smiles, laptop closes" },
+      ];
+
+      const plan = planAudio("foley", shots);
+
+      // Should have NO beverage-related sounds
+      const beverageSounds = plan.sfx.filter((c) => 
+        c.kind === "fizz" || c.kind === "pour" || c.kind === "clink" || c.kind === "pop"
+      );
+      expect(beverageSounds.length).toBe(0);
+
+      // Should have tech-related sounds instead
+      const kinds = new Set(plan.sfx.map((c) => c.kind));
+      expect(kinds.has("click")).toBe(true); // mouse click, laptop closes
+    });
+
+    it("non-beverage brand (footwear) gets no fizz/pour/clink", () => {
+      // Shoe brand video: unboxing, trying on, walking
+      const shots = [
+        { seconds: 3.0, visual: "hands lift lid off shoebox" },
+        { seconds: 2.5, visual: "shoe rotates on pedestal" },
+        { seconds: 2.0, visual: "person ties laces, stands up" },
+      ];
+
+      const plan = planAudio("foley", shots);
+
+      // Should have NO beverage-related sounds
+      const beverageSounds = plan.sfx.filter((c) => 
+        c.kind === "fizz" || c.kind === "pour" || c.kind === "clink" || c.kind === "pop"
+      );
+      expect(beverageSounds.length).toBe(0);
+
+      // No clicks either (no clicking action in description)
+      expect(plan.sfx.length).toBe(0);
+    });
+
     it("does not restrict to legacy cola-specific sounds", () => {
       const shots = [
         { seconds: 2.5, visual: "button clicks", sfx: "button click" },
