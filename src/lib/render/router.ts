@@ -19,6 +19,16 @@ export function routeShot(row: ShotRow, o: { hasProductRef: boolean; autoBlender
   if (m.startsWith("remotion:")) return { renderer: "remotion", reason: `model ${m}` };
   if (row.source === "packshot") return { renderer: "blender", reason: "legacy packshot shot" };
   if (row.graphic) return { renderer: "remotion", reason: "text or graphic card, no filmed subject" };
+  
+  // Text-only shots (on-screen text with explicit "text" action and no filmed subject/scene) go to Remotion for contrast control
+  // Only route to Remotion if the action explicitly mentions text/word/title and there's no scene/subject
+  const hasTextAction = /\b(text|word|title|caption|label)\b/i.test(row.action);
+  const hasFilmedSubject = /(product|bottle|can|person|people|man|woman|hand|face|actor|scene|setting|background|room|kitchen|office|street|table|counter|floor)/i.test(`${row.action} ${row.beat}`);
+  const isTextOnly = row.onScreen && row.onScreen.length > 0 && hasTextAction && !hasFilmedSubject;
+  if (isTextOnly) {
+    return { renderer: "remotion", reason: "text-only shot for legibility" };
+  }
+  
   const text = `${row.action} ${row.camera}`;
   if (o.autoBlender && o.hasProductRef && !LIVE.test(text) && SHOWCASE.test(text)) {
     return { renderer: "blender", reason: "camera-only product shot: Blender keeps the real label (PLAYBOOK 13.24)" };

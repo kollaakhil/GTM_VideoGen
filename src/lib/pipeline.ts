@@ -48,6 +48,129 @@ async function fetchSite(url: string): Promise<Site> {
   }
 }
 
+/** Scrape product images from the brand site (og:image, product pages, JSON-LD, Shopify /products.json). */
+export async function scrapeProductImages(brandUrl: string): Promise<{ url: string; sourceUrl: string }[]> {
+  const images: { url: string; sourceUrl: string }[] = [];
+  const seen = new Set<string>();
+  
+  try {
+    // 1. Try homepage og:image
+    const html = await safeFetchText(brandUrl);
+    const ogImage = html.match(/<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)["']/i) ?? 
+                    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+    if (ogImage) {
+      try {
+        const imageUrl = new URL(ogImage[1].replace(/&amp;/g, "&"), brandUrl);
+        if (imageUrl.protocol === "https:" && imageUrl.pathname.match(/\.(jpg|jpeg|png|webp)$/i)) {
+          const url = imageUrl.toString();
+          if (!seen.has(url)) {
+            images.push({ url, sourceUrl: brandUrl });
+            seen.add(url);
+          }
+        }
+      } catch {}
+    }
+
+    // 2. Try JSON-LD Product images
+    const jsonLdMatches = html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+    for (const match of jsonLdMatches) {
+      try {
+        const data = JSON.parse(match[1]);
+        const products = Array.isArray(data) ? data : [data];
+        for (const item of products) {
+          if (item["@type"] === "Product" && item.image) {
+            const imageUrls = Array.isArray(item.image) ? item.image : [item.image];
+            for (const img of imageUrls) {
+              const imageUrl = typeof img === "string" ? img : img?.url;
+              if (imageUrl && typeof imageUrl === "string") {
+                try {
+                  const url = new URL(imageUrl, brandUrl).toString();
+                  if (!seen.has(url) && url.match(/\.(jpg|jpeg|png|webp)$/i)) {
+                    images.push({ url, sourceUrl: brandUrl });
+                    seen.add(url);
+                    if (images.length >= 3) return images; // Enough
+                  }
+                } catch {}
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 3. Try Shopify /products.json
+    if (images.length < 3) {
+      try {
+        const base = new URL(brandUrl);
+        const productsUrl = `${base.origin}/products.json`;
+        const productsText = await safeFetchText(productsUrl);
+        const productsData = JSON.parse(productsText);
+        if (productsData?.products && Array.isArray(productsData.products)) {
+          for (const product of productsData.products.slice(0, 5)) {
+            if (product.images && Array.isArray(product.images)) {
+              for (const img of product.images.slice(0, 2)) {
+                if (img.src && typeof img.src === "string") {
+                  try {
+                    const url = new URL(img.src, brandUrl).toString();
+                    if (!seen.has(url) && url.match(/\.(jpg|jpeg|png|webp)$/i)) {
+                      images.push({ url, sourceUrl: productsUrl });
+                      seen.add(url);
+                      if (images.length >= 3) return images;
+                    }
+                  } catch {}
+                }
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 4. Find product page links and scrape their og:image
+    if (images.length < 3) {
+      const productLinks = new Set<string>();
+      const linkMatches = html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>/gi);
+      for (const match of linkMatches) {
+        const href = match[1];
+        if (href && (href.includes("/product") || href.includes("/shop") || href.includes("/store"))) {
+          try {
+            const pageUrl = new URL(href, brandUrl).toString();
+            if (pageUrl.startsWith(brandUrl) && !seen.has(pageUrl)) {
+              productLinks.add(pageUrl);
+              if (productLinks.size >= 3) break;
+            }
+          } catch {}
+        }
+      }
+
+      for (const pageUrl of productLinks) {
+        if (images.length >= 3) break;
+        try {
+          const pageHtml = await safeFetchText(pageUrl);
+          const pageOgImage = pageHtml.match(/<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)["']/i) ?? 
+                              pageHtml.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+          if (pageOgImage) {
+            try {
+              const imageUrl = new URL(pageOgImage[1].replace(/&amp;/g, "&"), pageUrl);
+              if (imageUrl.protocol === "https:" && imageUrl.pathname.match(/\.(jpg|jpeg|png|webp)$/i)) {
+                const url = imageUrl.toString();
+                if (!seen.has(url)) {
+                  images.push({ url, sourceUrl: pageUrl });
+                  seen.add(url);
+                }
+              }
+            } catch {}
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    console.error(`Product image scraping failed for ${brandUrl}:`, (e as Error).message);
+  }
+
+  return images.slice(0, 3); // Max 3 product images
+}
+
 /** Distils a reference brand's creative style so it can be applied to a different brand without copying it. */
 export async function styleDNA(model: string, referenceUrl: string): Promise<{ data: StyleDNA; cost: number }> {
   if (!aiConfigured()) {
@@ -112,20 +235,34 @@ export async function research(model: string, brandUrl: string, goal: string, fi
         tone: "Confident, direct, a little irreverent",
         angles: ["Time saved", "Pain of wasted spend", "Social proof", "Founder story"],
         sources: [brandUrl],
+        productPhotos: [],
       },
       site: null,
     };
   }
   const site = prior ?? (await fetchSite(brandUrl));
   if (site.error && /private|not allowed|Invalid URL/.test(site.error)) throw new Error(site.error);
-  const { data, usage } = await chatJSON<Research>(
-    model,
-    "You are a senior performance-marketing strategist. Analyse the brand from its website copy.",
-    `Goal: ${goal}\nWebsite (${brandUrl}) text:\n${site.text || `(could not fetch site: ${site.error}; infer from URL and say so in the summary)`}\n\nReturn JSON: {"brand": string (the brand name exactly as the site writes it), "pronunciation": string (how a voice-over should say the brand name, respelled for a text-to-speech voice, e.g. "Ollie-pop" for OLIPOP; repeat the brand if it is an ordinary word), "summary": string (max 60 words), "audience": string, "valueProps": string[], "tone": string, "angles": string[] (5-6 distinct ad angles), "sources": string[], "competitors": [{"name": string, "url": string, "difference": string}] (2-4 real companies selling a similar product; only ones you are sure exist, never invented)}
+  
+  // Scrape product images concurrently with text research
+  const [{ data, usage }, productPhotos] = await Promise.all([
+    chatJSON<Omit<Research, "productPhotos">>(
+      model,
+      "You are a senior performance-marketing strategist. Analyse the brand from its website copy.",
+      `Goal: ${goal}\nWebsite (${brandUrl}) text:\n${site.text || `(could not fetch site: ${site.error}; infer from URL and say so in the summary)`}\n\nReturn JSON: {"brand": string (the brand name exactly as the site writes it), "pronunciation": string (how a voice-over should say the brand name, respelled for a text-to-speech voice, e.g. "Ollie-pop" for OLIPOP; repeat the brand if it is an ordinary word), "summary": string (max 60 words), "audience": string, "valueProps": string[], "tone": string, "angles": string[] (5-6 distinct ad angles), "sources": string[], "competitors": [{"name": string, "url": string, "difference": string}] (2-4 real companies selling a similar product; only ones you are sure exist, never invented)}
 Only state facts the website text supports; when unsure, leave it out.${fixes.length ? `\nA fact-checker rejected the last version. Fix these: ${fixes.join(" | ")}` : ""}`,
-  );
+    ),
+    scrapeProductImages(brandUrl),
+  ]);
+  
   return {
-    data: { ...data, competitors: Array.isArray(data.competitors) ? data.competitors.filter((c) => c && typeof c.name === "string").slice(0, 4) : [], sources: data.sources?.length ? data.sources : [brandUrl], styleRef: site.styleRef, colors: site.colors },
+    data: { 
+      ...data, 
+      competitors: Array.isArray(data.competitors) ? data.competitors.filter((c) => c && typeof c.name === "string").slice(0, 4) : [], 
+      sources: data.sources?.length ? data.sources : [brandUrl], 
+      styleRef: site.styleRef, 
+      colors: site.colors,
+      productPhotos,
+    },
     cost: usage.costUsd,
     site,
   };

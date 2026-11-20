@@ -47,7 +47,33 @@ export async function planResearch(run: StudioRun, body?: ActionBody<"research">
         await put("swipes", { id, brandUrl: run.brandUrl, url: b.source.startsWith("upload:") ? null : b.source, image: b.thumb, note: `Inspiration from the start screen (${b.kind})`, structure: swipeStructure(b), breakdown: b, createdBy: run.createdBy, createdAt: now() });
       }
       const inspCost = breakdowns.reduce((s, b) => s + b.costUsd, 0);
-      Object.assign(run, { research: r.data, voc: voc?.data ?? null, styleDNA: dna?.data ?? null, inspirations: breakdowns, stage: "brief", costUsd: run.costUsd + gated.cost + (dna?.cost ?? 0) + (voc?.cost ?? 0) + inspCost });
+      
+      // Store scraped product photos as run photos
+      const productPhotoUrls: string[] = [];
+      if (r.data.productPhotos && r.data.productPhotos.length > 0) {
+        for (const photo of r.data.productPhotos) {
+          try {
+            const stored = await storeMedia(photo.url, `${run.id}/product-${newId("img")}`);
+            productPhotoUrls.push(stored);
+            say(run, "agent", `Found product image from ${new URL(photo.sourceUrl).hostname}`);
+          } catch (e) {
+            console.warn(`Failed to store product photo from ${photo.sourceUrl}:`, e);
+          }
+        }
+      }
+      
+      // Merge scraped photos into run.storyboardPhotos (StudioRun uses storyboardPhotos, not input.photos)
+      const existingPhotos = run.storyboardPhotos ?? [];
+      const allPhotos = [...existingPhotos, ...productPhotoUrls];
+      Object.assign(run, { 
+        research: r.data, 
+        voc: voc?.data ?? null, 
+        styleDNA: dna?.data ?? null, 
+        inspirations: breakdowns, 
+        stage: "brief", 
+        costUsd: run.costUsd + gated.cost + (dna?.cost ?? 0) + (voc?.cost ?? 0) + inspCost,
+        storyboardPhotos: allPhotos
+      });
       const gateLine = gated.line;
       const parts = [dna ? `mapped ${dna.data.brand}'s creative style` : "", breakdowns.length ? `broke down ${breakdowns.length} inspiration${breakdowns.length === 1 ? "" : "s"} (${breakdowns.map((b) => b.kind === "video" ? `${b.shotCount} shots, ${b.avgShotSec}s avg` : b.kind).join("; ")})` : ""].filter(Boolean);
       if (!run.autoBrief) {

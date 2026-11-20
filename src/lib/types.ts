@@ -35,6 +35,8 @@ export interface Research {
   competitors?: { name: string; url?: string; difference?: string }[];
   /** How a voice should say the brand, respelled for TTS ("Ollie-pop" for OLIPOP); absent when obvious. */
   pronunciation?: string;
+  /** Product packshot images scraped from the brand site (og:image, product pages, JSON-LD, Shopify /products.json), with source URLs. */
+  productPhotos?: { url: string; sourceUrl: string }[];
 }
 
 export interface VoiceOfCustomer {

@@ -174,7 +174,27 @@ export async function renderSheetVersion(run: SheetRun, deps: RenderDeps, o: { t
   const ctxFor = (s: SheetShot): RenderContext => {
     const jobId = deps.jobContext ? `${deps.jobContext.jobId}-${s.id}` : undefined;
     const signal = jobId ? blenderQueue.getSignal(jobId) : undefined;
-    return { mode, width, height, refs, prompt: promptFor(s), resolution: mode === "preview" ? "480p" : "720p", signal, ...(s.engine === "remotion" ? { card } : {}) };
+    
+    // Use character reference as first frame for people shots
+    let firstFrame: string | undefined;
+    if (s.engine === "ai_video" && sheet.character?.referenceUrl) {
+      const isPeopleShot = /\b(person|people|man|woman|actor|hand|face)\b/i.test(`${s.subject} ${s.prompt ?? ""}`);
+      if (isPeopleShot) {
+        firstFrame = sheet.character.referenceUrl;
+      }
+    }
+    
+    return { 
+      mode, 
+      width, 
+      height, 
+      refs, 
+      firstFrame,
+      prompt: promptFor(s), 
+      resolution: mode === "preview" ? "480p" : "720p", 
+      signal, 
+      ...(s.engine === "remotion" ? { card } : {}) 
+    };
   };
   const keys = rows.map(({ s }) => clipKey(s, mode, photoSig, [width, height], videoModel, sheet.palette));
 

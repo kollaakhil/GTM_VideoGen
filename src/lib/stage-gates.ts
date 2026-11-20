@@ -336,19 +336,38 @@ export function voiceChecks(lines: VoiceLine[], music: { planned: boolean; ok: b
 
 // ---------- Final QA ----------
 
-/** Rubric for the finished export: craft review plus every hard finding, so one broken area can't hide. */
-export function finalChecks(o: { craft: number; findings: QualityFinding[]; shotScores: number[]; captionSync?: number | null; frameScores?: number[] }): Check[] {
+/** Rubric for the finished export: craft review plus every hard finding, so one broken area can't hide. 
+ * hasCharacter should be Boolean(sheet.character?.referenceUrl), not just whether character description exists.
+ */
+export function finalChecks(o: { craft: number; findings: QualityFinding[]; shotScores: number[]; captionSync?: number | null; frameScores?: number[]; hasProductShots?: boolean; hasPeopleShots?: boolean; hasCharacter?: boolean }): Check[] {
   const count = (k: QualityFinding["kind"]) => o.findings.filter((f) => f.kind === k && f.status === "fail").length;
   const copy = count("copy"), speech = count("speech"), visual = o.findings.filter((f) => f.kind === "visual" && f.status === "fail" && f.shotId).length, tech = count("technical");
   const shots = o.shotScores.length ? Math.min(...o.shotScores) : 0;
-  return [
+  
+  const checks: Check[] = [
     { name: "creative director", score: o.craft, note: "Filmstrip review of the finished ad", by: "judge", weight: 2 },
     { name: "weakest shot", score: shots, note: `Shot scores: ${o.shotScores.join(", ")}`, by: "judge", weight: 1.5 },
     { name: "on-screen copy (OCR)", score: clamp(10 - copy * 2), note: copy ? `${copy} line(s) not read back exactly` : "Every line read back", by: "rules" },
     { name: "voice vs script (ASR)", score: clamp(10 - speech * 2.5), note: speech ? `${speech} speech mismatch(es)` : "Every line heard as written", by: "rules" },
     { name: "visual findings", score: clamp(10 - visual * 2), note: visual ? `${visual} shot(s) with failing frames` : "No failing frames", by: "rules" },
     { name: "technical", score: clamp(10 - tech * 3), note: tech ? `${tech} technical problem(s)` : "Decodes cleanly, no black or frozen frames", by: "rules", weight: 0.5 },
-    ...(o.captionSync != null ? [{ name: "captions vs voice (word sync)", score: o.captionSync, note: "Each caption against the words heard while it is on screen (whisper word timings)", by: "rules" as const }] : []),
-    ...(o.frameScores?.length ? [{ name: "sampled frames", score: Math.round((o.frameScores.reduce((a, b) => a + b, 0) / o.frameScores.length) * 10) / 10, note: `${o.frameScores.length} frames checked on the export (pass 10, review 7, fail 3)`, by: "judge" as const }] : []),
   ];
+  
+  // Hard penalty for no visible branded product when product shots should exist
+  // This should be checked against actual frames, but for now we check the sheet structure
+  if (o.hasProductShots === false) {
+    checks.push({ name: "product visibility", score: 0, note: "No visible branded product in the final", by: "rules", weight: 2 });
+  }
+  
+  // Penalty for inconsistent faces when people shots exist but no character reference was generated
+  // hasCharacter MUST be Boolean(sheet.character?.referenceUrl), not just whether description exists
+  // Callers must compute this from the actual sheet before calling finalChecks
+  if (o.hasPeopleShots && !o.hasCharacter) {
+    checks.push({ name: "face consistency", score: 3, note: "Multiple different faces instead of one recurring character", by: "rules", weight: 1.5 });
+  }
+  
+  if (o.captionSync != null) checks.push({ name: "captions vs voice (word sync)", score: o.captionSync, note: "Each caption against the words heard while it is on screen (whisper word timings)", by: "rules" as const });
+  if (o.frameScores?.length) checks.push({ name: "sampled frames", score: Math.round((o.frameScores.reduce((a, b) => a + b, 0) / o.frameScores.length) * 10) / 10, note: `${o.frameScores.length} frames checked on the export (pass 10, review 7, fail 3)`, by: "judge" as const });
+  
+  return checks;
 }
